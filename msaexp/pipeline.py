@@ -536,7 +536,7 @@ class NirspecPipeline():
             
             # print('xxx', x0, chi0, x1, chi1, _res.fun, _res)
             
-            msg = f'nirspec_manual.fit_profile:     '
+            msg = f'msaexp.fit_profile:     '
             msg += f' {key:<20}  (dchi2 = {d0:8.1f})'
             msg += f' yoffset = {_res.x[0]:.2f}  prof_sigma = {_res.x[1]:.2f}'
             msg += f' dchi2 = {dx:8.1f}'
@@ -545,7 +545,7 @@ class NirspecPipeline():
             return _res.x, _res
 
         else:
-            msg = f'nirspec_manual.fit_profile:     '
+            msg = f'msaexp.fit_profile:     '
             msg += f' {key:<20}  (dchi2 = {d0:8.1f} <'
             msg += f' {min_delta} - skip)  yoffset = {x0[0]:.2f} '
             msg += f' prof_sigma = {x0[1]:.2f}'
@@ -984,7 +984,7 @@ class NirspecPipeline():
 
                 fig.savefig(out+'.png')
                 full_tab.write(out+'.fits', overwrite=True)
-                msg = f'nirspec_manual.extract_spectrum: {key}'
+                msg = f'msaexp.extract_spectrum: {key}'
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                                   show_date=False)
                                   

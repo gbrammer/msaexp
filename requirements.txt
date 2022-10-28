@@ -4,6 +4,7 @@ tqdm
 scipy
 astropy
 
+pysiaf
 jwst
 
 grizli
