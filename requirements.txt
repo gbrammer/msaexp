@@ -8,5 +8,6 @@ astroquery
 pysiaf
 jwst
 
+sep
 git+https://github.com/gbrammer/grizli.git
 mastquery

@@ -245,29 +245,53 @@ class NirspecPipeline():
 
         if 'open' not in self.pipe:
             step = MSAFlagOpenStep()
-            self.pipe['open'] = [step.call(obj)
-                                 for obj in self.pipe[self.last_step]]
-        
+            self.pipe['open'] = []
+            
+            for i, obj in enumerate(self.pipe[self.last_step]):
+                msg = f'msaexp.jwst.MSAFlagOpenStep: {self.files[i]}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                                  show_date=True)
+                
+                self.pipe['open'].append(step.call(obj))
+                
         self.last_step = 'open'
 
         if '2d' not in self.pipe:
             step2d = Extract2dStep()
-            self.pipe['2d'] = [step2d.call(obj)
-                               for obj in self.pipe[self.last_step]]
+            self.pipe['2d'] = []
+            
+            for i, obj in enumerate(self.pipe[self.last_step]):
+                msg = f'msaexp.jwst.Extract2dStep: {self.files[i]}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                                  show_date=True)
+                
+                self.pipe['2d'].append(step2d.call(obj))
         
         self.last_step = '2d'
 
         if 'flat' not in self.pipe:
             flat_step = FlatFieldStep()
-            self.pipe['flat'] = [flat_step.call(obj)
-                                 for obj in self.pipe[self.last_step]]
-       
+            self.pipe['flat'] = []
+            
+            for i, obj in enumerate(self.pipe[self.last_step]):
+                msg = f'msaexp.jwst.FlatFieldStep: {self.files[i]}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                                  show_date=True)
+                
+                self.pipe['flat'].append(flat_step.call(obj))
+                       
         self.last_step = 'flat'
 
         if 'path' not in self.pipe:
             path_step = PathLossStep()
-            self.pipe['path'] = [path_step.call(obj)
-                                 for obj in self.pipe[self.last_step]]
+            self.pipe['path'] = []
+            
+            for i, obj in enumerate(self.pipe[self.last_step]):
+                msg = f'msaexp.jwst.PathLossStep: {self.files[i]}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                                  show_date=True)
+                
+                self.pipe['path'].append(path_step.call(obj))
         
         self.last_step = 'path'
 
@@ -275,8 +299,14 @@ class NirspecPipeline():
         
         if 'phot' not in self.pipe:
             phot_step = PhotomStep()
-            self.pipe['phot'] = [phot_step.call(obj)
-                                 for obj in self.pipe[self.last_step]]
+            self.pipe['phot'] = []
+            
+            for i, obj in enumerate(self.pipe[self.last_step]):
+                msg = f'msaexp.jwst.PhotomStep: {self.files[i]}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                                  show_date=True)
+                
+                self.pipe['phot'].append(phot_step.call(obj))
         
         self.last_step = 'phot'
         
