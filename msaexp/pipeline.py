@@ -125,7 +125,7 @@ class SlitData():
 
         for file in self.files:
             self.slits.append(SlitModel(file))
-            msg = f'Load slit data: {file} {self.slits[-1].source_name}'
+            msg = f'msaexp.read_data: {file} {self.slits[-1].source_name}'
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                               show_date=False)
 
@@ -143,12 +143,12 @@ class NirspecPipeline():
         else:
             self.files = []
         
-        msg = f'NirspecPipeline: Initialize {mode}'
+        msg = f'msaexp.NirspecPipeline: Initialize {mode}'
         utils.log_comment(utils.LOGFILE, msg, verbose=True, 
                               show_date=True)
         
         for file in self.files:
-            msg = f'NirspecPipeline: {file}'
+            msg = f'msaexp.NirspecPipeline: {file}'
             utils.log_comment(utils.LOGFILE, msg, verbose=True, 
                               show_date=False)
                               
@@ -163,7 +163,7 @@ class NirspecPipeline():
         return len(self.files)
 
 
-    def preprocess(self):
+    def preprocess(self, set_context=True):
         """
         Run grizli exposure-level preprocessing
         
@@ -172,6 +172,18 @@ class NirspecPipeline():
         3. median "bias" removal
         
         """
+        
+        if set_context:
+            # Set CRDS_CTX to match the exposures
+            if (os.getenv('CRDS_CTX') is None) | (set_context > 1):
+                im = pyfits.open(self.files[0])
+                _ctx = im[0].header["CRDS_CTX"]
+                msg = f'msaexp.preprocess : set CRDS_CTX={_ctx}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                  show_date=True)
+                
+                os.environ['CRDS_CTX'] = _ctx
+                
         # Extra mask for snowballs
         prep.mask_snowballs({'product':self.mode, 'files':self.files},
                              mask_bit=1024, instruments=['NIRSPEC'], 
@@ -188,7 +200,7 @@ class NirspecPipeline():
             im = pyfits.open(file, mode='update')
             dq = (im['DQ'].data & 1025) == 0
             bias_level = np.nanmedian(im['SCI'].data[dq])
-            msg = f'preprocess : bias level for {file}: {bias_level:.4f}'
+            msg = f'msaexp.preprocess : bias level {file} = {bias_level:.4f}'
             utils.log_comment(utils.LOGFILE, msg, verbose=True, 
                               show_date=True)
             
@@ -285,7 +297,7 @@ class NirspecPipeline():
             for i in indices:
                 slit_file = self.files[j].replace('rate.fits',
                                                   f'{step}.{i:03d}.fits')
-                msg = f'Save slit data: {slit_file} '
+                msg = f'msaexp.save_slit_data: {slit_file} '
                 msg += f' {self.pipe[step][j].slits[i].source_name}'
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                                   show_date=False)
@@ -662,7 +674,8 @@ class NirspecPipeline():
                                 x0 = np.nanmean(xp[_dq])
                                 y0 = np.nanmean(yp[_dq])
                                 _ra, _dec, ws = _wcs.forward_transform(x0, y0)
-                                msg = f'Set source_ra/source_dec: '
+                                msg = f'msaexp.extract_spectrum: Set '
+                                msg += f' source_ra/source_dec: '
                                 msg += f'{_ra}, {_dec}'
                                 utils.log_comment(utils.LOGFILE, msg, 
                                                   verbose=True)

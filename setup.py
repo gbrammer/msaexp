@@ -21,13 +21,13 @@ if True:
          'numpy>=1.23.0',
          'cython',
          'matplotlib>=3.5',
-         'opencv-python-headless',
          'scipy>=1.9',
          'tqdm',
          'astropy>=5.0',
          'pysiaf',
          'jwst>=1.8',
-         'grizli',
+         'astroquery',
+         'git+https://github.com/gbrammer/grizli.git',
          'mastquery'
          ]
          
