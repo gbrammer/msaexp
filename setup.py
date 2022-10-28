@@ -27,7 +27,7 @@ if True:
          'pysiaf',
          'jwst>=1.8',
          'astroquery',
-         'git+https://github.com/gbrammer/grizli.git',
+         'grizli',
          'mastquery'
          ]
          

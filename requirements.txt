@@ -3,9 +3,10 @@ tqdm
 
 scipy
 astropy
+astroquery
 
 pysiaf
 jwst
 
-grizli
+git+https://github.com/gbrammer/grizli.git
 mastquery
