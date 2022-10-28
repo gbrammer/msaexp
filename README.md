@@ -1,2 +1,2 @@
-# nirspec-extractor
-Manual extraction of JWST NIRSpec spectra
+# msaexp
+Manual extraction of JWST NIRSpec MSA spectra directly from the telescope exposures
