@@ -66,5 +66,5 @@ setup(
         'Topic :: Scientific/Engineering :: Astronomy',
     ],
     install_requires=install_requires,
-    package_data={}, 
+    package_data={'msaexp': ['data/*fits']}, 
 )
