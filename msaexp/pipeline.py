@@ -210,7 +210,7 @@ class NirspecPipeline():
         return True
     
     
-    def run_jwst_pipeline(self):
+    def run_jwst_pipeline(self, verbose=True):
         """
         Steps taken from https://github.com/spacetelescope/jwebbinar_prep/blob/main/spec_mode/spec_mode_stage_2.ipynb
 
@@ -1121,6 +1121,98 @@ class NirspecPipeline():
         
         if status is None:
             self.save_slit_data()
-            
 
+
+def make_summary_tables(root='msaexp', zout=None):
+    """
+    """
+    import yaml
+    import astropy.table
+
+    groups = exposure_groups()
+
+    tabs = []
+    for mode in groups:
+        # mode = 'jw02767005001-02-clear-prism-nrs1'
+
+        yaml_file = f'{mode}.slits.yaml'
+        if not os.path.exists(yaml_file):
+            print(f'Skip {yaml_file}')
+            continue
+
+        with open(yaml_file) as fp:
+            yaml_data = yaml.load(fp, Loader=yaml.SafeLoader)
+
+        cols = []
+        rows = []
+        for k in yaml_data:
+            row = []
+            for c in ['source_name','source_ra','source_dec','yoffset',
+                      'prof_sigma','redshift','is_background']:
+                if c in ['skip']:
+                    continue
+                if c not in cols:
+                    cols.append(c)
+
+                row.append(yaml_data[k][c])
+
+            rows.append(row)
+
+        tab = utils.GTable(names=cols, rows=rows)
+        tab.rename_column('source_ra','ra')
+        tab.rename_column('source_dec','dec')
+        bad = np.in1d(tab['redshift'], [None])
+        tab['z'] = -1.
+        tab['z'][~bad] = tab['redshift'][~bad]
+        tab['mode'] = ' '.join(mode.split('-')[-3:-1])
+        tab['detector'] = mode.split('-')[-1]
+
+        tab['group'] = mode
+
+        tab.remove_column('redshift')
+        tab.write(f'{mode}.info.csv', overwrite=True)
+
+        tabs.append(tab)
+
+    full = utils.GTable(astropy.table.vstack(tabs))
+
+    full['ra'].format = '.7f'
+    full['dec'].format = '.7f'
+    full['yoffset'].format = '.2f'
+    full['prof_sigma'].format = '.2f'
+    
+    if zout is not None:
+        idx, dr = zout.match_to_catalog_sky(full)
+        hasm = dr.value < 0.2
+        if root == 'uds':
+            hasm = dr.value < 0.4
+
+        full['z_phot'] = -1.0
+        full['z_phot'][hasm] = zout['z_phot'][idx][hasm]
+
+        full['z_spec'] = -1.0
+        full['z_spec'][hasm] = zout['z_spec'][idx][hasm]
+
+        full['z_phot'].format = '.2f'
+        full['z_spec'].format = '.3f'
+
+        full['phot_id'] = -1
+        full['phot_id'][hasm] = zout['id'][idx][hasm]
+    
+    url = '<a href="{m}-{name}.spec.fits">'
+    url += '<img src="{m}-{name}.spec.png" height=200px>'
+    url += '</a>'
+    
+    full['spec'] = [url.format(m=m, name=name)
+                    for m, name in zip(full['group'], full['source_name'])]
+    
+    full.write(f'{root}_nirspec.csv', overwrite=True)
+    full.write_sortable_html(f'{root}_nirspec.html',
+                             max_lines=10000, 
+                             filter_columns=['ra','dec','z_phot',
+                                             'z_spec','yoffset','prof_sigma'],
+                             localhost=False)
+
+    print(f'Created {root}_nirspec.html {root}_nirspec.csv')
+    return tabs, full
         
