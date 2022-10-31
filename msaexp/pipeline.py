@@ -6,6 +6,7 @@ import os
 import glob
 import time
 import traceback
+from tqdm import tqdm
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1171,6 +1172,62 @@ def make_summary_tables(root='msaexp', zout=None):
 
         tab.remove_column('redshift')
         tab.write(f'{mode}.info.csv', overwrite=True)
+        
+        tab['oiii_sn'] = -100.
+        tab['ha_sn'] = -100.
+        tab['max_cont'] = -100.
+        tab['dof'] = 0
+        tab['dchi2'] = -100.
+        tab['bic_diff'] = -100.
+        
+        # Redshift output
+        for i, s in tqdm(enumerate(tab['source_name'])):
+            yy = f'{mode}-{s}.spec.yaml'
+            if os.path.exists(yy):
+                with open(yy) as fp:
+                    zfit = yaml.load(fp, Loader=yaml.Loader)
+                
+                tab['z'][i] = zfit['z']
+                if 'dof' in zfit:
+                    tab['dof'][i] = zfit['dof']
+                    
+                oiii_key = None
+                if 'spl_coeffs' in zfit:
+                    
+                    max_spl = -100
+                    nline = 0
+                    ncont = 0
+                    
+                    for k in zfit['spl_coeffs']:
+                        if k.startswith('bspl') & (zfit['spl_coeffs'][k][1] > 0):
+                            _coeff = zfit['spl_coeffs'][k]
+                            max_spl = np.maximum(max_spl, _coeff[0]/_coeff[1])
+                            ncont += 1
+                            
+                        elif k.startswith('line'):
+                            nline += 1
+                            
+                    tab['max_cont'][i] = max_spl
+                    
+                    bic_cont = np.log(zfit['dof'])*ncont + zfit['spl_cont_chi2']
+                    bic_line = np.log(zfit['dof'])*(ncont+nline) + zfit['spl_full_chi2']
+                    
+                    tab['bic_diff'][i] = bic_cont - bic_line
+                    tab['dchi2'][i] = np.nanmedian(zfit['chi0']) - np.nanmin(zfit['chi0'])
+                    if 'line Ha' in zfit['spl_coeffs']:
+                        _coeff = zfit['spl_coeffs']['line Ha']
+                        if _coeff[1] > 0:
+                            tab['ha_sn'][i] = _coeff[0]/_coeff[1]
+                        
+                    for k in ['line OIII-5007', 'line OIII']:
+                        if k in zfit['spl_coeffs']:
+                            oiii_key = k
+                
+                    if oiii_key is not None:
+                        _coeff = zfit['spl_coeffs'][oiii_key]
+                        if _coeff[1] > 0:
+                            tab['oiii_sn'][i] = _coeff[0]/_coeff[1]
+                    
 
         tabs.append(tab)
 
@@ -1180,10 +1237,17 @@ def make_summary_tables(root='msaexp', zout=None):
     full['dec'].format = '.7f'
     full['yoffset'].format = '.2f'
     full['prof_sigma'].format = '.2f'
+    full['z'].format = '.4f'
+    full['oiii_sn'].format = '.1f'
+    full['ha_sn'].format = '.1f'
+    full['max_cont'].format = '.1f'
+    full['dchi2'].format = '.1f'
+    full['dof'].format = '.0f'
+    full['bic_diff'].format = '.1f'
     
     if zout is not None:
         idx, dr = zout.match_to_catalog_sky(full)
-        hasm = dr.value < 0.2
+        hasm = dr.value < 0.3
         if root == 'uds':
             hasm = dr.value < 0.4
 
@@ -1202,14 +1266,30 @@ def make_summary_tables(root='msaexp', zout=None):
     url = '<a href="{m}-{name}.spec.fits">'
     url += '<img src="{m}-{name}.spec.png" height=200px>'
     url += '</a>'
+
+    churl = '<a href="{m}-{name}.spec.fits">'
+    churl += '<img src="{m}-{name}.spec.chi2.png" height=200px>'
+    churl += '</a>'
+
+    furl = '<a href="{m}-{name}.spec.fits">'
+    furl += '<img src="{m}-{name}.spec.zfit.png" height=200px>'
+    furl += '</a>'
     
     full['spec'] = [url.format(m=m, name=name)
+                    for m, name in zip(full['group'], full['source_name'])]
+
+    full['chi2'] = [churl.format(m=m, name=name)
+                    for m, name in zip(full['group'], full['source_name'])]
+    
+    full['zfit'] = [furl.format(m=m, name=name)
                     for m, name in zip(full['group'], full['source_name'])]
     
     full.write(f'{root}_nirspec.csv', overwrite=True)
     full.write_sortable_html(f'{root}_nirspec.html',
                              max_lines=10000, 
-                             filter_columns=['ra','dec','z_phot',
+                             filter_columns=['ra','dec','z_phot', 
+                                             'z', 'dof', 'bic_diff',
+                                             'oiii_sn', 'ha_sn', 'max_cont',
                                              'z_spec','yoffset','prof_sigma'],
                              localhost=False)
 
