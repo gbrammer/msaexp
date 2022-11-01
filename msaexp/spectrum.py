@@ -22,7 +22,7 @@ import astropy.units as u
 import eazy.igm
 igm = eazy.igm.Inoue14()
 
-def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], step0=None, eazy_templates=None):
+def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], step0=None, eazy_templates=None, nspline=None):
     """
     """
     import yaml
@@ -33,15 +33,15 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     yaml.add_representer(float, float_representer)
     
     if step0 is None:
-        if ('g140m' in file):
-            step0 = 0.001
-        else:
+        if ('clear' in file):
             step0 = 0.002
+        else:
+            step0 = 0.001
     
-    if 'g140m' in file:
-        scale_disp = 2
-    else:
+    if 'clear' in file:
         scale_disp = 1.5
+    else:
+        scale_disp = 2.0
            
     zgrid = utils.log_zgrid(z0, step0)
 
@@ -51,20 +51,20 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
 
     zbest0 = zg0[np.argmin(chi0)]
     
-    if 'g140m' in file:
-        step1 = 0.00002
-        vel_width = 50
-        scale_disp = 2
-    else:
+    if 'clear' in file:
         step1 = 0.0001
         vel_width = 100
         scale_disp = 1.5
+    else:
+        step1 = 0.00002
+        vel_width = 50
+        scale_disp = 2
         
     zgrid = utils.log_zgrid(zbest0 + np.array([-0.005, 0.005])*(1+zbest0), 
                             step1)
     zg1, chi1 = fit_redshift_grid(file, zgrid=zgrid, line_complexes=False, 
                                   vel_width=vel_width, scale_disp=scale_disp, 
-                                  eazy_templates=None) #eazy_templates)
+                                  eazy_templates=eazy_templates)
                                   
     zbest = zg1[np.argmin(chi1)]
     
@@ -82,16 +82,15 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     
     fz.savefig(file.replace('spec.fits', 'spec.chi2.png'))
     
-    if 'g140m' in file:
-        ranges = [(3680, 4400), (4861-50, 5008+50), (6490, 6760)]
-    else:
+    if 'clear' in file:
         ranges = [(3427, 5308), (6250, 9700)]
-    
-    if 'g140m' in file:
-        nspline = 23
+        if nspline is None:
+            nspline = 41
     else:
-        nspline = 41
-            
+        ranges = [(3680, 4400), (4861-50, 5008+50), (6490, 6760)]
+        if nspline is None:
+            nspline = 23
+    
     fig, data = plot_spectrum(file, z=zbest, show_cont=True,
                               draws=100, nspline=nspline,
                               figsize=(16, 8), vel_width=vel_width,
@@ -604,3 +603,8 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
 if 0:
     fig, data = plot_spectrum(PATH + 'jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.503, show_cont=True, draws=100, nspline=41,
                     figsize=(16, 8), ranges=[(3650, 5100)], Rline=2000)
+
+
+def run_all():
+    pass
+    

@@ -507,7 +507,11 @@ class NirspecPipeline():
         
         xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
         yeval = np.nanmean(ytr)
-        for dy in [0, -1,1, -2, 2, -5, 5, -8, 8]:
+        dytest = [0]
+        for _dy in range(sh[0]):
+            dytest.extend([-_dy, _dy])
+        
+        for dy in dytest:
             rs, ds, ws = _wcs.forward_transform(x, 
                                                 x*0+yeval+dy)
             if (~np.isfinite(ws)).sum() == 0:
@@ -596,7 +600,7 @@ class NirspecPipeline():
             return x0, None
 
 
-    def extract_spectrum(self, key, slit_key=None, prof_sigma=None, fit_profile_params={'min_delta':100}, pstep=1.0, show_sn=True, flux_unit=FNU_UNIT, vmax=0.2, yoffset=None, skip=None, bad_dq_bits=(1 | 1024), clip_sigma=-4, ntrim=5, get_slit_data=False, verbose=False, **kwargs):
+    def extract_spectrum(self, key, slit_key=None, prof_sigma=None, fit_profile_params={'min_delta':100}, pstep=1.0, show_sn=True, flux_unit=FNU_UNIT, vmax=0.2, yoffset=None, skip=None, bad_dq_bits=(1 | 1024), clip_sigma=-4, ntrim=5, get_slit_data=False, verbose=False, center2d=False, **kwargs):
         """
         Extract 2D spectrum
         """
@@ -704,7 +708,7 @@ class NirspecPipeline():
                             else:
                                 x0 = np.nanmean(xp[_dq])
                                 y0 = np.nanmean(yp[_dq])
-                                _ra, _dec, ws = _wcs.forward_transform(x0, y0)
+                                _ra, _dec, w0 = _wcs.forward_transform(x0, y0)
                                 msg = f'msaexp.extract_spectrum: Set '
                                 msg += f' source_ra/source_dec: '
                                 msg += f'{_ra}, {_dec}'
@@ -716,7 +720,12 @@ class NirspecPipeline():
 
                         xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
                         yeval = np.nanmean(ytr)
-                        for dy in [0, -1,1, -2, 2, -5, 5, -8, 8]:
+                        
+                        dytest = [0]
+                        for _dy in range(sh[0]):
+                            dytest.extend([-_dy, _dy])
+                            
+                        for dy in dytest:
                             rs, ds, ws = _wcs.forward_transform(x, 
                                                                 x*0+yeval+dy)
                             if verbose: 
@@ -730,6 +739,10 @@ class NirspecPipeline():
                         xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
                         ytr -= 0.5
                         ytr += yoffset
+                        
+                        # Todo - calculate ws again with offset?
+                        rx, dx, ws = _wcs.forward_transform(xtr, ytr)
+                        
                     else:
                         _dq = (pipe[j].slits[i].dq & bad_dq_bits) == 0
                         try:
@@ -738,7 +751,6 @@ class NirspecPipeline():
                         except ValueError:
                             #print('background failed', j)
                             continue
-
 
                 if (np.nanmax(_bkg) == 0) & (not get_slit_data):
                     axes[ip//2].imshow(_sci*0., vmin=-0.05, vmax=0.3,
@@ -887,7 +899,8 @@ class NirspecPipeline():
                 axes[ip//2].plot(xtr, ytr+2, color='w', alpha=0.5)
                 axes[ip//2].plot(xtr, ytr-2, color='w', alpha=0.5)
 
-                axes[ip//2].set_ylim(y0-8, y0+8)
+                if center2d:
+                    axes[ip//2].set_ylim(y0-8, y0+8)
 
         yavj /= self.N
 
@@ -1041,6 +1054,85 @@ class NirspecPipeline():
                 if close:
                     plt.close('all')
 
+    def get_slit_polygons(self):
+        """
+        Get slit polygon regions using slit wcs
+        """
+        from tqdm import tqdm
+        slit_key = self.last_step
+        pipe = self.pipe[slit_key]
+        
+        regs = []
+        for j in range(self.N):
+            regs.append([])
+        
+        for key in tqdm(self.slitlets):
+            slitlet = self.slitlets[key]
+            #slitlet['bkg_index'], slitlet['src_index'], slitlet['slit_index']
+
+            i = slitlet['slit_index']
+
+            yoffset = slitlet['yoffset']
+            
+            for j in range(self.N):
+                _slit = pipe[j].slits[i]
+                _wcs = _slit.meta.wcs
+                sh = _slit.data.shape
+                
+                #_dq = (pipe[j].slits[i].dq & bad_dq_bits) == 0
+                #_sci = pipe[j].slits[i].data
+                
+                yp, xp = np.indices(sh)
+                x = np.arange(sh[1])
+                x0 = np.ones(sh[0])*sh[1]/2.
+                y0 = np.arange(sh[0])
+                r0, d0, w0 = _wcs.forward_transform(x0,  y0)
+                
+                # 
+                # tr = _wcs.get_transform(_wcs.slit_frame, _wcs.world)
+                # ysl = np.linspace(slitlet['slit_ymin'],
+                #                   slitlet['slit_ymax'], 8)
+                
+                rl, dl, _ = tr(-0.5, 0, 1)
+                rr, dr, _ = tr(0.5, 0, 1)
+                
+                #ro, do, _ = tr(-0.5, 0.1/0.46*yoffset + slitlet['source_ypos'], 1)
+                # yoffset along slit, as 0.1" pixels along to 0.46" slits
+                ro, do, _ = tr(-0.5, 0.1/0.46*yoffset, 1)
+                rs = ro-rl
+                ds = do-dl
+                rw = rr-rl
+                dw = dr-dl
+                
+                ok = np.isfinite(d0)
+                
+                xy = np.array([np.append(r0[ok]+rs, r0[ok][::-1]+rs+rw),
+                               np.append(d0[ok]+ds, d0[ok][::-1]+ds+dw)])
+                               
+                sr = utils.SRegion(xy)
+                _name = slitlet['source_name']
+                
+                if '_-' in _name:
+                    sr.ds9_properties = 'color=yellow'
+                elif 'background' in _name:
+                    sr.ds9_properties = 'color=white'
+                else:
+                    sr.ds9_properties = 'color=green'
+
+                if j == 0:
+                    sr.label = _name
+                    sr.ds9_properties += ' width=2'
+                
+                regs[j].append(sr)
+        
+        _slitreg = f'{self.mode}.slits.reg'
+        print(_slitreg)
+        with open(_slitreg, 'w') as fp:
+            for j in range(self.N):
+                    fp.write('icrs\n')
+                    for sr in regs[j]:
+                        fp.write(sr.region[0]+'\n')
+
 
     def load_slit_data(self, step='phot', verbose=True):
         """
@@ -1129,7 +1221,7 @@ def make_summary_tables(root='msaexp', zout=None):
     """
     import yaml
     import astropy.table
-
+    
     groups = exposure_groups()
 
     tabs = []
@@ -1173,6 +1265,9 @@ def make_summary_tables(root='msaexp', zout=None):
         tab.remove_column('redshift')
         tab.write(f'{mode}.info.csv', overwrite=True)
         
+        tab['wmin'] = 0.
+        tab['wmax'] = 0.
+        
         tab['oiii_sn'] = -100.
         tab['ha_sn'] = -100.
         tab['max_cont'] = -100.
@@ -1187,9 +1282,9 @@ def make_summary_tables(root='msaexp', zout=None):
                 with open(yy) as fp:
                     zfit = yaml.load(fp, Loader=yaml.Loader)
                 
-                tab['z'][i] = zfit['z']
-                if 'dof' in zfit:
-                    tab['dof'][i] = zfit['dof']
+                for k in ['z','dof','wmin','wmax','dchi2']:
+                    if k in zfit:
+                        tab[k][i] = zfit[k]
                     
                 oiii_key = None
                 if 'spl_coeffs' in zfit:
@@ -1213,7 +1308,7 @@ def make_summary_tables(root='msaexp', zout=None):
                     bic_line = np.log(zfit['dof'])*(ncont+nline) + zfit['spl_full_chi2']
                     
                     tab['bic_diff'][i] = bic_cont - bic_line
-                    tab['dchi2'][i] = np.nanmedian(zfit['chi0']) - np.nanmin(zfit['chi0'])
+
                     if 'line Ha' in zfit['spl_coeffs']:
                         _coeff = zfit['spl_coeffs']['line Ha']
                         if _coeff[1] > 0:
@@ -1232,7 +1327,9 @@ def make_summary_tables(root='msaexp', zout=None):
         tabs.append(tab)
 
     full = utils.GTable(astropy.table.vstack(tabs))
-
+    ok = np.isfinite(full['ra'] + full['dec'])
+    full = full[ok]
+    
     full['ra'].format = '.7f'
     full['dec'].format = '.7f'
     full['yoffset'].format = '.2f'
@@ -1244,6 +1341,8 @@ def make_summary_tables(root='msaexp', zout=None):
     full['dchi2'].format = '.1f'
     full['dof'].format = '.0f'
     full['bic_diff'].format = '.1f'
+    full['wmin'].format = '.1f'
+    full['wmax'].format = '.1f'
     
     if zout is not None:
         idx, dr = zout.match_to_catalog_sky(full)
@@ -1288,7 +1387,8 @@ def make_summary_tables(root='msaexp', zout=None):
     full.write_sortable_html(f'{root}_nirspec.html',
                              max_lines=10000, 
                              filter_columns=['ra','dec','z_phot', 
-                                             'z', 'dof', 'bic_diff',
+                                             'wmin', 'wmax',
+                                             'z', 'dof', 'bic_diff', 'dchi2',
                                              'oiii_sn', 'ha_sn', 'max_cont',
                                              'z_spec','yoffset','prof_sigma'],
                              localhost=False)
