@@ -22,7 +22,7 @@ import astropy.units as u
 import eazy.igm
 igm = eazy.igm.Inoue14()
 
-def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], step0=None, eazy_templates=None, nspline=None):
+def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], step0=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None):
     """
     """
     import yaml
@@ -39,32 +39,28 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
             step0 = 0.001
     
     if 'clear' in file:
-        scale_disp = 1.5
-    else:
-        scale_disp = 2.0
-           
-    zgrid = utils.log_zgrid(z0, step0)
-
-    zg0, chi0 = fit_redshift_grid(file, zgrid=zgrid, line_complexes=True,
-                                  eazy_templates=eazy_templates, 
-                                  scale_disp=scale_disp)
-
-    zbest0 = zg0[np.argmin(chi0)]
-    
-    if 'clear' in file:
         step1 = 0.0001
-        vel_width = 100
-        scale_disp = 1.5
     else:
         step1 = 0.00002
-        vel_width = 50
-        scale_disp = 2
-        
+    
+    if Rline is None:
+        if 'clear' in file:
+            Rline = 1000
+        else:
+            Rline = 5000
+              
+    zgrid = utils.log_zgrid(z0, step0)
+    zg0, chi0 = fit_redshift_grid(file, zgrid=zgrid, line_complexes=False, 
+                                  vel_width=vel_width, scale_disp=scale_disp, 
+                                  eazy_templates=eazy_templates, Rline=Rline)
+
+    zbest0 = zg0[np.argmin(chi0)]
+            
     zgrid = utils.log_zgrid(zbest0 + np.array([-0.005, 0.005])*(1+zbest0), 
                             step1)
     zg1, chi1 = fit_redshift_grid(file, zgrid=zgrid, line_complexes=False, 
                                   vel_width=vel_width, scale_disp=scale_disp, 
-                                  eazy_templates=eazy_templates)
+                                  eazy_templates=eazy_templates, Rline=Rline)
                                   
     zbest = zg1[np.argmin(chi1)]
     
@@ -94,7 +90,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     fig, data = plot_spectrum(file, z=zbest, show_cont=True,
                               draws=100, nspline=nspline,
                               figsize=(16, 8), vel_width=vel_width,
-                              ranges=ranges, Rline=2000,
+                              ranges=ranges, Rline=Rline,
                               scale_disp=scale_disp,
                               eazy_templates=eazy_templates)
     
@@ -102,7 +98,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
         spl_fig, spl_data = plot_spectrum(file, z=zbest, show_cont=True,
                               draws=100, nspline=nspline,
                               figsize=(16, 8), vel_width=vel_width,
-                              ranges=ranges, Rline=2000,
+                              ranges=ranges, Rline=Rline,
                               scale_disp=scale_disp,
                               eazy_templates=None)
         

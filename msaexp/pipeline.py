@@ -57,10 +57,10 @@ def download_msa_meta_files():
     files = glob.glob('*rate.fits')
     msa = []
     for file in files:
-        im = pyfits.open(file)
-        msa_file = im[0].header['MSAMETFL']
-        if not os.path.exists(msa_file):
-            msa.append(f'mast:JWST/product/{msa_file}')
+        with pyfits.open(file) as im:
+            msa_file = im[0].header['MSAMETFL']
+            if not os.path.exists(msa_file):
+                msa.append(f'mast:JWST/product/{msa_file}')
 
     if len(msa) > 0:
         mastquery.utils.download_from_mast(msa)
@@ -76,9 +76,9 @@ def exposure_groups(path='./', verbose=True):
     keys = ['filter','grating','effexptm','detector', 'msametfl']
     rows = []
     for file in files:
-        im = pyfits.open(file)
-        row = [file] + [im[0].header[k] for k in keys]
-        rows.append(row)
+        with pyfits.open(file) as im:
+            row = [file] + [im[0].header[k] for k in keys]
+            rows.append(row)
 
     tab = utils.GTable(names=['file']+keys, rows=rows)
     keystr = "{msametfl}-{filter}-{grating}-{detector}"
@@ -177,8 +177,9 @@ class NirspecPipeline():
         if set_context:
             # Set CRDS_CTX to match the exposures
             if (os.getenv('CRDS_CTX') is None) | (set_context > 1):
-                im = pyfits.open(self.files[0])
-                _ctx = im[0].header["CRDS_CTX"]
+                with pyfits.open(self.files[0]) as im:
+                    _ctx = im[0].header["CRDS_CTX"]
+                    
                 msg = f'msaexp.preprocess : set CRDS_CTX={_ctx}'
                 utils.log_comment(utils.LOGFILE, msg, verbose=True, 
                                   show_date=True)
@@ -198,16 +199,17 @@ class NirspecPipeline():
         
         # bias
         for file in self.files:
-            im = pyfits.open(file, mode='update')
-            dq = (im['DQ'].data & 1025) == 0
-            bias_level = np.nanmedian(im['SCI'].data[dq])
-            msg = f'msaexp.preprocess : bias level {file} = {bias_level:.4f}'
-            utils.log_comment(utils.LOGFILE, msg, verbose=True, 
-                              show_date=True)
+            with pyfits.open(file, mode='update') as im:
+                dq = (im['DQ'].data & 1025) == 0
+                bias_level = np.nanmedian(im['SCI'].data[dq])
+                msg = f'msaexp.preprocess : bias level {file} ='
+                msg += f' {bias_level:.4f}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                  show_date=True)
             
-            im['SCI'].data -= bias_level
-            im.flush()
-        
+                im['SCI'].data -= bias_level
+                im.flush()
+            
         return True
     
     
@@ -469,6 +471,19 @@ class NirspecPipeline():
         return regfile
 
 
+    def set_background_slits(self):
+        """
+        """
+        from jwst.datamodels import SlitModel
+        
+        self.pipe['bkg'] = self.load_slit_data(step=self.last_step)
+        for j in range(self.N):
+            for s in self.pipe['bkg'][j].slits:
+                s.has_background = False
+                
+        return True
+
+
     def fit_profile(self, key, yoffset=None, prof_sigma=None, bounds=[(-5,5), (1.4/2.35, 3.5/2.35)], min_delta=100, use_huber=True, verbose=True, **kwargs):
         """
         Fit for profile width and offset
@@ -600,13 +615,66 @@ class NirspecPipeline():
             return x0, None
 
 
+    def get_background_slits(self, key, step='bkg', check_background=True, **kwargs):
+        """
+        Get background-subtracted slitlets
+        
+        Returns
+        -------
+        slits : list
+            List of `jwst.datamodels.slit.SlitModel` objects
+            
+        """
+        if step not in self.pipe:
+            return None
+                
+        if key not in self.slitlets:
+            return None
+        
+        slits = [] 
+            
+        slitlet = self.slitlets[key]
+        i = slitlet['slit_index']
+        
+        for j in range(self.N):
+            bsl = self.pipe[step][j].slits[i]
+            if check_background:
+                if hasattr(bsl, 'has_background'):
+                    if bsl.has_background:
+                        slits.append(bsl)
+            else:
+                slits.append(bsl)
+        
+        return slits
+
+
+    def drizzle_2d(self, key, drizzle_params={}, **kwargs):
+        """
+        """
+        from jwst.datamodels import SlitModel, ModelContainer
+        from jwst.resample.resample_spec import ResampleSpecData
+
+        slits = self.get_background_slits(key, **kwargs)
+        if slits in [None, []]:
+            return None
+        
+        bcont = ModelContainer()
+        for s in bslits:
+            bcont.append(s)
+            
+        step = ResampleSpecData(bcont, **drizzle_params)
+        result = step.do_drizzle()
+        
+        return result
+
+
     def extract_spectrum(self, key, slit_key=None, prof_sigma=None, fit_profile_params={'min_delta':100}, pstep=1.0, show_sn=True, flux_unit=FNU_UNIT, vmax=0.2, yoffset=None, skip=None, bad_dq_bits=(1 | 1024), clip_sigma=-4, ntrim=5, get_slit_data=False, verbose=False, center2d=False, **kwargs):
         """
         Extract 2D spectrum
-        """
+        """                
         import eazy.utils
         from photutils.psf import IntegratedGaussianPRF
-
+        
         if key not in self.slitlets:
             print(f'{key} not found in slitlets')
 
@@ -629,7 +697,10 @@ class NirspecPipeline():
         #slitlet['bkg_index'], slitlet['src_index'], slitlet['slit_index']
 
         i = slitlet['slit_index']
-
+        
+        for j in range(self.N):
+            self.pipe['bkg'][j].slits[i].has_background = False
+            
         if slit_key is None:
             slit_key = self.last_step
 
@@ -682,6 +753,12 @@ class NirspecPipeline():
                 for j in p:
                     if _sci is None:
                         _slit = pipe[j].slits[i]
+                        
+                        if 'bkg' in self.pipe:
+                            _bkg_slit = self.pipe['bkg'][j].slits[i]
+                        else:
+                            _bkg_slit = None
+                            
                         sh = _slit.data.shape
                         x = np.arange(sh[1])
 
@@ -767,7 +844,7 @@ class NirspecPipeline():
 
                 _bkgn[_bkgn == 0] = 1
                 _clean = _sci - _bkg/_bkgn
-                
+                                
                 bad = ~np.isfinite(_clean)
                 # bad |= _clean*np.sqrt(_ivar) < clip_sigma
                 bad |= _bkg == 0
@@ -775,7 +852,12 @@ class NirspecPipeline():
 
                 _ivar[bad] = 0
                 _clean[bad] = 0
-
+                
+                if _bkg_slit is not None:
+                    _bkg_slit.data = _clean*1
+                    _bkg_slit.dq = (bad*1).astype(_bkg_slit.dq.dtype)
+                    _bkg_slit.has_background = True
+                    
                 prof = prf(yp.flatten()*0, (yp - ytr).flatten()).reshape(sh)
                         
                 if 1:
