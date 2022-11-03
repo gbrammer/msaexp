@@ -816,6 +816,7 @@ class NirspecPipeline():
                         xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
                         ytr -= 0.5
                         ytr += yoffset
+                        xtr = x*1
                         
                         # Todo - calculate ws again with offset?
                         rx, dx, ws = _wcs.forward_transform(xtr, ytr)
