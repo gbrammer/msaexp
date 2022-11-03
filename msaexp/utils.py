@@ -145,9 +145,21 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     
     if keep_wave:
         ref_lam = orig_lam
+        
+        if keep_wave == 2:
+            if verbose:
+                msg = 'Oversample original wavelength grid x 2'
+                print(msg)
+                
+            # Oversample by x2
+            dl = np.diff(ref_lam)
+            ref_lam = np.append(ref_lam, ref_lam[:-1]+dl/2.)
+            ref_lam.sort()
+            
         lmin = np.nanmin(ref_lam)
         lmax = np.nanmax(ref_lam)
-    
+        dlam = np.nanmedian(np.diff(ref_lam))
+        
     if wave_array is not None:
         ref_lam = wave_array*1.
         lmin = np.nanmin(ref_lam)
@@ -303,6 +315,9 @@ def combine_2d_with_rejection(result, sigma=5, grow=0):
     from photutils.psf import IntegratedGaussianPRF
     from astropy.modeling.models import Polynomial2D
     from astropy.modeling.fitting import LevMarLSQFitter
+    import astropy.units as u
+    
+    import grizli.utils
     
     sci = np.array([s.data for s in result])
     dq = np.array([s.dq for s in result])
@@ -363,7 +378,30 @@ def combine_2d_with_rejection(result, sigma=5, grow=0):
         
     tomjy = 1.e12*result[0].meta.photometry.pixelarea_steradians*pfit.flux.value
     
-    return sci2d*tomjy, wht2d/tomjy**2, sci1d*tomjy, err1d*tomjy, p2d
+    spec = grizli.utils.GTable()
+    spec.meta['NCOMBINE'] = len(result)
+    spec.meta['MASKSIG'] = sigma, 'Mask sigma'
+    
+    spec.meta['TOMUJY'] = tomjy, 'Conversion from pixel values to microJansky'
+    spec.meta['PROFCEN'] = pfit.y_0.value, 'PRF profile center'
+    spec.meta['PROFSIG'] = pfit.sigma.value, 'PRF profile sigma'
+    
+    met = result[0].meta.instrument.instance
+    for k in ['detector','filter','grating']:
+        spec.meta[k] = met[k]
+        
+    sh = result[0].data.shape
+    x = np.arange(sh[1])
+    
+    ri, di, spec['wave'] = result[0].meta.wcs.forward_transform(x, x*0+sh[0]/2)
+    
+    spec['wave'].unit = u.micron
+    spec['flux'] = sci1d*tomjy
+    spec['err'] = err1d*tomjy
+    spec['flux'].unit = u.microJansky
+    spec['err'].unit = u.microJansky
+    
+    return sci2d*tomjy, wht2d/tomjy**2, p2d, spec
 
 
 def drizzle_slits_2d(slits, drizzle_params=DRIZZLE_PARAMS, **kwargs):
@@ -459,6 +497,16 @@ def extract_all():
     
     from importlib import reload
     
+    from msaexp import pipeline
+    groups = pipeline.exposure_groups()
+    obj = {}
+    
+    for g in groups:
+        print(f'\n\nInitialize {g}\n\n')
+        obj[g] = pipeline.NirspecPipeline(g)
+        obj[g].full_pipeline(run_extractions=False)
+        obj[g].set_background_slits()
+    
     import msaexp.utils
     reload(msaexp.utils)
     
@@ -471,12 +519,19 @@ def extract_all():
     step='bkg'
     
     for g in gg:
+        if g not in obj:
+            continue
+            
         self = obj[g]
         
         if key not in self.slitlets:
             continue
-            
-        self.extract_all_slits(keys=[key], yoffset=None, prof_sigma=None, skip=bad, fit_profile_params=None, close=False)
+        
+        sl = self.slitlets[key]
+        mode = self.mode
+        
+        _data = self.extract_all_slits(keys=[key], yoffset=None, prof_sigma=None, skip=bad,
+                                       fit_profile_params=None, close=False)
         
         si = self.get_background_slits(key, step='bkg', check_background=True)
         
@@ -487,8 +542,11 @@ def extract_all():
     kwargs = {'keep_wave':True}
     kwargs = {'keep_wave':False, 'wave_range':[0.6, 5.3], 'wave_step':0.0005, 
               'log_wave':True}
+
+    kwargs = {'keep_wave':False, 'wave_range':[2.96, 5.28], 'wave_step':0.001, 
+              'log_wave':False}
     
-    kwargs = {'keep_wave':False, 'wave_array':wx}
+    #kwargs = {'keep_wave':1} #'wave_array':wx}
     
     drizzle_params = dict(output=None,
                           single=True,
@@ -502,7 +560,27 @@ def extract_all():
                           pscale=None)
                           
     wave, header, result = msaexp.utils.drizzle_slits_2d(slits, drizzle_params=drizzle_params, **kwargs)
-    sci2d, wht2d, sci1d, err1d, p2d = msaexp.utils.combine_2d_with_rejection(result, sigma=10)
+    sci2d, wht2d, p2d, spec = msaexp.utils.combine_2d_with_rejection(result, sigma=10)
     
+    for k in ['name','ra','dec']:
+        spec.meta[k] = sl[f'source_{k}']
+    
+    _fitsfile = f'{mode}-{key}.driz.fits'
+    
+    spec.write(_fitsfile, overwrite=True)
+    
+    with pyfits.open(_fitsfile, mode='update') as hdul:
+        
+        hdul[1].header['EXTNAME'] = 'SPEC1D'
+        
+        for k in spec.meta:
+            header[k] = spec.meta[k]
+            
+        hdul.append(pyfits.ImageHDU(data=sci2d, header=header, name='SCI'))
+        hdul.append(pyfits.ImageHDU(data=wht2d, header=header, name='WHT'))
+        hdul.append(pyfits.ImageHDU(data=p2d, header=header, name='PROFILE'))
+        
+        hdul.flush()
+        
     
         
