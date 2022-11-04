@@ -308,13 +308,15 @@ DRIZZLE_PARAMS = dict(output=None,
                       pscale=None)
 
 
-def combine_2d_with_rejection(result, sigma=5, grow=0):
+def combine_2d_with_rejection(result, sigma=5, grow=0, trim=2, prf_center=None, prf_sigma=1.0, fit_prf=True):
     """
     Combine single drizzled arrays with outlier detection
     """
     from photutils.psf import IntegratedGaussianPRF
     from astropy.modeling.models import Polynomial2D
     from astropy.modeling.fitting import LevMarLSQFitter
+    import scipy.ndimage as nd
+    
     import astropy.units as u
     
     import grizli.utils
@@ -353,15 +355,27 @@ def combine_2d_with_rejection(result, sigma=5, grow=0):
     
     prof = np.nansum(sci2d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
     ok = np.isfinite(prof) & (prof > 0)
-    ok &= np.abs(x-sh[0]//2) < 8
+    if prf_center is None:
+        x0 = sh[0]//2
+    else:
+        x0 = prf_center
+        
+    ok &= np.abs(x - x0) < 8
     
-    fitter = LevMarLSQFitter()
-    prf = IntegratedGaussianPRF(x_0=0, y_0=np.nanargmax(prof*ok))
+    if prf_center is None:
+        prf_center = np.nanargmax(prof*ok)
+        
+    prf = IntegratedGaussianPRF(x_0=0, y_0=prf_center, sigma=prf_sigma)
     
-    prf.fixed['x_0'] = True
-    prf.fixed['sigma'] = False
+    if fit_prf:
+        fitter = LevMarLSQFitter()
+        prf.fixed['x_0'] = True
+        prf.fixed['sigma'] = False    
+        pfit = fitter(prf, x[ok]*0., x[ok], prof[ok])
+    else:
+        pfit = prf
     
-    pfit = fitter(prf, x[ok]*0., x[ok], prof[ok])
+    pfit.flux = 1.0
     
     p2d = pfit(yp*0., yp)
     
@@ -372,11 +386,16 @@ def combine_2d_with_rejection(result, sigma=5, grow=0):
     
     wht1d = (wht2d*p2d**2).sum(axis=0)
     sci1d = (sci2d*wht2d*p2d).sum(axis=0) / wht1d
+    
+    if trim > 0:
+        bad = nd.binary_dilation(wht1d <= 0, iterations=trim)
+        wht1d[bad] = 0
+        
     sci1d[wht1d <= 0] = 0
     err1d = np.sqrt(1/wht1d)
     err1d[wht1d <= 0] = 0
-        
-    tomjy = 1.e12*result[0].meta.photometry.pixelarea_steradians*pfit.flux.value
+    
+    tomjy = 1.e12*result[0].meta.photometry.pixelarea_steradians #*pfit.flux.value
     
     spec = grizli.utils.GTable()
     spec.meta['NCOMBINE'] = len(result)
@@ -502,6 +521,9 @@ def extract_all():
     obj = {}
     
     for g in groups:
+        if '395m' not in g:
+            continue
+            
         print(f'\n\nInitialize {g}\n\n')
         obj[g] = pipeline.NirspecPipeline(g)
         obj[g].full_pipeline(run_extractions=False)
@@ -515,6 +537,7 @@ def extract_all():
     
     key = '2756_80075'
     bad = []
+    
     slits=[]
     step='bkg'
     
@@ -542,11 +565,14 @@ def extract_all():
     kwargs = {'keep_wave':True}
     kwargs = {'keep_wave':False, 'wave_range':[0.6, 5.3], 'wave_step':0.0005, 
               'log_wave':True}
-
-    kwargs = {'keep_wave':False, 'wave_range':[2.96, 5.28], 'wave_step':0.001, 
+              
+    # f290lp g395m
+    kwargs = {'keep_wave':False, 'wave_range':[2.87, 5.2], 'wave_step':0.001, 
               'log_wave':False}
     
     #kwargs = {'keep_wave':1} #'wave_array':wx}
+    
+    prf_kwargs = {'prf_center':None, 'prf_sigma':1.0, 'prf_fit':True}
     
     drizzle_params = dict(output=None,
                           single=True,
@@ -560,7 +586,7 @@ def extract_all():
                           pscale=None)
                           
     wave, header, result = msaexp.utils.drizzle_slits_2d(slits, drizzle_params=drizzle_params, **kwargs)
-    sci2d, wht2d, p2d, spec = msaexp.utils.combine_2d_with_rejection(result, sigma=10)
+    sci2d, wht2d, p2d, spec = msaexp.utils.combine_2d_with_rejection(result, sigma=10, **prf_kwargs)
     
     for k in ['name','ra','dec']:
         spec.meta[k] = sl[f'source_{k}']
