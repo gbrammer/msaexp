@@ -99,14 +99,20 @@ class SlitData():
     """
     Container for a list of SlitModel objects read from saved files
     """
-    def __init__(self, file='jw02756001001_03101_00001_nrs1_rate.fits', step='phot', verbose=True, read=False):
+    def __init__(self, file='jw02756001001_03101_00001_nrs1_rate.fits', step='phot', verbose=True, read=False, indices=None):
         """
         Load saved slits
         """
 
         self.slits = []
         
-        self.files = glob.glob(file.replace('rate.fits', f'{step}.*.fits'))
+        if indices is None:
+            self.files = glob.glob(file.replace('rate.fits', f'{step}.*.fits'))
+        else:
+            self.files = []
+            for i in indices:
+                self.files += glob.glob(file.replace('rate.fits', f'{step}.{i:03d}.fits'))
+                
         self.files.sort()
         
         if read:
@@ -157,6 +163,16 @@ class NirspecPipeline():
         self.slitlets = {}
         
         self.last_step = None
+
+
+    @property
+    def grating(self):
+        return '-'.join(self.mode.split('-')[-3:-1])
+
+
+    @property
+    def detector(self):
+        return self.mode.split('-')[-1]
 
 
     @property
@@ -1137,7 +1153,7 @@ class NirspecPipeline():
                 if close:
                     plt.close('all')
 
-    def get_slit_polygons(self):
+    def get_slit_polygons(self, include_yoffset=False):
         """
         Get slit polygon regions using slit wcs
         """
@@ -1181,9 +1197,13 @@ class NirspecPipeline():
                 
                 #ro, do, _ = tr(-0.5, 0.1/0.46*yoffset + slitlet['source_ypos'], 1)
                 # yoffset along slit, as 0.1" pixels along to 0.46" slits
-                ro, do, _ = tr(-0.5, 0.1/0.46*yoffset, 1)
-                rs = ro-rl
-                ds = do-dl
+                if include_yoffset:
+                    ro, do, _ = tr(-0.5, 0.1/0.46*yoffset, 1)
+                    rs = ro-rl
+                    ds = do-dl
+                else:
+                    rs = ds = 0.
+                    
                 rw = rr-rl
                 dw = dr-dl
                 
@@ -1217,11 +1237,11 @@ class NirspecPipeline():
                         fp.write(sr.region[0]+'\n')
 
 
-    def load_slit_data(self, step='phot', verbose=True):
+    def load_slit_data(self, step='phot', verbose=True, indices=None):
         """
         Load slit data from files
         """
-        slit_lists = [SlitData(file, step=step, read=False)
+        slit_lists = [SlitData(file, step=step, read=False, indices=indices)
                       for file in self.files]
 
         counts = [sl.N for sl in slit_lists]
@@ -1264,7 +1284,7 @@ class NirspecPipeline():
         return info
 
 
-    def full_pipeline(self, load_saved='phot', run_extractions=True, **kwargs):
+    def full_pipeline(self, load_saved='phot', run_extractions=True, indices=None, **kwargs):
         """
         Run all steps through extractions
         """
@@ -1273,7 +1293,7 @@ class NirspecPipeline():
             if load_saved in self.pipe:
                 status = self.pipe[load_saved]
             else:
-                status = self.load_slit_data(step=load_saved)
+                status = self.load_slit_data(step=load_saved, indices=None)
         else:
             status = None
         
