@@ -9,5 +9,8 @@ pysiaf
 jwst
 
 sep
+
+
 git+https://github.com/gbrammer/grizli.git
+git+https://github.com/gbrammer/eazy-py.git
 mastquery
