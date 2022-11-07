@@ -1,15 +1,14 @@
 cff-version: 1.2.0
 message: Please cite this software using these metadata.
 authors:
-  - given-names: Gabriel
-    family-names: Brammer
-    email: gbrammer@gmail.com
+  - given-names: "Gabriel"
+    family-names: "Brammer"
     affiliation: >-
       Cosmic Dawn Center, Niels Bohr Institute,
       University of Copenhagen
-    orcid: 'https://orcid.org/0000-0003-2680-0055'
+    orcid: "https://orcid.org/0000-0003-2680-0055"
 title: gbrammer/msaexp: NIRSpec analyis tools
-url: https://github.com/gbrammer/msaexp
+url: "https://github.com/gbrammer/msaexp"
 keywords: 
   - Astronomy software (1855)
 type: software  
