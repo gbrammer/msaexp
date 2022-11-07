@@ -675,7 +675,7 @@ class NirspecPipeline():
             return None
         
         bcont = ModelContainer()
-        for s in bslits:
+        for s in slits:
             bcont.append(s)
             
         step = ResampleSpecData(bcont, **drizzle_params)
@@ -1188,9 +1188,9 @@ class NirspecPipeline():
                 r0, d0, w0 = _wcs.forward_transform(x0,  y0)
                 
                 # 
-                # tr = _wcs.get_transform(_wcs.slit_frame, _wcs.world)
-                # ysl = np.linspace(slitlet['slit_ymin'],
-                #                   slitlet['slit_ymax'], 8)
+                tr = _wcs.get_transform(_wcs.slit_frame, _wcs.world)
+                ysl = np.linspace(slitlet['slit_ymin'],
+                                  slitlet['slit_ymax'], 8)
                 
                 rl, dl, _ = tr(-0.5, 0, 1)
                 rr, dr, _ = tr(0.5, 0, 1)

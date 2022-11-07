@@ -596,11 +596,8 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     return fig, data
 
 #PATH = '/Users/gbrammer/Research/JWST/Projects/RXJ2129/Nirspec/'
-if 0:
-    fig, data = plot_spectrum(PATH + 'jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.503, show_cont=True, draws=100, nspline=41,
-                    figsize=(16, 8), ranges=[(3650, 5100)], Rline=2000)
+# if 0:
+#     fig, data = plot_spectrum(PATH + 'jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.503, show_cont=True, draws=100, nspline=41,
+#                     figsize=(16, 8), ranges=[(3650, 5100)], Rline=2000)
 
-
-def run_all():
-    pass
     
