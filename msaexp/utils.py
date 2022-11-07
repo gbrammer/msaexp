@@ -2,6 +2,10 @@
 """
 import numpy as np
 import astropy.io.fits as pyfits
+import os
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+from astropy.visualization import ImageNormalize, ZScaleInterval, SquaredStretch, SqrtStretch, LinearStretch
 
 def summary_from_metafiles():
     """
@@ -608,5 +612,109 @@ def extract_all():
         
         hdul.flush()
         
-    
-        
+
+# taken from https://jwst-docs.stsci.edu/jwst-near-infrared-spectrograph/nirspec-instrumentation/nirspec-dispersers-and-filters
+nirspec_limits = {
+    'G140H': [0.97, 1.82, 0.5],
+    'G235H': [1.66, 3.05, 0.5],
+    'G395H': [2.87, 5.14, 0.5],
+    'G140M': [0.97, 1.84, 0.5],
+    'G235M': [1.66, 3.07, 0.5],
+    'G395M': [2.87, 5.10, 0.5],
+    'PRISM': [0.60, 5.30, 0.5],
+}
+
+def plot_nirspec_driz(file, ltick_sep=None, wavelim=None, fluxlim=None, cmap=cm.cubehelix_r, dpi=100):
+    """
+    Create quick visualization plot of the *.driz.fits files 
+
+    Parameters
+    ----------
+    file : string
+        the full path to the *.driz.fits file
+
+    ltick_sep : float
+        x-axis tick separation in unit of micron. If `None`, default to that set by `nirspec_limits`
+            
+    """
+    from grizli import utils, prep
+    import astropy.io.fits as fits
+
+    assert os.path.isfile(file), ' ERR: cannot find input file'
+
+    spec1D = utils.GTable(fits.getdata(file, 'spec1D'))
+    spec2D = fits.getdata(file, 'SCI')
+    head = fits.getheader(file, 'SCI')
+    grating = head['grating']
+
+    if wavelim is None:
+        wavelim = np.asarray(nirspec_limits[grating][:2])
+    wavelim = np.sort(wavelim)
+
+    if ltick_sep is None:
+        ltick_sep = nirspec_limits[grating][2]
+
+    sh = spec2D.shape
+    xx = np.arange(sh[1])
+    xrange = np.interp(wavelim, spec1D['wave'], xx)
+    zoomin = slice(int(np.floor(xrange[0])), int(np.ceil(xrange[1])))
+
+    wave = spec1D['wave'][zoomin]
+    flux = spec1D['flux'][zoomin]
+    err = spec1D['err'][zoomin]
+    spec2D = spec2D[:,zoomin]
+    sh = spec2D.shape
+    xx = np.arange(sh[1])
+    ltick_range = np.asarray([np.ceil(wave.min()*10.)/10., np.floor(wave.max()*10.)/10.])
+    lticks = np.arange(ltick_range[0], ltick_range[1], ltick_sep)
+    xticks = np.interp(lticks, wave, xx)
+
+    #-------- set x,y limits following Gabe
+    ymin, ymax = 1.e10, 0
+    # xmin, xmax = 1.e5, 0
+
+    fig, axes = plt.subplots(2, 1, figsize=(10,3.5), sharex=False, sharey=False,
+                             gridspec_kw={'height_ratios':[1.0,1.5]})
+    # plot 1D spec
+    axes[1].plot(xx, flux, 'b-')
+    axes[1].fill_between(xx, flux-err, flux+err, alpha=1, facecolor='c', edgecolor='c', linewidth=0.0)
+    axes[1].set_xticks(xticks)
+    axes[1].set_xticklabels(["%g"%x for x in lticks.tolist()])
+    axes[1].set_xlim([xx[0],xx[-1]])
+
+    #-------- set X-axis limits
+    med_err = np.median(err)
+    ymin = np.minimum(ymin, (flux-2*med_err).min())
+    ymax = np.maximum(ymax, (flux+2*med_err).max())
+    if fluxlim is not None:
+        axes[1].set_ylim(fluxlim)
+    else:
+        axes[1].set_ylim(ymin - 0.2*np.abs(ymax), 1.2*ymax)
+
+    axes[1].text(0.98, 0.93, file.split('/')[-1], va='top', ha='right', transform=axes[1].transAxes, fontsize=15,
+                 bbox={'fc':'w', 'ec':'None', 'alpha':0.7})
+
+    # ax.plot(spec1D_K.spectral_axis/1.e4, spec1D_K.uncertainty.quantity*1.e17, 'c:')
+    axes[1].set_xlabel(r'Observed Wavelength [$\mu$m]', fontsize=20, labelpad=-2)
+    axes[1].set_ylabel(r'$\mu$Jy', fontsize=20, labelpad=-2)
+
+    # plot 2D spec
+    interval = ZScaleInterval()
+    vmin, vmax = interval.get_limits(spec2D[:,zoomin])
+    stretch = SquaredStretch()
+    norm = ImageNormalize(vmin=vmin, vmax=vmax, stretch=stretch)
+    axes[0].imshow(spec2D[:,zoomin], norm=norm, interpolation='nearest', origin='lower', cmap=cmap)
+
+    axes[0].set_aspect('auto')
+    axes[0].set_xlabel('')
+    plt.setp(axes[0].get_xticklabels(), visible=False)
+    plt.setp(axes[0].get_yticklabels(), visible=False)
+    plt.setp(axes[0].get_xticklines(),visible=False)
+    plt.setp(axes[0].get_yticklines(),visible=False)
+
+    fig.tight_layout(pad=0.1)
+    #------------ plot the canvas
+    figname = file.replace('.fits','.png')
+    fig.savefig(figname, bbox_inches='tight', dpi=dpi)
+
+    return fig
