@@ -682,7 +682,7 @@ def plot_nirspec_driz(file, ltick_sep=None, wavelim=None, fluxlim=None, cmap=cm.
     axes[1].set_xticklabels(["%g"%x for x in lticks.tolist()])
     axes[1].set_xlim([xx[0],xx[-1]])
 
-    #-------- set X-axis limits
+    #-------- set Y-axis limits
     med_err = np.median(err)
     ymin = np.minimum(ymin, (flux-2*med_err).min())
     ymax = np.maximum(ymax, (flux+2*med_err).max())
@@ -693,17 +693,15 @@ def plot_nirspec_driz(file, ltick_sep=None, wavelim=None, fluxlim=None, cmap=cm.
 
     axes[1].text(0.98, 0.93, file.split('/')[-1], va='top', ha='right', transform=axes[1].transAxes, fontsize=15,
                  bbox={'fc':'w', 'ec':'None', 'alpha':0.7})
-
-    # ax.plot(spec1D_K.spectral_axis/1.e4, spec1D_K.uncertainty.quantity*1.e17, 'c:')
     axes[1].set_xlabel(r'Observed Wavelength [$\mu$m]', fontsize=20, labelpad=-2)
-    axes[1].set_ylabel(r'$\mu$Jy', fontsize=20, labelpad=-2)
+    axes[1].set_ylabel(r'$F_{\nu}$ [$\mu$Jy]', fontsize=20, labelpad=-2)
 
     # plot 2D spec
     interval = ZScaleInterval()
-    vmin, vmax = interval.get_limits(spec2D[:,zoomin])
+    vmin, vmax = interval.get_limits(spec2D)
     stretch = SquaredStretch()
     norm = ImageNormalize(vmin=vmin, vmax=vmax, stretch=stretch)
-    axes[0].imshow(spec2D[:,zoomin], norm=norm, interpolation='nearest', origin='lower', cmap=cmap)
+    axes[0].imshow(spec2D, norm=norm, interpolation='nearest', origin='lower', cmap=cmap)
 
     axes[0].set_aspect('auto')
     axes[0].set_xlabel('')
