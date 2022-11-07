@@ -1,0 +1,11 @@
+cff-version: 1.1.0
+message: Please cite this software using these metadata.
+authors:
+  - family-names: Gabriel
+    given-names: Brammer
+    orcid: https://orcid.org/0000-0003-2680-0055
+title: gbrammer/msaexp: NIRSpec analyis tools
+url: https://github.com/gbrammer/msaexp
+version: 0.3
+doi: 10.5281/zenodo.7299500
+date-released: 2022-11-07
