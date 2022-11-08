@@ -14,7 +14,8 @@ version = p.communicate()[0].decode("utf-8").strip()
 
 #### Versions
 # version = "0.1" # init
-version = "0.2" # with trivial tests
+#version = "0.2" # with trivial tests
+version = "0.3" # with 2d plotting
 
 # Set this to true to add install_requires to setup
 if True:

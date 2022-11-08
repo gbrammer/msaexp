@@ -176,7 +176,8 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     grating = spec.meta['GRATING'].lower()
     _filter = spec.meta['FILTER'].lower()
     
-    disp = utils.read_catalog(f'/Users/gbrammer/Research/JWST/Projects/NIRSpec/jwst_nirspec_{grating}_disp.fits')
+    _data_path = os.dirname(__file__)
+    disp = utils.read_catalog(f'{_data_path}/data/jwst_nirspec_{grating}_disp.fits')
     
     spline = utils.bspline_templates(wave=spec['wave']*1.e4, degree=3, df=nspline) #, log=True)
 

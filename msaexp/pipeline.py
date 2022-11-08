@@ -25,19 +25,28 @@ FLAM_UNIT = 1.e-19*u.erg/u.second/u.cm**2/u.Angstrom
 FNU_UNIT = u.microJansky
 
 
-def query_program(prog=2767, download=True):
+def query_program(prog=2767, download=True, detectors=None, gratings=None, filters=None):
     """
     Query and download MSA exposures for a given program
     """
     import mastquery.jwst
     import mastquery.utils
     
-    filters = []
-    filters += mastquery.jwst.make_query_filter('productLevel', 
+    query = []
+    query += mastquery.jwst.make_query_filter('productLevel', 
                                                 values=['2','2a','2b'])
-    filters += mastquery.jwst.make_program_filter([prog])
-
-    res = mastquery.jwst.query_jwst(instrument='NRS', filters=filters, 
+    query += mastquery.jwst.make_program_filter([prog])
+    
+    if detectors is not None:
+        query += mastquery.jwst.make_query_filter('detector', values=detectors)
+    
+    if gratings is not None:
+        query += mastquery.jwst.make_query_filter('grating', values=gratings)
+    
+    if filters is not None:
+        query += mastquery.jwst.make_query_filter('filter', values=filters)
+        
+    res = mastquery.jwst.query_jwst(instrument='NRS', filters=query, 
                                     extensions=['s2d'], rates_and_cals=False)
     
     if download:
@@ -715,7 +724,8 @@ class NirspecPipeline():
         i = slitlet['slit_index']
         
         for j in range(self.N):
-            self.pipe['bkg'][j].slits[i].has_background = False
+            if 'bkg' in self.pipe:
+                self.pipe['bkg'][j].slits[i].has_background = False
             
         if slit_key is None:
             slit_key = self.last_step
