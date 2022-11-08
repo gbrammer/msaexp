@@ -700,12 +700,12 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     hdul.append(pyfits.ImageHDU(data=profile2d, header=header, name='PROFILE'))
 
     if output_root is not None:
-        hdul.write(f'{output_root}.driz.fits', overwrite=True)
+        hdul.writeto(f'{output_root}.driz.fits', overwrite=True)
         
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, z=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, z=None, output_root=None, dpi=80):
     """
     Figure showing drizzled hdu
     """
@@ -804,7 +804,9 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         ax.set_xticks(xvm, minor=True)
         ax.set_xticks(xv, minor=False)
         ax.set_xticklabels(xt)
-        ax.grid()
+        # ax.grid()
+        ax.grid(color='gray', dashes=[8, 8], linewidth=0.5, zorder=-1)
+
         
     if xlim is not None:
         xvi = np.interp(xlim, sp['wave'], np.arange(len(sp)))
@@ -815,6 +817,9 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
             ax.set_xlim(0, nx)
             
     fig.tight_layout(pad=0.5)
+
+    if output_root is not None:
+        fig.savefig(f'{output_root}.driz.png', bbox_inches='tight', dpi=dpi)
 
     return fig
 
