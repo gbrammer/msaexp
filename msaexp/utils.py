@@ -22,13 +22,174 @@ def summary_from_metafiles():
                               comment=tab['source_name'], size=0.1)
 
 
+def rename_source(source_name):
+    """
+    Adjusted source names
+    
+    background_{i} > b{i}
+    xxx_-{i} > xxx_m{i}
+    
+    """
+    name =  source_name.replace('background_','b')
+    name = name.replace('_-','_m')
+    return name
+
+
+def update_output_files(mode):
+    """
+    Rename output slitlet files and metadata with updated target names
+    """
+    import glob
+    import yaml
+    from tqdm import tqdm
+    
+    import astropy.io.fits as pyfits
+    
+    from . import pipeline
+    
+    groups = pipeline.exposure_groups()
+    
+    yaml_file = f'{mode}.slits.yaml'
+    
+    if not os.path.exists(yaml_file):
+        print(f'Skip {yaml_file}')
+        return False
+
+    with open(yaml_file) as fp:
+        yaml_data = yaml.load(fp, Loader=yaml.Loader)
+    
+    files = groups[mode]
+    
+    orig_sources = []
+    for i in range(len(yaml_data)):
+        this_src = None
+        row = []
+        
+        for file in files:
+            base = file.split('_rate.fits')[0]
+            with pyfits.open(f'{base}_phot.{i:03d}.fits') as im:
+                src = im[1].header['srcname']
+                row.append(src)
+                if not src.lower().startswith('background'):
+                    if src in yaml_data:
+                        this_src = src
+                
+        if this_src is None:
+            this_src = src
+        
+        if this_src not in yaml_data:
+            print(i, ' '.join(row))
+        
+        orig_sources.append(this_src)
+    
+    for i, src in enumerate(orig_sources):
+        if src not in yaml_data:
+            print(f'! {src} not in {mode}')
+            continue
+        
+        yaml_data[src]['slit_index'] = i
+        new = rename_source(src)
+        print(f'{i:>2d}   {src}  >>>  {new}')
+        
+        yaml_data[new] = yaml_data.pop(src)
+        
+    # Move phot files
+    for i, src in enumerate(orig_sources):
+        new = rename_source(src)
+        print(f'{i:>2} {src} >> {new}')
+        
+        for file in files:
+            base = file.split('_rate.fits')[0]
+            old_file = f'{base}_phot.{i:03d}.fits'
+            new_file = f'{base}_phot.{i:03d}.{new}.fits'
+            if os.path.exists(old_file):
+                cmd = f'mv {old_file} {new_file}'
+                os.system(cmd)
+                print(f'  {cmd}')
+            else:
+                print(f'  {old_file}  {new_file}')
+                
+    # Write updated yaml file
+    with open(yaml_file,'w') as fp:
+        yaml.dump(yaml_data, stream=fp)
+    
+    print(f'Fix {yaml_file}')
+
+
+def slit_trace_center(slit, with_source_ypos=True, index_offset=0.):
+    """
+    Get detector coordinates along the center of a slit
+    """
+    from gwcs import wcstools
+    
+    sh = slit.data.shape
+    
+    _wcs = slit.meta.wcs
+    
+    s2d = _wcs.get_transform('slit_frame', 'detector')
+    d2s = _wcs.get_transform('detector', 'slit_frame')
+    s2w = _wcs.get_transform('slit_frame', 'world')
+    d2w = _wcs.get_transform('detector', 'world')
+
+    bbox = _wcs.bounding_box
+    grid = wcstools.grid_from_bounding_box(bbox)
+    _, sy, slam = np.array(d2s(*grid))
+    
+    smi = np.nanmin(sy)
+    sma = np.nanmax(sy)
+    
+    x = np.arange(sh[1], dtype=float)
+    xd, yd = x, x*0.+sh[0]//2
+
+    for _iter in range(3):
+        xs, ys, ls = d2s(xd, yd)
+        xd, yd = s2d(x*0, x*0. + slit.source_ypos*with_source_ypos, ls)
+        yd = np.interp(x, xd, yd)
+        xd = x
+    
+    yd += index_offset
+    _ra, _dec, lam = d2w(xd, yd)
+    
+    rs, ds, _ = d2w(xd[sh[1]//2], yd[sh[0]//2])
+    
+    return xd, yd, lam, rs, ds
+    
+
+def get_slit_corners(slit):
+    """
+    """
+    from gwcs import wcstools
+    
+    sh = slit.data.shape
+    
+    _wcs = slit.meta.wcs
+    
+    s2d = _wcs.get_transform('slit_frame', 'detector')
+    d2s = _wcs.get_transform('detector', 'slit_frame')
+    s2w = _wcs.get_transform('slit_frame', 'world')
+    d2w = _wcs.get_transform('detector', 'world')
+
+    bbox = _wcs.bounding_box
+    grid = wcstools.grid_from_bounding_box(bbox)
+    _, sy, slam = np.array(d2s(*grid))
+    
+    smi = np.nanmin(sy)
+    sma = np.nanmax(sy)
+    
+    slit_x = np.array([-0.5, 0.5, 0.5, -0.5])
+    slit_y = np.array([smi, smi, sma, sma])
+    
+    ra_corner, dec_corner, _w = s2w(slit_x, slit_y, np.nanmedian(slam))
+    return ra_corner, dec_corner
+    
+    
 GRATING_LIMITS = {'prism': [0.58, 5.3, 0.01], 
                   'g140m': [0.7, 1.9, 0.00063], 
-                  'g235m': [1.6, 3.1, 0.00106], 
-                  'g395m': [2.8, 5.2, 0.00179],
+                  'g235m': [1.66, 3.17, 0.00106], 
+                  'g395m': [2.83, 5.24, 0.00179],
                   'g140h': [0.7, 1.9, 0.000238], 
                   'g235h': [1.6, 3.1, 0.000396], 
-                  'g395h': [2.8, 5.2, 0.000666]}
+                  'g395h': [2.83, 5.24, 0.000666]}
 
 def get_standard_wavelength_grid(grating, sample=1, free_prism=True, log_step=False, grating_limits=GRATING_LIMITS):
     """
@@ -85,7 +246,7 @@ def get_standard_wavelength_grid(grating, sample=1, free_prism=True, log_step=Fa
     return target_waves
 
 
-def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_scale=1, log_wave=False, refmodel=None, verbose=True, wave_range=None, wave_step=None, wave_array=None, **kwargs):
+def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_scale=1, log_wave=False, refmodel=None, verbose=True, wave_range=None, wave_step=None, wave_array=None, ypad=2, get_weighted_center=False, **kwargs):
     """
     Create a spatial/spectral WCS covering footprint of the input
     
@@ -101,6 +262,9 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     
     log_wave : bool
         Wavelength grid is evenly spaced in log(wave)
+    
+    get_weighted_center : bool
+        Try to find the source centroid in the slit
     
     Returns
     -------
@@ -162,14 +326,14 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     sd = s * refmodel_data
     ld = lam * refmodel_data
     good_s = np.isfinite(sd)
-    if np.any(good_s):
+    if np.any(good_s) & get_weighted_center:
         total = np.sum(refmodel_data[good_s])
         wmean_s = np.sum(sd[good_s]) / total
         wmean_l = np.sum(ld[good_s]) / total
     else:
         wmean_s = 0.5 * (refmodel.slit_ymax - refmodel.slit_ymin)
         wmean_l = d2s(*np.mean(bbox, axis=1))[2]
-
+        
     # transform the weighted means into target RA/Dec
     targ_ra, targ_dec, _ = s2w(0, wmean_s, wmean_l)
 
@@ -265,20 +429,42 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     # det_slit_span = np.linalg.norm(np.subtract(xy_max, xy_min))
     det_slit_span = np.nanmax(np.linalg.norm(np.subtract(xy_max, xy_min), axis=0))
     ny = int(np.ceil(det_slit_span * pscale_ratio + 0.5)) + 1
-
+    
+    if ypad > 0:
+        if verbose:
+            print(f'Pad {ypad} pixels on 2D cutout')
+            
+        ny += 2*ypad
+        
     border = 0.5 * (ny - det_slit_span * pscale_ratio) - 0.5
 
+    # if xy_min[1][1] < xy_max[1][1]:
+    #     y_slit_model = Linear1D(
+    #         slope=pscale / pscale_ratio,
+    #         intercept=y_slit_min - border * pscale * pscale_ratio
+    #     )
+    # else:
+    #     y_slit_model = Linear1D(
+    #         slope=-pscale / pscale_ratio,
+    #         intercept=y_slit_max + border * pscale * pscale_ratio
+    #     )
     if xy_min[1][1] < xy_max[1][1]:
-        y_slit_model = Linear1D(
-            slope=pscale / pscale_ratio,
-            intercept=y_slit_min - border * pscale * pscale_ratio
-        )
+        intercept = y_slit_min - border * pscale * pscale_ratio
+        slope = pscale / pscale_ratio
+        #intercept += refmodel.source_ypos  #/ xylen
     else:
-        y_slit_model = Linear1D(
-            slope=-pscale / pscale_ratio,
-            intercept=y_slit_max + border * pscale * pscale_ratio
-        )
-
+        intercept = y_slit_max + border * pscale * pscale_ratio
+        slope = -pscale / pscale_ratio
+        #intercept -= refmodel.source_ypos # / xylen
+    
+    # print('xxx', slope, y_slit_min, y_slit_max, refmodel.slit_ymin, refmodel.slit_ymax, refmodel.source_ypos, refmodel.slit_ymin/y_slit_min, refmodel.slit_ymax/y_slit_max)
+    
+    #intercept -= 3.    
+    y_slit_model = Linear1D(
+            slope=slope,
+            intercept=intercept
+    )
+            
     # extrapolate 1/2 pixel at the edges and make tabular model w/inverse:
     lam = lam.tolist()
     pixel_coord = list(range(n_lam))
@@ -370,7 +556,7 @@ DRIZZLE_PARAMS = dict(output=None,
                       pscale_ratio=1.0,
                       pscale=None)
 
-def drizzle_slits_2d(slits, drizzle_params=DRIZZLE_PARAMS, **kwargs):
+def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, **kwargs):
     """
     Run `jwst.resample.resample_spec import ResampleSpecData` on a list of 
     List of `jwst.datamodels.slit.SlitModel` objects.
@@ -411,8 +597,11 @@ def drizzle_slits_2d(slits, drizzle_params=DRIZZLE_PARAMS, **kwargs):
     if 'pscale_ratio' in drizzle_params:
         kwargs['pscale_ratio'] = drizzle_params['pscale_ratio']
     
-    _data = build_regular_wavelength_wcs(slits, **kwargs)
-    target_waves, header, data_size, output_wcs = _data
+    if build_data is None:
+        _data = build_regular_wavelength_wcs(slits, **kwargs)
+        target_waves, header, data_size, output_wcs = _data
+    else:
+        target_waves, header, data_size, output_wcs = build_data
     
     # Own drizzle single to get variances
     if 'single' in drizzle_params:
@@ -460,7 +649,7 @@ def drizzle_slits_2d(slits, drizzle_params=DRIZZLE_PARAMS, **kwargs):
     return target_waves, header, drizzled_slits
 
 
-def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_center=None, prf_sigma=1.0, center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, verbose=True, profile_slice=None, **kwargs):
+def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=2, prf_center=None, prf_sigma=1.0, center_limit=8, fit_prf=True, fix_center=False, fix_sigma=False, verbose=True, profile_slice=None, **kwargs):
     """
     Combine single drizzled arrays with outlier detection
     
@@ -474,7 +663,7 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
         objects, e.g., multiple visits or combining across the two detectors
         to a single output product.
     
-    sigma : float
+    outlier_threshold : float
         Outlier threshold (absolute value) for identifying outliers between the
         different slitlets, e.g., bad pixels and cosmic rays
     
@@ -517,6 +706,9 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
     spec : `astropy.table.Table`
         1D extraction
     
+    prof_tab : `astropy.table.Table`
+        Cross-dispersion profile
+    
     """
     from photutils.psf import IntegratedGaussianPRF
     from astropy.modeling.models import Polynomial2D
@@ -529,9 +721,19 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
     
     sci = np.array([s.data for s in drizzled_slits])
     dq = np.array([s.dq for s in drizzled_slits])
-    err = np.array([s.err*(1+np.sqrt(2))/np.sqrt(2) for s in drizzled_slits])
     
-    ivar = 1/err**2
+    if 0:
+        err = np.array([s.err*2. for s in drizzled_slits])
+        ivar = 1/err**2
+    
+    # jwst resample uses 1/var_rnoise as the weight
+    ivar = np.array([1/s.var_rnoise for s in drizzled_slits])
+    ivar[~np.isfinite(ivar)] = 0
+    ivar *= 0.25
+    
+    err = 1/np.sqrt(ivar)
+    err[ivar == 0] = 0
+    
     dq[(sci == 0) | (~np.isfinite(sci))] |= 1
     sci[dq > 0] = np.nan
     med = np.nanmedian(sci, axis=0)
@@ -545,7 +747,7 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
         
         ivar[(dq > 0) | (~np.isfinite(mad))] = 0.
         
-    bad = np.abs(sci-med)*np.sqrt(ivar) > sigma
+    bad = np.abs(sci-med)*np.sqrt(ivar) > outlier_threshold
     bad |= dq > 0
 
     sci[bad] = 0
@@ -562,13 +764,29 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
     if profile_slice is not None:
         prof1d = np.nansum((sci2d * wht2d)[:,profile_slice], axis=1) 
         prof1d /= np.nansum(wht2d[:,profile_slice], axis=1)
+        slice_limits = profile_slice.start, profile_slice.stop
     else:
         prof1d = np.nansum(sci2d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
+        slice_limits = 0, sh[1]
     
-    ok = np.isfinite(prof1d) & (prof1d > 0)
+    ok = np.isfinite(prof1d)
+    # Trim edges
+    ok[np.where(ok)[0][:1]] = False
+    ok[np.where(ok)[0][-1:]] = False
     
-    x0 = np.arange(sh[0]) - sh[0]/2.
-    y0 = yp - sh[0]/2.
+    ok &= (prof1d > 0)
+    
+    # expected center
+    # xtr, ytr, _, _, _ = slit_trace_center(drizzled_slits[0],
+    #                                       with_source_ypos=1,
+    #                                       index_offset=0.5)
+                                          
+    xpix = np.arange(sh[0])
+    # ytrace = np.nanmedian(ytr)
+    # print('xxx', ytrace, sh[0]/2)
+    ytrace = sh[0]/2.
+    x0 = np.arange(sh[0]) - ytrace
+    y0 = yp - ytrace
     
     if prf_center is None:
         msk = ok & (np.abs(x0) < center_limit)
@@ -585,6 +803,9 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
         prf.fixed['x_0'] = True
         prf.fixed['y_0'] = fix_center
         prf.fixed['sigma'] = fix_sigma    
+        prf.bounds['sigma'] = (0.5, 2.0)
+        prf.bounds['y_0'] = (prf_center-center_limit, prf_center+center_limit)
+        
         pfit = fitter(prf, x0[ok]*0., x0[ok], prof1d[ok])
         
         if verbose:
@@ -595,12 +816,18 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
     else:
         pfit = prf
     
-    # Renormalize
-    pfit.flux = 1.0
+    # Renormalize for 1D
+    pfit.flux = prf.sigma.value*np.sqrt(2*np.pi)
     
     profile2d = pfit(y0*0., y0)
     wht1d = (wht2d*profile2d**2).sum(axis=0)
     sci1d = (sci2d*wht2d*profile2d).sum(axis=0) / wht1d
+    
+    if profile_slice is not None:
+        pfit1d = np.nansum((wht2d*profile2d*sci1d)[:,profile_slice], axis=1) 
+        pfit1d /= np.nansum(wht2d[:,profile_slice], axis=1)
+    else:
+        pfit1d = np.nansum(profile2d*sci1d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
     
     if trim > 0:
         bad = nd.binary_dilation(wht1d <= 0, iterations=trim)
@@ -615,11 +842,24 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
     
     spec = grizli.utils.GTable()
     spec.meta['NCOMBINE'] = len(drizzled_slits)
-    spec.meta['MASKSIG'] = sigma, 'Mask sigma'
+    spec.meta['OTHRESH'] = outlier_threshold, 'Outlier mask threshold, sigma'
     
     spec.meta['TOMUJY'] = to_ujy, 'Conversion from pixel values to microJansky'
     spec.meta['PROFCEN'] = pfit.y_0.value, 'PRF profile center'
     spec.meta['PROFSIG'] = pfit.sigma.value, 'PRF profile sigma'
+    spec.meta['PROFSTRT'] = slice_limits[0], 'Start of profile slice'
+    spec.meta['PROFSTOP'] = slice_limits[1], 'End of profile slice'
+    spec.meta['YTRACE'] = ytrace, 'Expected center of trace'
+    
+    prof_tab = grizli.utils.GTable()
+    prof_tab['pix'] = x0
+    prof_tab['profile'] = prof1d
+    prof_tab['pfit'] = pfit1d
+    prof_tab.meta['PROFCEN'] = pfit.y_0.value, 'PRF profile center'
+    prof_tab.meta['PROFSIG'] = pfit.sigma.value, 'PRF profile sigma'
+    prof_tab.meta['PROFSTRT'] = slice_limits[0], 'Start of profile slice'
+    prof_tab.meta['PROFSTOP'] = slice_limits[1], 'End of profile slice'
+    prof_tab.meta['YTRACE'] = ytrace, 'Expected center of trace'
     
     met = drizzled_slits[0].meta.instrument.instance
     for k in ['detector','filter','grating']:
@@ -638,10 +878,10 @@ def combine_2d_with_rejection(drizzled_slits, sigma=5, grow=0, trim=2, prf_cente
     spec['flux'].unit = u.microJansky
     spec['err'].unit = u.microJansky
     
-    return sci2d*to_ujy, wht2d/to_ujy**2, profile2d, spec
+    return sci2d*to_ujy, wht2d/to_ujy**2, profile2d, spec, prof_tab
 
 
-def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_params=DRIZZLE_PARAMS, **kwargs):
+def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_params=DRIZZLE_PARAMS, include_separate=True, **kwargs):
     """
     Drizzle list of background-subtracted slitlets
     
@@ -649,6 +889,9 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     ----------
     slits : list
         List of `jwst.datamodels.SlitModel` objects
+    
+    output_root : str
+        Optional rootname of output files
     
     drizzle_params : dict
         Drizzle parameters passed on initialization of the 
@@ -680,7 +923,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     target_wave, header, drizzled_slits = _data0
     
     _data1 = combine_2d_with_rejection(drizzled_slits, **kwargs)
-    sci2d, wht2d, profile2d, spec = _data1
+    sci2d, wht2d, profile2d, spec, prof = _data1
     
     hdul = pyfits.HDUList()
     hdul.append(pyfits.BinTableHDU(data=spec, name='SPEC1D'))
@@ -694,14 +937,18 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     hdul.append(pyfits.ImageHDU(data=sci2d, header=header, name='SCI'))
     hdul.append(pyfits.ImageHDU(data=wht2d, header=header, name='WHT'))
     hdul.append(pyfits.ImageHDU(data=profile2d, header=header, name='PROFILE'))
-
+    
+    # if include_separate:
+    #     for s in drizzled_slits.
+    hdul.append(pyfits.BinTableHDU(data=prof, name='PROF1D'))
+    
     if output_root is not None:
-        hdul.write(f'{output_root}.driz.fits', overwrite=True)
+        hdul.writeto(f'{output_root}.driz.fits', overwrite=True)
         
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, z=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, z=None, ny=None, output_root=None):
     """
     Figure showing drizzled hdu
     """
@@ -711,11 +958,6 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     sp = grizli.utils.GTable(hdul['SPEC1D'].data)
     nx = len(sp)
 
-    # Extraction profile
-    pden = np.nansum(hdul['WHT'].data, axis=1)
-    snum = np.nansum(hdul['SCI'].data*hdul['WHT'].data, axis=1)
-    pnum = np.nansum(hdul['PROFILE'].data*hdul['WHT'].data*sp['flux'], axis=1)
-    
     fig, a2d = plt.subplots(2,2, **subplot_args)
     axes = [a2d[0][0], a2d[1][0]]
     
@@ -730,26 +972,51 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
                    interpolation='nearest')
                    
     axes[0].set_yticklabels([])
-    y0 = hdul['PROFILE'].header['NAXIS2']/2. + hdul['SPEC1D'].header['PROFCEN']
-    
-    prof = pnum/pden
-    sprof = snum/pden
-    pmax = np.nanmax(prof)
+    y0 = hdul['SPEC1D'].header['YTRACE'] + hdul['SPEC1D'].header['PROFCEN']
+    if ny is not None:
+        axes[0].set_ylim(y0-ny, y0+ny)
+        axes[0].set_yticks([y0])
+    else:
+        axes[0].set_yticks([y0-4, y0+4])
         
+    # Extraction profile
     ap = a2d[0][1]
-    ap.step(sprof/pmax, np.arange(len(prof)), color='k', where='mid', alpha=0.8, lw=2)
-    ap.step(prof/pmax, np.arange(len(prof)), color='r', where='mid', alpha=0.5, lw=1)
-    ap.fill_betweenx(np.arange(len(prof)), prof*0., prof/pmax, color='r', alpha=0.2, lw=1)
+    ptab = grizli.utils.GTable(hdul['PROF1D'].data)
+    pmax = np.nanmax(ptab['pfit'])
+    
+    sh = hdul['SCI'].data.shape
+    sli = (hdul['PROF1D'].header['PROFSTRT'],
+           hdul['PROF1D'].header['PROFSTOP'])
+           
+    if sli != (0, sh[1]):
+        
+        dy = np.diff(axes[0].get_ylim())[0]
+        
+        axes[0].scatter(sli[0], y0+0.25*dy, marker='>', fc='w', ec='k')
+        axes[0].scatter(sli[1], y0+0.25*dy, marker='<', fc='w', ec='k')
+                
+    if pmax > 0:
+        xpr = np.arange(len(ptab))
+        ap.step(ptab['profile']/pmax, xpr, color='k',
+                where='mid', alpha=0.8, lw=2)
+        ap.step(ptab['pfit']/pmax, xpr, color='r',
+                where='mid', alpha=0.5, lw=1)
+        ap.fill_betweenx(xpr, xpr*0., ptab['pfit']/pmax,
+                color='r', alpha=0.2)
+        
+        ap.text(0.5, -0.1, f"{hdul['SPEC1D'].header['PROFCEN']:5.2f} ± {hdul['SPEC1D'].header['PROFSIG']:4.2f}", 
+                ha='center', va='top',
+                transform=ap.transAxes, fontsize=7)
+                
     ap.set_ylim(axes[0].get_ylim())
     ap.set_yticks([y0-4, y0+4])
     ap.grid()
     ap.set_xlim(-0.5, 1)
     ap.set_xticklabels([])
     ap.set_yticklabels([])
+    
     a2d[1][1].set_visible(False)
-    
-    axes[0].set_yticks([y0-4, y0+4])
-    
+        
     axes[1].step(np.arange(len(sp)), sp['flux'], where='mid', color='0.5', alpha=0.9)
     axes[1].step(np.arange(len(sp)), sp['err'], where='mid', color='r', alpha=0.2)
     xl = axes[1].get_xlim()
@@ -757,19 +1024,6 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     axes[1].fill_between(xl, [-ymax, -ymax], [0, 0], color='0.8', alpha=0.1)
     axes[1].set_xlim(*xl)
     
-    if z is not None:
-        cc = grizli.utils.MPL_COLORS
-        for w, c in zip([3727, 4860, 4980, 6565, 9070, 9530, 1.094e4, 1.282e4, 
-                         1.875e4, 1.083e4], 
-                    [cc['purple'], cc['g'], cc['b'], cc['g'], 'darkred', 'darkred', 
-                     cc['pink'], cc['pink'], cc['pink'], cc['orange']]):
-            wz = w*(1+z)/1.e4
-            dw = 70*(1+z)/1.e4
-            wx = np.interp([wz-dw, wz+dw], sp['wave'], np.arange(len(sp)))
-
-            axes[1].fill_between(wx, [0,0], [100,100], 
-                            color=c, alpha=0.07, zorder=-100)
-        
     axes[1].set_ylim(-0.1*ymax, ymax)
     axes[1].set_xlabel(r'$\lambda_\mathrm{obs}$ [$\mu$m]')
     axes[1].set_ylabel(r'$f_\nu$ [$\mu$Jy]')
@@ -799,19 +1053,82 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     for ax in axes:
         ax.set_xticks(xvm, minor=True)
         ax.set_xticks(xv, minor=False)
-        ax.set_xticklabels(xt)
-        ax.grid()
+        ax.xaxis.set_ticks_position('both')
+
+    axes[1].set_xticklabels(xt)
+    axes[1].grid()
+    
+    if z is not None:
+        cc = grizli.utils.MPL_COLORS
+        for w, c in zip([1216., 1909., 2799., 
+                         3727, 4860, 5007, 6565, 9070, 9530,
+                         1.094e4, 1.282e4, 
+                         1.875e4, 1.083e4], 
+                    ['purple','olive', 'skyblue', 
+                     cc['purple'], cc['g'], cc['b'], cc['g'], 'darkred', 'darkred', 
+                     cc['pink'], cc['pink'], cc['pink'], cc['orange']]):
+            wz = w*(1+z)/1.e4
+            dw = 70*(1+z)/1.e4
+            dw = 0.01*(sp['wave'].max()-sp['wave'].min())
+            
+            wx = np.interp([wz-dw, wz+dw], sp['wave'], np.arange(len(sp)))
+
+            axes[1].fill_between(wx, [0,0], [100,100], 
+                            color=c, alpha=0.07, zorder=-100)
+        
+        # Rest ticks on top 
+        wrest = np.arange(0.1, 1.91, 0.05)
+        wrest = np.append(wrest, np.arange(2.0, 5.33, 0.1))
+        xtr = wrest*(1+z)
+        in_range = (xtr > sp['wave'].min()) & (xtr < sp['wave'].max())
+        if in_range.sum() > 9:
+            wrest = np.arange(0.1, 1.91, 0.1)
+            wrest = np.append(wrest, np.arange(2.0, 5.33, 0.2))
+            xtr = wrest*(1+z)
+            in_range = (xtr > sp['wave'].min()) & (xtr < sp['wave'].max())
+            
+        xtr = xtr[in_range]
+        xvr = np.interp(xtr, sp['wave'], np.arange(len(sp)))
+        axes[0].set_xticks(xvr, minor=False)
+        xticks = [f'{w:0.2}' for w in wrest[in_range]]
+        #xticks[0] = f'z={z:.3f}' #' {xticks[0]}'
+        axes[0].set_xticklabels(xticks)
+        axes[1].text(0.03,0.96, f'z={z:.4f}',
+                      ha='left', va='top',
+                      transform=axes[1].transAxes,
+                      fontsize=8, 
+                      bbox={'fc':'w', 'alpha':0.5, 'ec':'None'})
+                      
+                     
+        mrest = np.arange(0.1, 1.91, 0.01)
+        mrest = np.append(mrest, np.arange(2.0, 5.33, 0.05))
+        xtr = mrest*(1+z)
+        xtr = xtr[(xtr > sp['wave'].min()) & (xtr < sp['wave'].max())]
+        xvr = np.interp(xtr, sp['wave'], np.arange(len(sp)))
+        axes[0].set_xticks(xvr, minor=True)
+        
+    else:
+        axes[0].set_xticklabels([])
+        axes[0].grid()
+    
+    if output_root is not None:
+        axes[1].text(0.97,0.96, output_root,
+                      ha='right', va='top',
+                      transform=axes[1].transAxes,
+                      fontsize=8, 
+                      bbox={'fc':'w', 'alpha':0.5, 'ec':'None'})
         
     if xlim is not None:
         xvi = np.interp(xlim, sp['wave'], np.arange(len(sp)))
         for ax in axes:
             ax.set_xlim(*xvi)
+        
     else:
         for ax in axes:
             ax.set_xlim(0, nx)
             
     fig.tight_layout(pad=0.5)
-
+    
     return fig
 
 
@@ -891,7 +1208,7 @@ def extract_all():
                           pscale=None)
                           
     wave, header, drizzled_slits = msaexp.utils.drizzle_slits_2d(slits, drizzle_params=drizzle_params, **kwargs)
-    sci2d, wht2d, profile2d, spec = msaexp.utils.combine_2d_with_rejection(drizzled_slits, sigma=10, **prf_kwargs)
+    sci2d, wht2d, profile2d, spec, prof = msaexp.utils.combine_2d_with_rejection(drizzled_slits, outlier_threshold=10, **prf_kwargs)
     
     for k in ['name','ra','dec']:
         spec.meta[k] = sl[f'source_{k}']

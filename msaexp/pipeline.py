@@ -108,19 +108,25 @@ class SlitData():
     """
     Container for a list of SlitModel objects read from saved files
     """
-    def __init__(self, file='jw02756001001_03101_00001_nrs1_rate.fits', step='phot', verbose=True, read=False, indices=None):
+    def __init__(self, file='jw02756001001_03101_00001_nrs1_rate.fits', step='phot', verbose=True, read=False, indices=None, targets=None):
         """
         Load saved slits
         """
 
         self.slits = []
         
-        if indices is None:
-            self.files = glob.glob(file.replace('rate.fits', f'{step}.*.fits'))
-        else:
+        if indices is not None:
             self.files = []
             for i in indices:
-                self.files += glob.glob(file.replace('rate.fits', f'{step}.{i:03d}.fits'))
+                self.files += glob.glob(file.replace('rate.fits',
+                                        f'{step}.{i:03d}.*.fits'))
+        elif targets is not None:
+            self.files = []
+            for target in targets:
+                self.files += glob.glob(file.replace('rate.fits',
+                                        f'{step}.*{target}.fits'))
+        else:
+            self.files = glob.glob(file.replace('rate.fits', f'{step}.*.fits'))
                 
         self.files.sort()
         
@@ -187,6 +193,28 @@ class NirspecPipeline():
     @property
     def N(self):
         return len(self.files)
+
+
+    @property
+    def targets(self):
+        """
+        Reformatted target name:
+        
+        background_{i} > b{i}
+        xxx_-{i} > xxx_m{i}
+        
+        """
+        return list(self.slitlets.keys())
+
+
+    def slit_index(self, key):
+        """
+        Index of ``key`` in ``self.slitlets``
+        """
+        if key not in self.slitlets:
+            return None
+        else:
+            return self.targets.index(key)
 
 
     def preprocess(self, set_context=True):
@@ -341,22 +369,19 @@ class NirspecPipeline():
         return True
 
 
-    def save_slit_data(self, indices=None, step='phot', verbose=True):
+    def save_slit_data(self, step='phot', verbose=True):
         """
         Save slit data to FITS
         """
         from jwst.datamodels import SlitModel
-
+        
         for j in range(self.N):
-            Ns = len(self.pipe[step][j].slits)
-            if indices is None:
-                indices = range(Ns)
-
-            for i in indices:
+            for i, _name in enumerate(self.targets):
+                
                 slit_file = self.files[j].replace('rate.fits',
-                                                  f'{step}.{i:03d}.fits')
+                                                f'{step}.{i:03d}.{_name}.fits')
+                                                  
                 msg = f'msaexp.save_slit_data: {slit_file} '
-                msg += f' {self.pipe[step][j].slits[i].source_name}'
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                                   show_date=False)
 
@@ -370,6 +395,7 @@ class NirspecPipeline():
         """
         """
         import yaml
+        from . import utils as msautils
         
         slitlets = {}
         
@@ -388,7 +414,7 @@ class NirspecPipeline():
                               show_date=False)
             
             with open(yaml_file) as fp:
-                yaml_data = yaml.load(fp, Loader=yaml.SafeLoader)
+                yaml_data = yaml.load(fp, Loader=yaml.Loader)
         else:
             yaml_data = {}
                 
@@ -413,12 +439,7 @@ class NirspecPipeline():
             else:
                 meta['slit_index'] = i    
                 meta['is_background'] = False
-                
-                msg = '{slit_index:>4}  {slitlet_id:>4} {source_name:>12} '
-                msg += ' {source_ra:.6f} {source_dec:.6f}'
-                utils.log_comment(utils.LOGFILE, msg.format(**meta), 
-                                  verbose=True, show_date=False)
-
+            
             meta['bkg_index'] = bg
             meta['src_index'] = src
             meta['slit_index'] = i    
@@ -427,14 +448,22 @@ class NirspecPipeline():
             meta['skip'] = skip
             meta['redshift'] = None
 
-            if meta['source_name'] in yaml_data:
+            _name = msautils.rename_source(meta['source_name'])
+            if _name in yaml_data:
                 for k in meta:
-                    if k in yaml_data[meta['source_name']]:
-                        meta[k] = yaml_data[meta['source_name']][k]
+                    if k in yaml_data[_name]:
+                        meta[k] = yaml_data[_name][k]
             
-            slitlets[meta['source_name']] = {}
+            msg = '{slit_index:>4}  {slitlet_id:>4} {source_name:>12} '
+            msg += ' {source_ra:.6f} {source_dec:.6f}'
+            utils.log_comment(utils.LOGFILE, msg.format(**meta), 
+                              verbose=True, show_date=False)
+            
+            #_name =  meta['source_name'].replace('background_','b')
+            #_name = _name.replace('_-','_m')
+            slitlets[_name] = {}
             for k in meta:
-                slitlets[meta['source_name']][k] = meta[k]
+                slitlets[_name][k] = meta[k]
 
         return slitlets
 
@@ -455,7 +484,7 @@ class NirspecPipeline():
                 fp.write('image\n')
                 for key in slitlets:
                     slitlet = slitlets[key]
-                    i = slitlet['slit_index']
+                    i = self.slit_index(key) #slitlet['slit_index']
                     _slit = pipe[j].slits[i]
                     _d = _slit.instance
                     
@@ -469,7 +498,7 @@ class NirspecPipeline():
                     if key.startswith('background'):
                         sr.ds9_properties = 'color=white'
 
-                    sr.label = slitlet['source_name']
+                    sr.label = key
                     fp.write(sr.region[0]+'\n')
             
             reg_files.append(det_reg)
@@ -501,7 +530,9 @@ class NirspecPipeline():
         """
         from jwst.datamodels import SlitModel
         
-        self.pipe['bkg'] = self.load_slit_data(step=self.last_step)
+        self.pipe['bkg'] = self.load_slit_data(step=self.last_step, 
+                                               targets=self.targets)
+                                               
         for j in range(self.N):
             for s in self.pipe['bkg'][j].slits:
                 s.has_background = False
@@ -515,7 +546,8 @@ class NirspecPipeline():
         """
         from photutils.psf import IntegratedGaussianPRF
         from scipy.optimize import minimize
-
+        from . import utils as msautils
+        
         prf = IntegratedGaussianPRF(sigma=2.8/2.35, x_0=0, y_0=0)
         
         if key.startswith('background'):
@@ -530,36 +562,47 @@ class NirspecPipeline():
                                       yoffset=yoffset, prof_sigma=prof_sigma,
                                       show_sn=True, verbose=False)
         
-        slitlet, _clean, _ivar, prof, y1, _wcs, chi, bad = _slit_data                              
+        _slit, _clean, _ivar, prof, y1, _wcs, chi, bad = _slit_data
+        
+        slitlet = self.slitlets[key]
+               
         sh = _clean.shape
         yp, xp = np.indices(sh)
         x = xp[0,:]
         _dq = ~bad
-        _ra = slitlet['source_ra'] 
-        _dec = slitlet['source_dec']
-
-        rs, ds, ws = _wcs.forward_transform(x, 
-                                     x*0+np.nanmean(yp[_dq]))
-        if _ra <= 0:
-            x0 = np.nanmean(xp[_dq])
-            y0 = np.nanmean(yp[_dq])
-            _ra, _dec, ws = _wcs.forward_transform(x0, y0)
+        # _ra = slitlet['source_ra']
+        # _dec = slitlet['source_dec']
+        #
+        # rs, ds, ws = _wcs.forward_transform(x,
+        #                              x*0+np.nanmean(yp[_dq]))
+        # if _ra <= 0:
+        #     x0 = np.nanmean(xp[_dq])
+        #     y0 = np.nanmean(yp[_dq])
+        #     _ra, _dec, ws = _wcs.forward_transform(x0, y0)
+        #
+        # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
+        # yeval = np.nanmean(ytr)
+        # dytest = [0]
+        # for _dy in range(sh[0]):
+        #     dytest.extend([-_dy, _dy])
+        #
+        # for dy in dytest:
+        #     rs, ds, ws = _wcs.forward_transform(x,
+        #                                         x*0+yeval+dy)
+        #     if (~np.isfinite(ws)).sum() == 0:
+        #         break
+        #
+        # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
+        # ytr -= 0.5
+        _res = msautils.slit_trace_center(_slit, 
+                                  with_source_ypos=True, 
+                                  index_offset=0.5)
+    
+        xd, yd, _w, _, _ = _res
         
-        xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-        yeval = np.nanmean(ytr)
-        dytest = [0]
-        for _dy in range(sh[0]):
-            dytest.extend([-_dy, _dy])
+        xtr = xd
+        ytr = slitlet['ytrace']*2 - yd
         
-        for dy in dytest:
-            rs, ds, ws = _wcs.forward_transform(x, 
-                                                x*0+yeval+dy)
-            if (~np.isfinite(ws)).sum() == 0:
-                break
-
-        xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-        ytr -= 0.5
-
         def _objfun_fit_profile(params, data, ret):
             """
             Loss function for fitting profile parameters
@@ -659,7 +702,7 @@ class NirspecPipeline():
         slits = [] 
             
         slitlet = self.slitlets[key]
-        i = slitlet['slit_index']
+        i = self.slit_index(key) #slitlet['slit_index']
         
         for j in range(self.N):
             bsl = self.pipe[step][j].slits[i]
@@ -693,12 +736,57 @@ class NirspecPipeline():
         return result
 
 
+    def get_slit_traces(self, verbose=True):
+        """
+        Set center of slit traces in `slitlets`
+        """
+        from . import utils
+        from . import utils as msautils
+        
+        msg = f'msaexp.get_slit_traces: Run'
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                          show_date=True)
+        
+        for key in self.slitlets:
+            i = self.slit_index(key)
+            for j in range(self.N):
+                slit = self.pipe[self.last_step][j].slits[i]
+                dith = slit.meta.dither.instance
+                if dith['position_number'] == 1:
+                    _res = msautils.slit_trace_center(slit, 
+                                       with_source_ypos=True, index_offset=0.5)
+                    
+                    xtr, ytr, wtr, slit_ra, slit_dec = _res
+                    
+                    self.slitlets[key]['xtrace'] = xtr
+                    self.slitlets[key]['ytrace'] = ytr
+                    self.slitlets[key]['wtrace'] = wtr
+                    
+                    self.slitlets[key]['slit_ra'] = slit_ra
+                    self.slitlets[key]['slit_dec'] = slit_dec
+                                        
+                    break
+            
+            msg = 'msaexp.get_slit_traces: '
+            
+            if j == self.N-1:
+                msg += f'! no index position found for {key}'
+            else:
+                msg += f'Trace set for {key} at index {j}'
+
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                              show_date=False)
+
+
     def extract_spectrum(self, key, slit_key=None, prof_sigma=None, fit_profile_params={'min_delta':100}, pstep=1.0, show_sn=True, flux_unit=FNU_UNIT, vmax=0.2, yoffset=None, skip=None, bad_dq_bits=(1 | 1024), clip_sigma=-4, ntrim=5, get_slit_data=False, verbose=False, center2d=False, **kwargs):
         """
         Extract 2D spectrum
         """                
-        import eazy.utils
+        from gwcs import wcstools
         from photutils.psf import IntegratedGaussianPRF
+        import eazy.utils
+        
+        from . import utils as msautils
         
         if key not in self.slitlets:
             print(f'{key} not found in slitlets')
@@ -721,7 +809,7 @@ class NirspecPipeline():
         slitlet = self.slitlets[key]
         #slitlet['bkg_index'], slitlet['src_index'], slitlet['slit_index']
 
-        i = slitlet['slit_index']
+        i = self.slit_index(key) #slitlet['slit_index']
         
         for j in range(self.N):
             if 'bkg' in self.pipe:
@@ -740,7 +828,10 @@ class NirspecPipeline():
         else:
             slitlet['prof_sigma'] = prof_sigma
                 
-        prf = IntegratedGaussianPRF(sigma=prof_sigma, x_0=0, y_0=0)
+        prf = IntegratedGaussianPRF(sigma=prof_sigma,
+                                    x_0=0.0,
+                                    y_0=0.0, 
+                                    flux=prof_sigma*np.sqrt(2*np.pi))
         
         if skip is None:
             skip = slitlet['skip']
@@ -769,7 +860,8 @@ class NirspecPipeline():
         all_prof = []
 
         _ra = None
-
+        xref = yref = None
+        
         for ip, p in enumerate(permutations(range(self.N), self.N)):
             _sci = None
             if ip % (self.N-1) == 0:
@@ -786,7 +878,6 @@ class NirspecPipeline():
                             _bkg_slit = None
                             
                         sh = _slit.data.shape
-                        x = np.arange(sh[1])
 
                         _dq = (pipe[j].slits[i].dq & bad_dq_bits) == 0
                         _sci = pipe[j].slits[i].data
@@ -799,53 +890,104 @@ class NirspecPipeline():
                         _bkgn = _sci*0.
 
                         _wcs = _slit.meta.wcs
+                        d2w = _wcs.get_transform('detector', 'world')
 
                         yp, xp = np.indices(sh)
-
-                        rs, ds, ws = _wcs.forward_transform(x, 
-                                                     x*0+np.nanmean(yp[_dq]))
-                        if _ra is None:
-                            if (slitlet['source_ra'] > 0):
-                                _ra = slitlet['source_ra'] 
-                                _dec = slitlet['source_dec']
-                            else:
-                                x0 = np.nanmean(xp[_dq])
-                                y0 = np.nanmean(yp[_dq])
-                                _ra, _dec, w0 = _wcs.forward_transform(x0, y0)
-                                msg = f'msaexp.extract_spectrum: Set '
-                                msg += f' source_ra/source_dec: '
-                                msg += f'{_ra}, {_dec}'
-                                utils.log_comment(utils.LOGFILE, msg, 
-                                                  verbose=True)
-
-                                slitlet['source_ra'] = _ra
-                                slitlet['source_dec'] = _dec
-
-                        xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-                        yeval = np.nanmean(ytr)
                         
-                        dytest = [0]
-                        for _dy in range(sh[0]):
-                            dytest.extend([-_dy, _dy])
-                            
-                        for dy in dytest:
-                            rs, ds, ws = _wcs.forward_transform(x, 
-                                                                x*0+yeval+dy)
-                            if verbose: 
-                                print('dy: ', (~np.isfinite(ws)).sum(), dy)
-
-                            if (~np.isfinite(ws)).sum() == 0:
-                                if verbose:
-                                    print('y center: ', dy)
-                                break
-
-                        xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-                        ytr -= 0.5
-                        ytr += yoffset
-                        xtr = x*1
+                        _res = msautils.slit_trace_center(_slit, 
+                                                  with_source_ypos=True, 
+                                                  index_offset=0.5)
+                    
+                        xd, yd, _w, _, _ = _res
                         
-                        # Todo - calculate ws again with offset?
-                        rx, dx, ws = _wcs.forward_transform(xtr, ytr)
+                        xtr = xd
+                        ytr = slitlet['ytrace']*2 - yd + yoffset
+                        
+                        # # Trace along expected source position
+                        # s2d = _wcs.get_transform('slit_frame', 'detector')
+                        # d2s = _wcs.get_transform('detector', 'slit_frame')
+                        # s2w = _wcs.get_transform('slit_frame', 'world')
+                        # d2w = _wcs.get_transform('detector', 'world')
+                        #
+                        # bbox = _wcs.bounding_box
+                        # grid = wcstools.grid_from_bounding_box(bbox)
+                        # _, sy, slam = np.array(d2s(*grid))
+                        #
+                        # smi = np.nanmin(sy)
+                        # sma = np.nanmax(sy)
+                        #
+                        # x = np.arange(sh[1], dtype=float)
+                        # xd, yd = x, x*0.+sh[0]//2
+                        #
+                        # for _iter in range(3):
+                        #     xs, ys, ls = d2s(xd, yd)
+                        #     xd, yd = s2d(x*0, x*0. + _slit.source_ypos, ls)
+                        #     yd = np.interp(x, xd, yd)
+                        #     xd = x
+                        #
+                        # dith = _slit.meta.dither.instance
+                        # if dith['position_number'] == 1:
+                        #     # Center world coord in slit
+                        #     rs, ds, _ = s2w(0, _slit.source_ypos, np.median(ls))
+                        #     slitlet['slit_ra'] = rs
+                        #     slitlet['slit_dec'] = ds
+                        #
+                        #     xref = xd*1.
+                        #     yref = yd*1.
+                        #
+                        #     xtr = x*1
+                        #     ytr = yref + yoffset + 0.5
+                        #
+                        # else:
+                        #
+                        #     ytr = yref*2 - yd + yoffset + 0.5
+                        
+                        _ras, _des, ws = d2w(xtr, ytr)
+                        
+                        # rs, ds, ws = _wcs.forward_transform(x,
+                        #                              x*0+np.nanmean(yp[_dq]))
+                        # if _ra is None:
+                        #     if (slitlet['source_ra'] > 0):
+                        #         _ra = slitlet['source_ra']
+                        #         _dec = slitlet['source_dec']
+                        #     else:
+                        #         x0 = np.nanmean(xp[_dq])
+                        #         y0 = np.nanmean(yp[_dq])
+                        #         _ra, _dec, w0 = _wcs.forward_transform(x0, y0)
+                        #         msg = f'msaexp.extract_spectrum: Set '
+                        #         msg += f' source_ra/source_dec: '
+                        #         msg += f'{_ra}, {_dec}'
+                        #         utils.log_comment(utils.LOGFILE, msg,
+                        #                           verbose=True)
+                        #
+                        #         slitlet['source_ra'] = _ra
+                        #         slitlet['source_dec'] = _dec
+                        #
+                        # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
+                        # yeval = np.nanmean(ytr)
+                        #
+                        # dytest = [0]
+                        # for _dy in range(sh[0]):
+                        #     dytest.extend([-_dy, _dy])
+                        #
+                        # for dy in dytest:
+                        #     rs, ds, ws = _wcs.forward_transform(x,
+                        #                                         x*0+yeval+dy)
+                        #     if verbose:
+                        #         print('dy: ', (~np.isfinite(ws)).sum(), dy)
+                        #
+                        #     if (~np.isfinite(ws)).sum() == 0:
+                        #         if verbose:
+                        #             print('y center: ', dy)
+                        #         break
+                        #
+                        # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
+                        # ytr -= 0.5
+                        # ytr += yoffset
+                        # xtr = x*1
+                        #
+                        # # Todo - calculate ws again with offset?
+                        # rx, dx, ws = _wcs.forward_transform(xtr, ytr)
                         
                     else:
                         _dq = (pipe[j].slits[i].dq & bad_dq_bits) == 0
@@ -896,7 +1038,7 @@ class NirspecPipeline():
                 
                 if get_slit_data:
                     chi = (_clean - prof*y1)*np.sqrt(_ivar)
-                    return slitlet, _clean, _ivar, prof, y1, _wcs, chi, bad
+                    return _slit, _clean, _ivar, prof, y1, _wcs, chi, bad
                 
                 _running = eazy.utils.running_median((yp-ytr)[~bad],
                                                      (prof*y1)[~bad], 
@@ -1179,7 +1321,7 @@ class NirspecPipeline():
             slitlet = self.slitlets[key]
             #slitlet['bkg_index'], slitlet['src_index'], slitlet['slit_index']
 
-            i = slitlet['slit_index']
+            i = self.slit_index(key) # slitlet['slit_index']
 
             yoffset = slitlet['yoffset']
             
@@ -1247,11 +1389,12 @@ class NirspecPipeline():
                         fp.write(sr.region[0]+'\n')
 
 
-    def load_slit_data(self, step='phot', verbose=True, indices=None):
+    def load_slit_data(self, step='phot', verbose=True, indices=None, targets=None):
         """
         Load slit data from files
         """
-        slit_lists = [SlitData(file, step=step, read=False, indices=indices)
+        slit_lists = [SlitData(file, step=step, read=False,
+                               indices=indices, targets=targets)
                       for file in self.files]
 
         counts = [sl.N for sl in slit_lists]
@@ -1271,21 +1414,28 @@ class NirspecPipeline():
         import yaml
 
         keys = ['source_name','source_ra','source_dec','skip',
-                'yoffset','prof_sigma','redshift','is_background']
+                'yoffset','prof_sigma','redshift','is_background',
+                'slit_index', 'src_index', 'bkg_index',
+                'slit_ra', 'slit_dec']
                 
-        info = {}
+        yaml_file = f'{self.mode}.slits.yaml'
+        if os.path.exists(yaml_file):
+            with open(yaml_file) as fp:
+                info = yaml.load(fp, Loader=yaml.Loader)
+        else:
+            info = {}
     
         for _src in self.slitlets:
             s = self.slitlets[_src]
             info[_src] = {}
             for k in keys:
-                info[_src][k] = s[k]
+                if k in s:
+                    info[_src][k] = s[k]
         
             if len(info[_src]['skip']) == 0:
                 info[_src]['skip'] = []
     
         if write:
-            yaml_file = f'{self.mode}.slits.yaml'
             with open(yaml_file,'w') as fp:
                 yaml.dump(info, stream=fp)
         
@@ -1294,7 +1444,7 @@ class NirspecPipeline():
         return info
 
 
-    def full_pipeline(self, load_saved='phot', run_extractions=True, indices=None, **kwargs):
+    def full_pipeline(self, load_saved='phot', run_extractions=True, indices=None, targets=None, initialize_bkg=True, make_regions=True, **kwargs):
         """
         Run all steps through extractions
         """
@@ -1303,30 +1453,45 @@ class NirspecPipeline():
             if load_saved in self.pipe:
                 status = self.pipe[load_saved]
             else:
-                status = self.load_slit_data(step=load_saved, indices=None)
+                status = self.load_slit_data(step=load_saved, indices=indices,
+                                             targets=targets)
         else:
             status = None
         
         if status is not None:
+            # Have loaded saved data
+            make_regions = False
             self.pipe[load_saved] = status
             self.last_step = load_saved
+        elif targets is not None:
+            print(f'Targets {targets} not found')
+            return True
+            
         else:
             self.preprocess()
             self.run_jwst_pipeline()
         
         self.slitlets = self.initialize_slit_metadata()
         
-        self.slit_bounding_box_regions()
+        self.get_slit_traces()
         
+        if make_regions:
+            self.slit_bounding_box_regions()
+                
         if run_extractions:
             self.extract_all_slits(**kwargs)
         
-        self.slit_source_regions()
+        if make_regions:
+            self.slit_source_regions()
         
         self.parse_slit_info(write=True)
         
         if status is None:
             self.save_slit_data()
+        
+        if initialize_bkg:
+            print('Set bkg slits')
+            self.set_background_slits()
 
 
 def make_summary_tables(root='msaexp', zout=None):
@@ -1347,7 +1512,7 @@ def make_summary_tables(root='msaexp', zout=None):
             continue
 
         with open(yaml_file) as fp:
-            yaml_data = yaml.load(fp, Loader=yaml.SafeLoader)
+            yaml_data = yaml.load(fp, Loader=yaml.Loader)
 
         cols = []
         rows = []
