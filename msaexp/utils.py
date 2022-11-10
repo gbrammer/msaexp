@@ -150,7 +150,7 @@ def slit_trace_center(slit, with_source_ypos=True, index_offset=0.):
     yd += index_offset
     _ra, _dec, lam = d2w(xd, yd)
     
-    rs, ds, _ = d2w(xd[sh[1]//2], yd[sh[0]//2])
+    rs, ds, _ = d2w(xd[sh[1]//2], yd[sh[1]//2])
     
     return xd, yd, lam, rs, ds
     
@@ -183,7 +183,7 @@ def get_slit_corners(slit):
     return ra_corner, dec_corner
     
     
-GRATING_LIMITS = {'prism': [0.58, 5.3, 0.01], 
+GRATING_LIMITS = {'prism': [0.58, 5.33, 0.01], 
                   'g140m': [0.7, 1.9, 0.00063], 
                   'g235m': [1.66, 3.17, 0.00106], 
                   'g395m': [2.83, 5.24, 0.00179],
@@ -246,7 +246,96 @@ def get_standard_wavelength_grid(grating, sample=1, free_prism=True, log_step=Fa
     return target_waves
 
 
-def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_scale=1, log_wave=False, refmodel=None, verbose=True, wave_range=None, wave_step=None, wave_array=None, ypad=2, get_weighted_center=False, **kwargs):
+def get_slit_sign(slit):
+    """
+    sign convention for slit pixels
+    
+    Parameters
+    ----------
+    slit : `jwst.datamodels.SlitModel`
+        Slit object
+    
+    Returns
+    -------
+    sign : int
+        sign convention 
+    """
+
+    import astropy.units as u
+    from astropy import coordinates as coord
+    from astropy.modeling.models import (
+        Mapping, Tabular1D, Linear1D, Pix2Sky_TAN, RotateNative2Celestial, Identity
+    )
+
+    from gwcs import wcstools, WCS
+    from gwcs import coordinate_frames as cf
+
+    from jwst.resample.resample_spec import (
+            ResampleSpecData, _find_nirspec_output_sampling_wavelengths,
+            resample_utils
+    )
+    
+    _max_virtual_slit_extent = ResampleSpecData._max_virtual_slit_extent
+    
+    refmodel = slit
+    
+    all_wcs = [refmodel.meta.wcs]
+
+    refwcs = refmodel.meta.wcs
+
+    # setup the transforms that are needed
+    s2d = refwcs.get_transform('slit_frame', 'detector')
+    d2s = refwcs.get_transform('detector', 'slit_frame')
+    s2w = refwcs.get_transform('slit_frame', 'world')
+
+    # estimate position of the target without relying on the meta.target:
+    # compute the mean spatial and wavelength coords weighted
+    # by the spectral intensity
+    bbox = refwcs.bounding_box
+    wmean_s = 0.5 * (refmodel.slit_ymax - refmodel.slit_ymin)
+    wmean_l = d2s(*np.mean(bbox, axis=1))[2]
+    
+    # transform the weighted means into target RA/Dec
+    targ_ra, targ_dec, _ = s2w(0, wmean_s, wmean_l)
+
+    target_waves = _find_nirspec_output_sampling_wavelengths(
+                       all_wcs,
+                       targ_ra, targ_dec
+                   )
+    target_waves = np.array(target_waves)
+
+    n_lam = target_waves.size
+    if not n_lam:
+        raise ValueError("Not enough data to construct output WCS.")
+
+    x_slit = np.zeros(n_lam)
+    lam = 1e-6 * target_waves
+
+    # Find the spatial pixel scale:
+    y_slit_min, y_slit_max = _max_virtual_slit_extent(None, all_wcs,
+                                                      targ_ra, targ_dec)
+
+    nsampl = 50
+    xy_min = s2d(
+        nsampl * [0],
+        nsampl * [y_slit_min],
+        lam[(tuple((i * n_lam) // nsampl for i in range(nsampl)), )]
+    )
+    xy_max = s2d(
+        nsampl * [0],
+        nsampl * [y_slit_max],
+        lam[(tuple((i * n_lam) // nsampl for i in range(nsampl)), )]
+    )
+
+    if xy_min[1][1] < xy_max[1][1]:
+        sign = 1
+    else:
+        sign = -1
+    
+    return sign
+
+
+def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_scale=1, log_wave=False, refmodel=None, verbose=True, wave_range=None, wave_step=None, wave_array=None, ypad=2, get_weighted_center=False, center_on_source=True, **kwargs):
     """
     Create a spatial/spectral WCS covering footprint of the input
     
@@ -435,31 +524,29 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
             print(f'Pad {ypad} pixels on 2D cutout')
             
         ny += 2*ypad
-        
+    
+    if center_on_source:
+        slit_center = 0.5 * (y_slit_max - y_slit_min) + y_slit_min
+        slit_center_offset = -(refmodel.source_ypos - slit_center)
+        slit_pad = np.abs(slit_center_offset / (pscale / pscale_ratio))
+        slit_pad = int(np.round(slit_pad))
+        ny += 2*slit_pad
+    
     border = 0.5 * (ny - det_slit_span * pscale_ratio) - 0.5
 
-    # if xy_min[1][1] < xy_max[1][1]:
-    #     y_slit_model = Linear1D(
-    #         slope=pscale / pscale_ratio,
-    #         intercept=y_slit_min - border * pscale * pscale_ratio
-    #     )
-    # else:
-    #     y_slit_model = Linear1D(
-    #         slope=-pscale / pscale_ratio,
-    #         intercept=y_slit_max + border * pscale * pscale_ratio
-    #     )
     if xy_min[1][1] < xy_max[1][1]:
         intercept = y_slit_min - border * pscale * pscale_ratio
-        slope = pscale / pscale_ratio
-        #intercept += refmodel.source_ypos  #/ xylen
+        sign = 1
+        #slope = pscale / pscale_ratio
     else:
         intercept = y_slit_max + border * pscale * pscale_ratio
-        slope = -pscale / pscale_ratio
-        #intercept -= refmodel.source_ypos # / xylen
+        sign = -1
+        #slope = -pscale / pscale_ratio
     
-    # print('xxx', slope, y_slit_min, y_slit_max, refmodel.slit_ymin, refmodel.slit_ymax, refmodel.source_ypos, refmodel.slit_ymin/y_slit_min, refmodel.slit_ymax/y_slit_max)
+    slope = sign * pscale / pscale_ratio
+    if center_on_source:
+         intercept += sign * slit_center_offset
     
-    #intercept -= 3.    
     y_slit_model = Linear1D(
             slope=slope,
             intercept=intercept
@@ -718,6 +805,7 @@ def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=
     import astropy.units as u
     
     import grizli.utils
+    from .version import __version__
     
     sci = np.array([s.data for s in drizzled_slits])
     dq = np.array([s.dq for s in drizzled_slits])
@@ -841,7 +929,16 @@ def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=
     to_ujy = 1.e12*drizzled_slits[0].meta.photometry.pixelarea_steradians
     
     spec = grizli.utils.GTable()
-    spec.meta['NCOMBINE'] = len(drizzled_slits)
+    spec.meta['VERSION'] = __version__, 'msaexp software version'
+    
+    spec.meta['NCOMBINE'] = len(drizzled_slits), 'Number of combined exposures'
+    
+    exptime = 0
+    for s in drizzled_slits:
+        exptime += s.meta.exposure.effective_exposure_time
+    
+    spec.meta['EXPTIME'] = exptime, 'Total effective exposure time'
+        
     spec.meta['OTHRESH'] = outlier_threshold, 'Outlier mask threshold, sigma'
     
     spec.meta['TOMUJY'] = to_ujy, 'Conversion from pixel values to microJansky'
@@ -852,6 +949,7 @@ def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=
     spec.meta['YTRACE'] = ytrace, 'Expected center of trace'
     
     prof_tab = grizli.utils.GTable()
+    prof_tab.meta['VERSION'] = __version__, 'msaexp software version'
     prof_tab['pix'] = x0
     prof_tab['profile'] = prof1d
     prof_tab['pfit'] = pfit1d
@@ -1004,10 +1102,14 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         ap.fill_betweenx(xpr, xpr*0., ptab['pfit']/pmax,
                 color='r', alpha=0.2)
         
-        ap.text(0.5, -0.1, f"{hdul['SPEC1D'].header['PROFCEN']:5.2f} ± {hdul['SPEC1D'].header['PROFSIG']:4.2f}", 
-                ha='center', va='top',
+        ap.text(0.99, 0.0, f"{hdul['SPEC1D'].header['PROFCEN']:5.2f} ± {hdul['SPEC1D'].header['PROFSIG']:4.2f}", 
+                ha='right', va='center',
+                bbox={'fc':'w', 'ec':'None', 'alpha':1.},
                 transform=ap.transAxes, fontsize=7)
-                
+    #
+    ap.spines.right.set_visible(False)
+    ap.spines.top.set_visible(False)
+    
     ap.set_ylim(axes[0].get_ylim())
     ap.set_yticks([y0-4, y0+4])
     ap.grid()
@@ -1068,12 +1170,13 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
                      cc['purple'], cc['g'], cc['b'], cc['g'], 'darkred', 'darkred', 
                      cc['pink'], cc['pink'], cc['pink'], cc['orange']]):
             wz = w*(1+z)/1.e4
-            dw = 70*(1+z)/1.e4
-            dw = 0.01*(sp['wave'].max()-sp['wave'].min())
+            # dw = 70*(1+z)/1.e4
+            # dw = 0.01*(sp['wave'].max()-sp['wave'].min())
             
-            wx = np.interp([wz-dw, wz+dw], sp['wave'], np.arange(len(sp)))
+            dw = 0.005*len(sp['wave'])
+            wx = np.interp(wz, sp['wave'], np.arange(len(sp)))
 
-            axes[1].fill_between(wx, [0,0], [100,100], 
+            axes[1].fill_between([wx-dw,wx+dw], [0,0], [100,100], 
                             color=c, alpha=0.07, zorder=-100)
         
         # Rest ticks on top 
