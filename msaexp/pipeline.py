@@ -49,6 +49,16 @@ def query_program(prog=2767, download=True, detectors=None, gratings=None, filte
     res = mastquery.jwst.query_jwst(instrument='NRS', filters=query, 
                                     extensions=['s2d'], rates_and_cals=False)
     
+    skip = np.in1d(res['msametfl'], [None])
+    if skip.sum() > 0:
+        print(f'Remove {skip.sum()} rows with msametfl=None')
+        res = res[~skip]
+        
+    skip = np.in1d(res['filter'], ['OPAQUE'])
+    if skip.sum() > 0:
+        print(f'Remove {skip.sum()} rows with filter=OPAQUE')
+        res = res[~skip]
+        
     if download:
         rate = [u.replace('s2d','rate') for u in res['dataURI']]
         mastquery.utils.download_from_mast(rate[0:])
