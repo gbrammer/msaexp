@@ -321,7 +321,8 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     grating = spec.meta['GRATING'].lower()
     _filter = spec.meta['FILTER'].lower()
     
-    disp = utils.read_catalog(f'/Users/gbrammer/Research/JWST/Projects/NIRSpec/jwst_nirspec_{grating}_disp.fits')
+    _data_path = os.dirname(__file__)
+    disp = utils.read_catalog(f'{_data_path}/data/jwst_nirspec_{grating}_disp.fits')
     
     #templates = utils.cheb_templates(wave=spec['wave']*1.e4, order=33, log=True)
     
