@@ -740,7 +740,6 @@ class NirspecPipeline():
         """
         Set center of slit traces in `slitlets`
         """
-        from . import utils
         from . import utils as msautils
         
         msg = f'msaexp.get_slit_traces: Run'
@@ -772,13 +771,13 @@ class NirspecPipeline():
             if j == self.N-1:
                 msg += f'! no index position found for {key}'
             else:
-                msg += f'Trace set for {key} at index {j}'
+                msg += f'Trace set at index {j} for {key}'
 
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                               show_date=False)
 
 
-    def extract_spectrum(self, key, slit_key=None, prof_sigma=None, fit_profile_params={'min_delta':100}, pstep=1.0, show_sn=True, flux_unit=FNU_UNIT, vmax=0.2, yoffset=None, skip=None, bad_dq_bits=(1 | 1024), clip_sigma=-4, ntrim=5, get_slit_data=False, verbose=False, center2d=False, **kwargs):
+    def extract_spectrum(self, key, slit_key=None, prof_sigma=None, fit_profile_params={'min_delta':100}, pstep=1.0, show_sn=True, flux_unit=FNU_UNIT, vmax=0.2, yoffset=None, skip=None, bad_dq_bits=(1 | 1024), clip_sigma=-4, ntrim=5, get_slit_data=False, verbose=False, center2d=False, trace_sign=1, **kwargs):
         """
         Extract 2D spectrum
         """                
@@ -901,8 +900,11 @@ class NirspecPipeline():
                         xd, yd, _w, _, _ = _res
                         
                         xtr = xd
-                        ytr = slitlet['ytrace']*2 - yd + yoffset
-                        
+                        if trace_sign > 0:
+                            ytr = slitlet['ytrace']*2 - yd + yoffset
+                        else:
+                            ytr = yd + yoffset
+                            
                         # # Trace along expected source position
                         # s2d = _wcs.get_transform('slit_frame', 'detector')
                         # d2s = _wcs.get_transform('detector', 'slit_frame')
