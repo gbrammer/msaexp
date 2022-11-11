@@ -184,11 +184,11 @@ def get_slit_corners(slit):
     
     
 GRATING_LIMITS = {'prism': [0.58, 5.33, 0.01], 
-                  'g140m': [0.7, 1.9, 0.00063], 
+                  'g140m': [0.68, 1.9, 0.00063], 
                   'g235m': [1.66, 3.17, 0.00106], 
                   'g395m': [2.83, 5.24, 0.00179],
-                  'g140h': [0.7, 1.9, 0.000238], 
-                  'g235h': [1.6, 3.1, 0.000396], 
+                  'g140h': [0.68, 1.9, 0.000238], 
+                  'g235h': [1.66, 3.17, 0.000396], 
                   'g395h': [2.83, 5.24, 0.000666]}
 
 def get_standard_wavelength_grid(grating, sample=1, free_prism=True, log_step=False, grating_limits=GRATING_LIMITS):
@@ -736,7 +736,7 @@ def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, **kw
     return target_waves, header, drizzled_slits
 
 
-def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=2, prf_center=None, prf_sigma=1.0, center_limit=8, fit_prf=True, fix_center=False, fix_sigma=False, verbose=True, profile_slice=None, **kwargs):
+def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=2, prf_center=None, prf_sigma=1.0, center_limit=8, fit_prf=True, fix_center=False, fix_sigma=False, verbose=True, profile_slice=None, sigma_bounds=(0.5, 2.0), **kwargs):
     """
     Combine single drizzled arrays with outlier detection
     
@@ -891,7 +891,7 @@ def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=
         prf.fixed['x_0'] = True
         prf.fixed['y_0'] = fix_center
         prf.fixed['sigma'] = fix_sigma    
-        prf.bounds['sigma'] = (0.5, 2.0)
+        prf.bounds['sigma'] = sigma_bounds
         prf.bounds['y_0'] = (prf_center-center_limit, prf_center+center_limit)
         
         pfit = fitter(prf, x0[ok]*0., x0[ok], prof1d[ok])
@@ -1065,7 +1065,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     yscl = hdul['PROFILE'].data.max()
     
-    axes[0].imshow(hdul['SCI'].data/yscl, vmin=-0.1*ymax, vmax=ymax, 
+    axes[0].imshow(hdul['SCI'].data/yscl, vmin=-0.3*ymax, vmax=ymax, 
                    aspect='auto', cmap=cmap, 
                    interpolation='nearest')
                    
