@@ -19,7 +19,8 @@ version = p.communicate()[0].decode("utf-8").strip()
 #version = "0.3.1" # source names in output files
 #version = "0.3.2" # Refactor to fix trace centroids
 #version = "0.3.3" # bugs
-version = "0.3.4" # center drizzled product
+#version = "0.3.4" # center drizzled product
+version = "0.3.5" # bug fixes for glass
 
 # Set this to true to add install_requires to setup
 if True:
