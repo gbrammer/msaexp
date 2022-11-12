@@ -801,10 +801,18 @@ class NirspecPipeline():
         
         for key in self.slitlets:
             i = self.slit_index(key)
+            dith_ref = 1000
             for j in range(self.N):
                 slit = self.pipe[self.last_step][j].slits[i]
                 dith = slit.meta.dither.instance
-                if dith['position_number'] == 1:
+                
+                #if dith['position_number'] == 1:
+                # find lowest position number
+                if dith['position_number'] < dith_ref:
+                    
+                    dith_ref = dith['position_number']
+                    jref = j
+                    
                     _res = msautils.slit_trace_center(slit, 
                                        with_source_ypos=True, index_offset=0.5)
                     
@@ -816,15 +824,15 @@ class NirspecPipeline():
                     
                     self.slitlets[key]['slit_ra'] = slit_ra
                     self.slitlets[key]['slit_dec'] = slit_dec
-                                        
-                    break
+                    
+                    #break
             
             msg = 'msaexp.get_slit_traces: '
             
-            if j == self.N-1:
-                msg += f'! no index position found for {key}'
-            else:
-                msg += f'Trace set at index {j} for {key}'
+            #if j == self.N-1:
+            #    msg += f'! no index position found for {key}'
+            #else:
+            msg += f'Trace set at index {jref} for {key}'
 
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                               show_date=False)
@@ -1136,7 +1144,7 @@ class NirspecPipeline():
                 if not np.isfinite(y0):
                     continue
 
-                if (~np.isfinite(ws)).sum() > 0:
+                if np.isfinite(ws).sum() == 0:
                     continue
 
                 _bkgn[_bkgn == 0] = 1
