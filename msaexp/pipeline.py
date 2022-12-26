@@ -428,9 +428,13 @@ class NirspecPipeline():
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                                   show_date=False)
 
-                dm = SlitModel(self.pipe[step][j].slits[i].instance)
-                dm.write(slit_file, overwrite=True)
-        
+                try:
+                    dm = SlitModel(self.pipe[step][j].slits[i].instance)
+                    dm.write(slit_file, overwrite=True)
+                except:
+                    utils.log_comment(utils.LOGFILE, 'Failed',
+                                      verbose=verbose)
+                
         return True
 
 
