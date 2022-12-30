@@ -116,6 +116,100 @@ def update_output_files(mode):
     print(f'Fix {yaml_file}')
 
 
+def detector_bounding_box(file):
+    """
+    Region files and metadata for slits
+    """
+    import glob
+    from tqdm import tqdm
+    import yaml
+    
+    from jwst.datamodels import SlitModel
+    from grizli import utils
+    
+    froot = file.split('_rate.fits')[0]
+    
+    slit_files = glob.glob(f'{froot}*phot.[01]*fits')
+
+    slit_borders = {}
+
+    fp = open(f'{froot}.detector_trace.reg','w')
+    fp.write('image\n')
+
+    fpr = open(f'{froot}.detector_bbox.reg','w')
+    fpr.write('image\n')
+
+    for _file in tqdm(slit_files[:]):
+        fslit = SlitModel(_file)
+    
+        tr = fslit.meta.wcs.get_transform('slit_frame','detector')
+        waves = np.linspace(np.nanmin(fslit.wavelength), 
+                            np.nanmax(fslit.wavelength),
+                            32)
+
+        xmin, ymin = tr(waves*0., waves*0.+fslit.slit_ymin, waves*1.e-6)
+        xmin += fslit.xstart
+        ymin += fslit.ystart
+    
+        #pl = plt.plot(xmin, ymin)
+        xmax, ymax = tr(waves*0., waves*0.+fslit.slit_ymax, waves*1.e-6)
+        xmax += fslit.xstart
+        ymax += fslit.ystart
+
+        xcen, ycen = tr(waves*0., waves*0.+fslit.source_ypos, waves*1.e-6)
+        xcen += fslit.xstart
+        ycen += fslit.ystart
+    
+        #plt.plot(xmax, ymax, color=pl[0].get_color())
+        _x = [fslit.xstart, fslit.xstart + fslit.xsize,
+              fslit.xstart + fslit.xsize, fslit.xstart]
+        _y = [fslit.ystart, fslit.ystart,
+              fslit.ystart + fslit.ysize, fslit.ystart + fslit.ysize]
+
+        sr = utils.SRegion(np.array([_x, _y]), wrap=False)
+
+        if fslit.source_name.startswith('background'):
+            props = 'color=white'
+        elif '_-' in fslit.source_name:
+            props = 'color=cyan'
+        else:
+            props = 'color=magenta'
+            
+        sr.label = fslit.source_name
+        sr.ds9_properties = props        
+        fpr.write(sr.region[0]+'\n')
+        
+        _key = _file.split('.')[-2]
+        
+        slit_borders[_key] = {'min':[xmin.tolist(), ymin.tolist()], 
+                               'max':[xmax.tolist(), ymax.tolist()], 
+                               'cen':[xcen.tolist(), ycen.tolist()], 
+                               'xstart':fslit.xstart,
+                               'xsize':fslit.xsize,
+                               'ystart':fslit.ystart,
+                               'ysize':fslit.ysize,
+                               'src_name':fslit.source_name,
+                               'slit_ymin':fslit.slit_ymin, 
+                               'slit_ymax':fslit.slit_ymax,
+                               'source_ypos':fslit.source_ypos}
+    
+        sr = utils.SRegion(np.array([np.append(xmin, xmax[::-1]), 
+                                     np.append(ymin, ymax[::-1])]),
+                           wrap=False)
+                           
+        sr.label = fslit.source_name
+        sr.ds9_properties = props        
+        fp.write(sr.region[0]+'\n')
+        
+    fp.close()
+    fpr.close()
+    
+    with open(f'{froot}.detector_trace.yaml','w') as fp:
+        yaml.dump(slit_borders, stream=fp)
+
+    return slit_borders
+
+
 def slit_trace_center(slit, with_source_ypos=True, index_offset=0.):
     """
     Get detector coordinates along the center of a slit
