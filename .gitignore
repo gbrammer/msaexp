@@ -5,6 +5,8 @@ docs/examples/*txt
 docs/examples/*yaml
 docs/examples/*reg
 
+msaexp/version.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
