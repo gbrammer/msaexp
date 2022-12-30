@@ -6,6 +6,8 @@ import os
 import glob
 import time
 import traceback
+from collections import OrderedDict
+
 from tqdm import tqdm
 
 import numpy as np
@@ -135,7 +137,7 @@ def exposure_groups(path='./', verbose=True):
 
     un = utils.Unique(tab['key'], verbose=verbose)
 
-    groups = {}
+    groups = OrderedDict()
     for v in un.values:
         groups[v] = [f for f in tab['file'][un[v]]]
     
@@ -215,8 +217,8 @@ class NirspecPipeline():
             utils.log_comment(utils.LOGFILE, msg, verbose=True, 
                               show_date=False)
                               
-        self.pipe = {}
-        self.slitlets = {}
+        self.pipe = OrderedDict()
+        self.slitlets = OrderedDict()
         
         self.last_step = None
 
@@ -444,7 +446,7 @@ class NirspecPipeline():
         import yaml
         from . import utils as msautils
         
-        slitlets = {}
+        slitlets = OrderedDict()
         
         if self.last_step not in ['2d','flat','path','phot']:
             return slitlets
@@ -513,44 +515,6 @@ class NirspecPipeline():
                 slitlets[_name][k] = meta[k]
 
         return slitlets
-
-
-    def slit_bounding_box_regions(self): 
-        """
-        Make region files of slit bounding boxes in detector coordinates
-        """
-        
-        slitlets = self.slitlets
-        reg_files = []
-        pipe = self.pipe[self.last_step]
-        
-        for j, file in enumerate(self.files):
-            det_reg = file.replace('.fits','.detector.reg')
-
-            with open(det_reg,'w') as fp:
-                fp.write('image\n')
-                for key in slitlets:
-                    slitlet = slitlets[key]
-                    i = self.slit_index(key) #slitlet['slit_index']
-                    _slit = pipe[j].slits[i]
-                    _d = _slit.instance
-                    
-                    _x = [_d['xstart'], _d['xstart']+_d['xsize'], 
-                          _d['xstart']+_d['xsize'], _d['xstart']]
-                    _y = [_d['ystart'], _d['ystart'], 
-                          _d['ystart']+_d['ysize'], _d['ystart']+_d['ysize']]
-                          
-                    sr = utils.SRegion(np.array([_x, _y]), wrap=False)
-                    #print(sr.xy[0])
-                    if key.startswith('background'):
-                        sr.ds9_properties = 'color=white'
-
-                    sr.label = key
-                    fp.write(sr.region[0]+'\n')
-            
-            reg_files.append(det_reg)
-            
-        return reg_files
 
 
     def slit_source_regions(self, color='magenta'):
@@ -1621,9 +1585,6 @@ class NirspecPipeline():
         
         self.get_slit_traces()
         
-        if make_regions:
-            self.slit_bounding_box_regions()
-                
         if run_extractions:
             self.extract_all_slits(**kwargs)
         
