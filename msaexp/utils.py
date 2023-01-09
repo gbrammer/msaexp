@@ -506,17 +506,22 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     bbox = refwcs.bounding_box
     grid = wcstools.grid_from_bounding_box(bbox)
     _, s, lam = np.array(d2s(*grid))
-    sd = s * refmodel_data
-    ld = lam * refmodel_data
-    good_s = np.isfinite(sd)
-    if np.any(good_s) & get_weighted_center:
-        total = np.sum(refmodel_data[good_s])
-        wmean_s = np.sum(sd[good_s]) / total
-        wmean_l = np.sum(ld[good_s]) / total
+    
+    if get_weighted_center:
+        sd = s * refmodel_data
+        ld = lam * refmodel_data
+        good_s = np.isfinite(sd)
+        if np.any(good_s):
+            total = np.sum(refmodel_data[good_s])
+            wmean_s = np.sum(sd[good_s]) / total
+            wmean_l = np.sum(ld[good_s]) / total
+        else:
+            wmean_s = 0.5 * (refmodel.slit_ymax - refmodel.slit_ymin)
+            wmean_l = d2s(*np.mean(bbox, axis=1))[2]
     else:
         wmean_s = 0.5 * (refmodel.slit_ymax - refmodel.slit_ymin)
         wmean_l = d2s(*np.mean(bbox, axis=1))[2]
-        
+
     # transform the weighted means into target RA/Dec
     targ_ra, targ_dec, _ = s2w(0, wmean_s, wmean_l)
 
@@ -830,7 +835,7 @@ def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, **kw
     return target_waves, header, drizzled_slits
 
 
-def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=2, prf_center=None, prf_sigma=1.0, center_limit=8, fit_prf=True, fix_center=False, fix_sigma=False, verbose=True, profile_slice=None, sigma_bounds=(0.5, 2.0), **kwargs):
+def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=2, prf_center=None, prf_sigma=1.0, center_limit=8, fit_prf=True, fix_center=False, fix_sigma=False, verbose=True, profile_slice=None, sigma_bounds=(0.5, 2.0), background=None, **kwargs):
     """
     Combine single drizzled arrays with outlier detection
     
@@ -940,6 +945,13 @@ def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=
     sci2d[wht2d == 0] = 0
     wht2d[wht2d <= 0] = 0.
     
+    if background is not None:
+        print('use background')
+        sci2d -= background
+        bmask = (background == 0) | (~np.isfinite(background))
+        sci2d[bmask] = 0
+        wht2d[bmask] = 0
+        
     sh = wht2d.shape
     yp, xp = np.indices(sh)
     
@@ -1140,7 +1152,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, z=None, ny=None, output_root=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, z=None, ny=None, output_root=None, unit='fnu'):
     """
     Figure showing drizzled hdu
     """
@@ -1153,12 +1165,21 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     fig, a2d = plt.subplots(2,2, **subplot_args)
     axes = [a2d[0][0], a2d[1][0]]
     
+    if unit == 'fnu':
+        flux = sp['flux']*1
+        err = sp['err']*1
+    else:
+        flux = sp['flux']*(sp['wave']/2.)**-2
+        err = sp['err']*(sp['wave']/2.)**-2
+        
     if ymax is None:
-        ymax = np.nanpercentile(sp['flux'][sp['err'] > 0], 90)*2
-        ymax = np.maximum(ymax, 7*np.median(sp['err'][sp['err'] > 0]))
+        ymax = np.nanpercentile(flux[err > 0], 90)*2
+        ymax = np.maximum(ymax, 7*np.median(err[err > 0]))
     
     yscl = hdul['PROFILE'].data.max()
-    
+    if unit == 'flam':
+        yscl = yscl*(sp['wave']/2.)**2
+        
     axes[0].imshow(hdul['SCI'].data/yscl, vmin=-0.3*ymax, vmax=ymax, 
                    aspect='auto', cmap=cmap, 
                    interpolation='nearest')
@@ -1213,8 +1234,8 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     a2d[1][1].set_visible(False)
         
-    axes[1].step(np.arange(len(sp)), sp['flux'], where='mid', color='0.5', alpha=0.9)
-    axes[1].step(np.arange(len(sp)), sp['err'], where='mid', color='r', alpha=0.2)
+    axes[1].step(np.arange(len(sp)), flux, where='mid', color='0.5', alpha=0.9)
+    axes[1].step(np.arange(len(sp)), err, where='mid', color='r', alpha=0.2)
     xl = axes[1].get_xlim()
 
     axes[1].fill_between(xl, [-ymax, -ymax], [0, 0], color='0.8', alpha=0.1)
@@ -1222,8 +1243,11 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     axes[1].set_ylim(-0.1*ymax, ymax)
     axes[1].set_xlabel(r'$\lambda_\mathrm{obs}$ [$\mu$m]')
-    axes[1].set_ylabel(r'$f_\nu$ [$\mu$Jy]')
-                       
+    if unit == 'fnu':
+        axes[1].set_ylabel(r'$f_\nu$ [$\mu$Jy]')
+    else:
+        axes[1].set_ylabel(r'$f_\lambda$')
+        
     if tick_steps is None:
         if hdul[1].header['GRATING'] == 'PRISM':
             minor = 0.1
