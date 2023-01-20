@@ -118,10 +118,13 @@ def test_load_templates():
     
     cwd = os.getcwd()
     
-    path = os.path.join(os.path.dirname(eazy.__file__), 'data/')
+    #path = os.path.join(os.path.dirname(eazy.__file__), 'data/')
     
-    os.chdir(path)
+    #os.chdir(path)
     
+    if not os.path.exists('templates'):
+        eazy.symlink_eazy_inputs()
+        
     _param = 'templates/sfhz/carnall_sfhz_13.param'
     eazy_templates = eazy.templates.read_templates_file(_param)
     

@@ -9,7 +9,9 @@ msaexp/version.py
 
 msaexp/tests/data/ceers-prism.1345_933.v0.spec*
 msaexp/tests/data/jw01345062001_03101_00001_nrs2.*
-
+msaexp/tests/data/FILTER.RES.latest
+msaexp/tests/data/templates
+    
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
