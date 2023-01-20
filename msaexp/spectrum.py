@@ -26,6 +26,16 @@ igm = eazy.igm.Inoue14()
 
 SCALE_UNCERTAINTY = 2.0
 
+try:
+    from prospect.utils.smoothing import smoothspec
+except (FileNotFoundError, TypeError):
+    if 'SPS_HOME' not in os.environ:
+        sps_home = 'xxxxdummyxxxx' #os.path.dirname(__file__)
+        print(f'msaexp: setting environment variable SPS_HOME={sps_home} '
+              'to be able to import prospect.utils.smoothing')
+        os.environ['SPS_HOME'] = sps_home
+
+
 def smooth_template_disp_prospector(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True, fftsmooth=True):
     """
     Smooth a template with a wavelength-dependent dispersion function using 
