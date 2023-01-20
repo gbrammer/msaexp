@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 from matplotlib.gridspec import GridSpec
 
+import astropy.io.fits as pyfits
+
 from grizli import utils
 utils.set_warnings()
 
@@ -22,7 +24,143 @@ import astropy.units as u
 import eazy.igm
 igm = eazy.igm.Inoue14()
 
-def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], step0=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None):
+SCALE_UNCERTAINTY = 2.0
+
+try:
+    from prospect.utils.smoothing import smoothspec
+except (FileNotFoundError, TypeError):
+    if 'SPS_HOME' not in os.environ:
+        sps_home = 'xxxxdummyxxxx' #os.path.dirname(__file__)
+        print(f'msaexp: setting environment variable SPS_HOME={sps_home} '
+              'to be able to import prospect.utils.smoothing')
+        os.environ['SPS_HOME'] = sps_home
+
+
+def smooth_template_disp_prospector(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True, fftsmooth=True):
+    """
+    Smooth a template with a wavelength-dependent dispersion function using 
+    the `prospector` LSF smoothing function
+    
+    Parameters
+    ----------
+    templ : `eazy.template.Template`
+        Template object
+    
+    wobs_um : array-like
+        Target observed-frame wavelengths, microns
+    
+    disp : table
+        NIRSpec dispersion table with columns ``WAVELENGTH``, ``R``
+    
+    z : float
+        Target redshift
+    
+    velocity_fwhm : float
+        Velocity dispersion FWHM, km/s
+    
+    scale_disp : float
+        Scale factor applied to ``disp['R']``
+    
+    flambda : bool
+        Return smoothed template in units of f_lambda or f_nu.
+    Returns
+    -------
+    tsmooth : array-like
+        Template convolved with spectral resolution + velocity dispersion.  
+        Same length as `wobs_um`
+    """
+    from prospect.utils.smoothing import smoothspec
+    
+    wobs = templ.wave*(1+z)
+    trim = (wobs > wobs_um[0]*1.e4*0.95)
+    trim &= (wobs < wobs_um[-1]*1.e4*1.05)
+    
+    if flambda:
+        fobs = templ.flux_flam(z=z)#[wclip]
+    else:
+        fobs = templ.flux_fnu(z=z)#[wclip]
+    
+    if with_igm:
+        fobs *= templ.igm_absorption(z)
+    
+    wobs = wobs[trim]
+    fobs = fobs[trim]
+    
+    R = np.interp(wobs, disp['WAVELENGTH']*1.e4, disp['R'],
+                  left=disp['R'][0], right=disp['R'][-1])*scale_disp
+                  
+    dv = np.sqrt(velocity_fwhm**2 + (3.e5/R)**2)
+    dlam_ang = wobs*dv/3.e5/2.35
+    
+    def _lsf(wave):
+        return np.interp(wave, wobs, dlam_ang)
+    
+    tsmooth = smoothspec(wobs, fobs,
+                         smoothtype='lsf', lsf=_lsf,
+                         outwave=wobs_um*1.e4,
+                         fftsmooth=fftsmooth,
+                        )
+    
+    return tsmooth
+
+
+def smooth_template_disp(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.5, flambda=True, with_igm=True):
+    """
+    Smooth a template with a wavelength-dependent dispersion function
+    
+    Parameters
+    ----------
+    templ : `eazy.template.Template`
+        Template object
+    
+    wobs_um : array-like
+        Target observed-frame wavelengths, microns
+    
+    disp : table
+        NIRSpec dispersion table with columns ``WAVELENGTH``, ``R``
+    
+    z : float
+        Target redshift
+    
+    velocity_fwhm : float
+        Velocity dispersion FWHM, km/s
+    
+    scale_disp : float
+        Scale factor applied to ``disp['R']``
+    
+    flambda : bool
+        Return smoothed template in units of f_lambda or f_nu.
+    Returns
+    -------
+    tsmooth : array-like
+        Template convolved with spectral resolution + velocity dispersion.  
+        Same length as `wobs_um`
+    """
+    
+    wobs = templ.wave*(1+z)/1.e4
+    if flambda:
+        fobs = templ.flux_flam(z=z)#[wclip]
+    else:
+        fobs = templ.flux_fnu(z=z)#[wclip]
+    
+    if with_igm:
+        fobs *= templ.igm_absorption(z)
+        
+    disp_r = np.interp(wobs, disp['WAVELENGTH'], disp['R'])*scale_disp
+    fwhm_um = np.sqrt((wobs/disp_r)**2 + (velocity_fwhm/3.e5*wobs)**2)
+    sig_um = np.maximum(fwhm_um/2.35, 0.5*np.gradient(wobs))
+    
+    x = wobs_um[:,np.newaxis] - wobs[np.newaxis,:]
+    gaussian_kernel = 1./np.sqrt(2*np.pi*sig_um**2)*np.exp(-x**2/2/sig_um**2)
+    tsmooth = np.trapz(gaussian_kernel*fobs, x=wobs, axis=1)
+    
+    return tsmooth
+
+
+SMOOTH_TEMPLATE_DISP_FUNC = smooth_template_disp_prospector
+
+
+def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], step0=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None, is_prism=False, use_full_dispersion=False, ranges=None):
     """
     """
     import yaml
@@ -32,19 +170,21 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     
     yaml.add_representer(float, float_representer)
     
+    is_prism |= ('clear' in file)
+    
     if step0 is None:
-        if ('clear' in file):
+        if (is_prism):
             step0 = 0.002
         else:
             step0 = 0.001
     
-    if 'clear' in file:
+    if is_prism:
         step1 = 0.0001
     else:
         step1 = 0.00002
     
     if Rline is None:
-        if 'clear' in file:
+        if is_prism:
             Rline = 1000
         else:
             Rline = 5000
@@ -52,7 +192,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     zgrid = utils.log_zgrid(z0, step0)
     zg0, chi0 = fit_redshift_grid(file, zgrid=zgrid, line_complexes=False, 
                                   vel_width=vel_width, scale_disp=scale_disp, 
-                                  eazy_templates=eazy_templates, Rline=Rline)
+                                  eazy_templates=eazy_templates, Rline=Rline,
+                                  use_full_dispersion=use_full_dispersion)
 
     zbest0 = zg0[np.argmin(chi0)]
             
@@ -60,7 +201,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                             step1)
     zg1, chi1 = fit_redshift_grid(file, zgrid=zgrid, line_complexes=False, 
                                   vel_width=vel_width, scale_disp=scale_disp, 
-                                  eazy_templates=eazy_templates, Rline=Rline)
+                                  eazy_templates=eazy_templates, Rline=Rline,
+                                  use_full_dispersion=use_full_dispersion)
                                   
     zbest = zg1[np.argmin(chi1)]
     
@@ -78,12 +220,14 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     
     fz.savefig(file.replace('spec.fits', 'spec.chi2.png'))
     
-    if 'clear' in file:
-        ranges = [(3427, 5308), (6250, 9700)]
+    if is_prism:
+        if ranges is None:
+            ranges = [(3427, 5308), (6250, 9700)]
         if nspline is None:
             nspline = 41
     else:
-        ranges = [(3680, 4400), (4861-50, 5008+50), (6490, 6760)]
+        if ranges is None:
+            ranges = [(3680, 4400), (4861-50, 5008+50), (6490, 6760)]
         if nspline is None:
             nspline = 23
     
@@ -92,7 +236,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               figsize=(16, 8), vel_width=vel_width,
                               ranges=ranges, Rline=Rline,
                               scale_disp=scale_disp,
-                              eazy_templates=eazy_templates)
+                              eazy_templates=eazy_templates,
+                              use_full_dispersion=use_full_dispersion)
     
     if eazy_templates is not None:
         spl_fig, spl_data = plot_spectrum(file, z=zbest, show_cont=True,
@@ -100,7 +245,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               figsize=(16, 8), vel_width=vel_width,
                               ranges=ranges, Rline=Rline,
                               scale_disp=scale_disp,
-                              eazy_templates=None)
+                              eazy_templates=None,
+                              use_full_dispersion=use_full_dispersion)
         
         for k in ['coeffs', 'covar', 'model', 'mline', 'full_chi2', 'cont_chi2']:
             if k in spl_data:
@@ -131,12 +277,14 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     return fig, data
 
 
-def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None):
+def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True):
     """
     """
     import time
     import os
     from tqdm import tqdm
+    
+    import astropy.io.fits as pyfits
     
     import numpy as np
     from grizli import utils
@@ -148,9 +296,24 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     import matplotlib.pyplot as plt
 
     lw, lr = utils.get_line_wavelengths()
+    
+    with pyfits.open(file) as im:
+        if 'SPEC1D' in im:
+            spec = utils.read_catalog(im['SPEC1D'])
+            if 'POLY0' in spec.meta:
+                pc = []
+                for pi in range(3):
+                    if f'POLY{pi}' in spec.meta:
+                        pc.append(spec.meta[f'POLY{pi}'])
+                
+                corr = np.polyval(pc, np.log(spec['wave']*1.e4))
+                spec['flux'] *= corr
+                spec['err'] *= corr
+        else:
+            spec = utils.read_catalog(file)    
 
-    spec = utils.read_catalog(file)
-        
+    spec['err'] *= SCALE_UNCERTAINTY
+
     if bkg is None:
         if '2767_11027' in file:
             bkg = 0.015
@@ -163,7 +326,11 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     
     # flam_unit = u.microJansky
     
-    flam = ((spec['flux'].filled(0).data + bkg) * spec['flux'].unit).to(flam_unit, equivalencies=eqw).value
+    if hasattr(spec['flux'], 'filled'):
+        flam = ((spec['flux'].filled(0).data + bkg) * spec['flux'].unit).to(flam_unit, equivalencies=eqw).value
+    else:
+        flam = ((spec['flux'].data + bkg) * spec['flux'].unit).to(flam_unit, equivalencies=eqw).value
+        
     eflam = spec['err'].to(flam_unit, equivalencies=eqw).value    
     eflam = np.sqrt(eflam**2 + (0.02*flam)**2)
     
@@ -176,7 +343,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     grating = spec.meta['GRATING'].lower()
     _filter = spec.meta['FILTER'].lower()
     
-    _data_path = os.dirname(__file__)
+    _data_path = os.path.dirname(__file__)
     disp = utils.read_catalog(f'{_data_path}/data/jwst_nirspec_{grating}_disp.fits')
     
     spline = utils.bspline_templates(wave=spec['wave']*1.e4, degree=3, df=nspline) #, log=True)
@@ -234,7 +401,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
                     lwi = lwi0*(1+z)
                     disp_r = np.interp(lwi/1.e4, disp['WAVELENGTH'], disp['R'])*scale_disp
 
-                    vel_width = np.sqrt((lwi/disp_r)**2 + (vel_width/3.e5*lwi)**2)
+                    vel_fwhm = np.sqrt((lwi/disp_r)**2 + (vel_width/3.e5*lwi)**2)
 
                     # print(f'Add component: {l} {lwi0} {lri}')
 
@@ -253,27 +420,51 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
             _A *= np.maximum(igmz, 0.01)
         else:
             templates = {}
-            for t in eazy_templates:
-                tflam = t.flux_flam(z=z)
-                templates[t.name] = utils.SpectrumTemplate(wave=t.wave,
-                                                    flux=tflam, name=t.name)
-
-            # ToDo: smooth with dispersion
-            _, _A, tline = utils.array_templates(templates, 
-                                                 wave=wrest,
-                                                 z=z, apply_igm=True)
-
-            for i in range(len(templates)):
-                _A[i,:] = nd.gaussian_filter(_A[i,:], 0.5)
+            if use_full_dispersion:
+                _A = []
+                tline = np.zeros(len(eazy_templates), dtype=bool)
+                for i, t in enumerate(eazy_templates):
+                    templates[t.name] = 0.
+                    tflam = SMOOTH_TEMPLATE_DISP_FUNC(t,
+                                                 spec['wave'],
+                                                 disp,
+                                                 z,
+                                                 velocity_fwhm=vel_width,
+                                                 scale_disp=scale_disp,
+                                                 flambda=True)
+                    _A.append(tflam)
+                    tline[i] = t.name.startswith('line ')
+                
+                _A = np.array(_A)
+            else:
+                for t in eazy_templates:
+                    tflam = t.flux_flam(z=z)
+                    templates[t.name] = utils.SpectrumTemplate(wave=t.wave,
+                                                        flux=tflam, name=t.name)
+        
+                # ToDo: smooth with dispersion
+                _, _A, tline = utils.array_templates(templates, 
+                                                     wave=wrest,
+                                                     z=z, apply_igm=True)
+        
+                for i in range(len(templates)):
+                    _A[i,:] = nd.gaussian_filter(_A[i,:], 0.5)
 
         _Ax = _A/eflam
         _yx = flam/eflam
         #_x = np.linalg.lstsq(_Ax[:,~spec['flux'].mask].T, _yx[~spec['flux'].mask], rcond=None)
-        if eazy_templates is None:
-            _x = np.linalg.lstsq(_Ax[:,~spec['flux'].mask].T, 
-                                 _yx[~spec['flux'].mask], rcond=None)
+        if hasattr(spec['flux'], 'mask'):
+            mask = ~spec['flux'].mask
         else:
-            _x = nnls(_Ax[:,~spec['flux'].mask].T, _yx[~spec['flux'].mask])
+            mask = np.isfinite(spec['flux']+spec['err'])
+            mask &= spec['err'] > 0
+            mask &= spec['flux'] != 0
+        
+        if eazy_templates is None:
+            _x = np.linalg.lstsq(_Ax[:,mask].T, 
+                                 _yx[mask], rcond=None)
+        else:
+            _x = nnls(_Ax[:,mask].T, _yx[mask])
 
         _model = _A.T.dot(_x[0])
         
@@ -286,12 +477,28 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     return zgrid, chi2
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None):
+def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True):
     """
     """
     lw, lr = utils.get_line_wavelengths()
 
-    spec = utils.read_catalog(file)
+    with pyfits.open(file) as im:
+        if 'SPEC1D' in im:
+            spec = utils.read_catalog(im['SPEC1D'])
+            if 'POLY0' in spec.meta:
+                pc = []
+                for pi in range(3):
+                    if f'POLY{pi}' in spec.meta:
+                        pc.append(spec.meta[f'POLY{pi}'])
+                
+                corr = np.polyval(pc, np.log(spec['wave']*1.e4))
+                spec['flux'] *= corr
+                spec['err'] *= corr
+            
+        else:
+            spec = utils.read_catalog(file)    
+    
+    spec['err'] *= SCALE_UNCERTAINTY
     
     if bkg is None:
         if '2767_11027' in file:
@@ -305,7 +512,11 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     
     # flam_unit = u.microJansky
     
-    flam = ((spec['flux'].filled(0).data + bkg) * spec['flux'].unit).to(flam_unit, equivalencies=eqw).value
+    if hasattr(spec['flux'], 'filled'):
+        flam = ((spec['flux'].filled(0).data + bkg) * spec['flux'].unit).to(flam_unit, equivalencies=eqw).value
+    else:
+        flam = ((spec['flux'].data + bkg) * spec['flux'].unit).to(flam_unit, equivalencies=eqw).value
+        
     eflam = spec['err'].to(flam_unit, equivalencies=eqw).value
     eflam = np.sqrt(eflam**2 + (0.02*flam)**2)
 
@@ -321,7 +532,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     grating = spec.meta['GRATING'].lower()
     _filter = spec.meta['FILTER'].lower()
     
-    _data_path = os.dirname(__file__)
+    _data_path = os.path.dirname(__file__)
     disp = utils.read_catalog(f'{_data_path}/data/jwst_nirspec_{grating}_disp.fits')
     
     #templates = utils.cheb_templates(wave=spec['wave']*1.e4, order=33, log=True)
@@ -392,27 +603,50 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         _A *= np.maximum(igmz, 0.01)
     else:
         templates = {}
-        for t in eazy_templates:
-            tflam = t.flux_flam(z=z)
-            templates[t.name] = utils.SpectrumTemplate(wave=t.wave,
-                                                flux=tflam, name=t.name)
+        if use_full_dispersion:
+            _A = []
+            tline = np.zeros(len(eazy_templates), dtype=bool)
+            for i, t in enumerate(eazy_templates):
+                templates[t.name] = 0.
+                tflam = SMOOTH_TEMPLATE_DISP_FUNC(t,
+                                             spec['wave'],
+                                             disp,
+                                             z,
+                                             velocity_fwhm=vel_width,
+                                             scale_disp=scale_disp,
+                                             flambda=True)
+                _A.append(tflam)
+                tline[i] = t.name.startswith('line ')
+                
+            _A = np.array(_A)
+        else:
+            for t in eazy_templates:
+                tflam = t.flux_flam(z=z)
+                templates[t.name] = utils.SpectrumTemplate(wave=t.wave,
+                                                    flux=tflam, name=t.name)
         
-        # ToDo: smooth with dispersion
-        _, _A, tline = utils.array_templates(templates, 
-                                             wave=wrest,
-                                             z=z, apply_igm=True)
+            # ToDo: smooth with dispersion
+            _, _A, tline = utils.array_templates(templates, 
+                                                 wave=wrest,
+                                                 z=z, apply_igm=True)
         
-        for i in range(len(templates)):
-            _A[i,:] = nd.gaussian_filter(_A[i,:], 0.5)
-            
+            for i in range(len(templates)):
+                _A[i,:] = nd.gaussian_filter(_A[i,:], 0.5)
+                
     _Ax = _A/eflam
     _yx = flam/eflam
     
-    if eazy_templates is None:
-        _x = np.linalg.lstsq(_Ax[:,~spec['flux'].mask].T, 
-                             _yx[~spec['flux'].mask], rcond=None)
+    if hasattr(spec['flux'], 'mask'):
+        mask = ~spec['flux'].mask
     else:
-        _x = nnls(_Ax[:,~spec['flux'].mask].T, _yx[~spec['flux'].mask])
+        mask = np.isfinite(spec['flux']+spec['err'])
+        mask &= spec['err'] > 0
+        mask &= spec['flux'] != 0 
+        
+    if eazy_templates is None:
+        _x = np.linalg.lstsq(_Ax[:,mask].T, _yx[mask], rcond=None)
+    else:
+        _x = nnls(_Ax[:,mask].T, _yx[mask])
     
     _model = _A.T.dot(_x[0])
     _mline = _A.T.dot(_x[0]*tline)
@@ -428,7 +662,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         oktemp = (_x[0] != 0)
         # oktemp[:3] = False
         
-        AxT = _Ax[:,~spec['flux'].mask][oktemp,:].T
+        AxT = _Ax[:,mask][oktemp,:].T
         
         covar_i = utils.safe_invert(np.dot(AxT.T, AxT))
         covar = utils.fill_masked_covar(covar_i, oktemp)
@@ -447,6 +681,11 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         coeffs[t] = [float(_x[0][i]), float(covard[i])]
         if t.startswith('line '):
             print(f'{t:>20}   {_x[0][i]:8.1f} ± {covard[i]:8.1f}')
+    
+    if 'source_ra' not in spec.meta:
+        spec.meta['source_ra'] = 0.0
+        spec.meta['source_dec'] = 0.0
+        spec.meta['source_name'] = 'unknown'
             
     data = {'z': float(z),
             'file':file,
