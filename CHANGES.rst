@@ -48,3 +48,7 @@
 
 - Refactor setup scripts (https://github.com/gbrammer/msaexp/pull/9)
 
+0.3.13
+----------
+
+- Add CI tests for spectrum extraction and fitting
