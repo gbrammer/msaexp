@@ -26,20 +26,20 @@ igm = eazy.igm.Inoue14()
 
 SCALE_UNCERTAINTY = 2.0
 
-try:
-    from prospect.utils.smoothing import smoothspec
-except (FileNotFoundError, TypeError):
-    if 'SPS_HOME' not in os.environ:
-        sps_home = 'xxxxdummyxxxx' #os.path.dirname(__file__)
-        print(f'msaexp: setting environment variable SPS_HOME={sps_home} '
-              'to be able to import prospect.utils.smoothing')
-        os.environ['SPS_HOME'] = sps_home
+# try:
+#     from prospect.utils.smoothing import smoothspec
+# except (FileNotFoundError, TypeError):
+#     if 'SPS_HOME' not in os.environ:
+#         sps_home = 'xxxxdummyxxxx' #os.path.dirname(__file__)
+#         print(f'msaexp: setting environment variable SPS_HOME={sps_home} '
+#               'to be able to import prospect.utils.smoothing')
+#         os.environ['SPS_HOME'] = sps_home
 
+FFTSMOOTH = False
 
-def smooth_template_disp_prospector(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True, fftsmooth=True):
+def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True):
     """
-    Smooth a template with a wavelength-dependent dispersion function using 
-    the `prospector` LSF smoothing function
+    Smooth a template with a wavelength-dependent dispersion function
     
     Parameters
     ----------
@@ -63,13 +63,80 @@ def smooth_template_disp_prospector(templ, wobs_um, disp, z, velocity_fwhm=80, s
     
     flambda : bool
         Return smoothed template in units of f_lambda or f_nu.
+    
+    Returns
+    -------
+    tsmooth : array-like
+        Template convolved with spectral resolution + velocity dispersion.  
+        Same length as `wobs_um`
+    
+    """
+    dv = np.sqrt(velocity_fwhm**2 + (3.e5/disp['R']/scale_disp)**2)
+    disp_ang = disp['WAVELENGTH']*1.e4
+    dlam_ang = disp_ang*dv/3.e5/2.35
+    
+    def _lsf(wave):
+        return np.interp(wave,
+                         disp_ang,
+                         dlam_ang,
+                         left=dlam_ang[0], right=dlam_ang[-1],
+                         )
+    
+    if hasattr(wobs_um,'value'):
+        wobs_ang = wobs_um.value*1.e4
+    else:
+        wobs_ang = wobs_um*1.e4
+        
+    flux_model = templ.to_observed_frame(z=z,
+                                         lsf_func=_lsf,
+                                         clip_wavelengths=None,
+                                         wavelengths=wobs_ang,
+                                         smoothspec_kwargs={'fftsmooth':FFTSMOOTH},
+                                         )
+                                         
+    if flambda:
+        flux_model = np.squeeze(flux_model.flux_flam())
+    else:
+        flux_model = np.squeeze(flux_model.flux_fnu())
+        
+    return flux_model
+
+
+def smooth_template_disp_sedpy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True):
+    """
+    Smooth a template with a wavelength-dependent dispersion function using 
+    the `sedpy`/`prospector` LSF smoothing function
+    
+    Parameters
+    ----------
+    templ : `eazy.template.Template`
+        Template object
+    
+    wobs_um : array-like
+        Target observed-frame wavelengths, microns
+    
+    disp : table
+        NIRSpec dispersion table with columns ``WAVELENGTH``, ``R``
+    
+    z : float
+        Target redshift
+    
+    velocity_fwhm : float
+        Velocity dispersion FWHM, km/s
+    
+    scale_disp : float
+        Scale factor applied to ``disp['R']``
+    
+    flambda : bool
+        Return smoothed template in units of f_lambda or f_nu.
+    
     Returns
     -------
     tsmooth : array-like
         Template convolved with spectral resolution + velocity dispersion.  
         Same length as `wobs_um`
     """
-    from prospect.utils.smoothing import smoothspec
+    from sedpy.smoothing import smoothspec
     
     wobs = templ.wave*(1+z)
     trim = (wobs > wobs_um[0]*1.e4*0.95)
@@ -98,7 +165,7 @@ def smooth_template_disp_prospector(templ, wobs_um, disp, z, velocity_fwhm=80, s
     tsmooth = smoothspec(wobs, fobs,
                          smoothtype='lsf', lsf=_lsf,
                          outwave=wobs_um*1.e4,
-                         fftsmooth=fftsmooth,
+                         fftsmooth=FFTSMOOTH,
                         )
     
     return tsmooth
@@ -157,7 +224,7 @@ def smooth_template_disp(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1
     return tsmooth
 
 
-SMOOTH_TEMPLATE_DISP_FUNC = smooth_template_disp_prospector
+SMOOTH_TEMPLATE_DISP_FUNC = smooth_template_disp_eazy
 
 
 def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], step0=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None, is_prism=False, use_full_dispersion=False, ranges=None):
@@ -312,7 +379,18 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
         else:
             spec = utils.read_catalog(file)    
 
-    spec['err'] *= SCALE_UNCERTAINTY
+    #spec['err'] *= SCALE_UNCERTAINTY
+    if hasattr(SCALE_UNCERTAINTY,'__len__'):
+        if len(SCALE_UNCERTAINTY) < 6:
+            spec['err'] *= 10**np.polyval(SCALE_UNCERTAINTY, spec['wave'])
+            #print('xx scale coefficients', SCALE_UNCERTAINTY)
+            
+        elif len(SCALE_UNCERTAINTY) == len(spec):
+            spec['err'] *= SCALE_UNCERTAINTY
+            #print('xx scale array', SCALE_UNCERTAINTY)
+            
+    else:
+        spec['err'] *= SCALE_UNCERTAINTY
 
     if bkg is None:
         if '2767_11027' in file:
@@ -477,9 +555,73 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     return zgrid, chi2
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True):
+def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=4, update=True, verbose=True, init=(3, 10), **kwargs):
     """
     """
+    from scipy.stats import norm
+    from scipy.optimize import minimize
+    
+    global SCALE_UNCERTAINTY
+    SCALE_UNCERTAINTY = 1.0
+    
+    if data is None:
+        spec, spl, _ = plot_spectrum(file=file, eazy_templates=None,
+                                  get_spl_templates=True,
+                                  **kwargs
+                                  )
+    else:
+        spec, spl = data
+        
+    ok = (spec['err'] > 0) & (spec['flux'] != 0) & np.isfinite(spec['err']+spec['flux'])
+    
+    if init is not None:
+        err = init[0]*spec['err']
+        err = np.sqrt(err**2 + (0.02*spec['flux'])**2)
+        _Ax = spl/err
+        _yx = spec['flux']/err
+        _x = np.linalg.lstsq(_Ax[:,ok].T, _yx[ok], rcond=None)
+        _model = spl.T.dot(_x[0])
+        ok &= np.abs((spec['flux']-_model)/err) < init[1]
+    
+    def objfun_scale_uncertainties(c):
+    
+        err = 10**np.polyval(c, spec['wave'])*spec['err']
+        err = np.sqrt(err**2 + (0.02*spec['flux'])**2)
+        
+        _Ax = spl/err
+        _yx = spec['flux']/err
+        _x = np.linalg.lstsq(_Ax[:,ok].T, _yx[ok], rcond=None)
+        _model = spl.T.dot(_x[0])
+    
+        lnp = norm.logpdf((spec['flux']-_model)[ok],
+                          loc=_model[ok]*0.,
+                          scale=err[ok]).sum()
+    
+        if verbose > 1:
+            print(c, lnp)
+    
+        return -lnp/2.
+
+    # objfun_scale_uncertainties([0.0])
+    c0 = np.zeros(order+1)
+    #c0[-1] = np.log10(3)
+    
+    res = minimize(objfun_scale_uncertainties, c0, method=method)
+    
+    if update:
+        if verbose:
+            print('Set SCALE_UNCERTAINTY: ', res.x)
+            
+        SCALE_UNCERTAINTY = res.x
+    
+    return spec, 10**np.polyval(res.x, spec['wave']), res
+
+
+def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, **kwargs):
+    """
+    """
+    global SCALE_UNCERTAINTY
+    
     lw, lr = utils.get_line_wavelengths()
 
     with pyfits.open(file) as im:
@@ -498,7 +640,18 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         else:
             spec = utils.read_catalog(file)    
     
-    spec['err'] *= SCALE_UNCERTAINTY
+    if hasattr(SCALE_UNCERTAINTY,'__len__'):
+        if len(SCALE_UNCERTAINTY) < 6:
+            spec['err'] *= 10**np.polyval(SCALE_UNCERTAINTY, spec['wave'])
+            #print('xx scale coefficients', SCALE_UNCERTAINTY)
+            
+        elif len(SCALE_UNCERTAINTY) == len(spec):
+            spec['err'] *= SCALE_UNCERTAINTY
+            #print('xx scale array', SCALE_UNCERTAINTY)
+            
+    else:
+        spec['err'] *= SCALE_UNCERTAINTY
+        # print('xx scale scalar', SCALE_UNCERTAINTY)
     
     if bkg is None:
         if '2767_11027' in file:
@@ -519,7 +672,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         
     eflam = spec['err'].to(flam_unit, equivalencies=eqw).value
     eflam = np.sqrt(eflam**2 + (0.02*flam)**2)
-
+    
     wrest = spec['wave']/(1+z)*1.e4
     wobs = spec['wave']
 
@@ -593,14 +746,18 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
                     templates[name].flux *= lri/np.sum(lr[l])
                 else:
                     templates[name].flux += utils.SpectrumTemplate(wave=w0, flux=None, central_wave=lwi, fwhm=vel_width, name=name).flux*lri/np.sum(lr[l])
-
+        
         _, _A, tline = utils.array_templates(templates, wave=spec['wave'].astype(float)*1.e4, apply_igm=False)
         # print(tline)
-    
+                    
         ll = spec['wave'].value*1.e4/(1+z) < 1215.6
     
         igmz = igm.full_IGM(z, spec['wave'].value*1.e4)
         _A *= np.maximum(igmz, 0.01)
+        
+        if get_spl_templates:
+            return spec, _A, z
+        
     else:
         templates = {}
         if use_full_dispersion:
@@ -632,7 +789,30 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         
             for i in range(len(templates)):
                 _A[i,:] = nd.gaussian_filter(_A[i,:], 0.5)
+        
+        if (len(eazy_templates) == 1) & (spline_single):
+            # Splines for flexible normalization
+            if 1:
+                bspl = utils.bspline_templates(wave=spec['wave']*1.e4,
+                                               degree=3,
+                                               df=nspline,
+                                               get_matrix=True)
+            else:
+                bspl = utils.cheb_templates(wave=spec['wave']*1.e4,
+                                            order=nspline,
+                                            get_matrix=True,
+                                            log=False)
+            templates = {}
+            for i in range(nspline):
+                templates[f'bspl{i} {t.name}'] = 0.0
                 
+            _A = _A*bspl.T
+            
+    if scale_uncertainty_kwargs is not None:
+        _, escl, _ = calc_uncertainty_scale(file=None, data=(spec, _A), **scale_uncertainty_kwargs)
+        eflam *= escl
+        spec['err'] *= escl
+        
     _Ax = _A/eflam
     _yx = flam/eflam
     
@@ -696,6 +876,9 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
             'wmax':float(spec['wave'][~bad].max()),
             'coeffs':coeffs,
             'covar':covar.tolist(),
+            'wave': [float(m) for m in spec['wave']],
+            'flux': [float(m) for m in spec['flux']],
+            'err': [float(m) for m in spec['err']],
             'model': [float(m) for m in _model],
             'mline':[float(m) for m in _mline],
             'templates':templates, 
@@ -729,19 +912,25 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         mdraws = _A[oktemp,:].T.dot(mu.T)
     else:
         mdraws = None
+    
+    if plot_unit is not None:
+        unit_conv = (1*flam_unit).to(plot_unit, equivalencies=eqw).value
+    else:
+        unit_conv = np.ones(len(wobs))
         
     for ax in axes:
         if 1:
-            ax.errorbar(wobs, flam, eflam, marker='None', linestyle='None',
-                    alpha=0.5, color='k', ecolor='k', zorder=100) #log_flux[0], log_flux[1])
+            ax.errorbar(wobs, flam*unit_conv, eflam*unit_conv,
+                        marker='None', linestyle='None',
+                        alpha=0.5, color='k', ecolor='k', zorder=100) #log_flux[0], log_flux[1])
 
-        ax.step(wobs, flam, color='k', where='mid', lw=1, alpha=0.8)
+        ax.step(wobs, flam*unit_conv, color='k', where='mid', lw=1, alpha=0.8)
         # ax.set_xlim(3500, 5100)
 
         #ax.plot(_[1]['templz']/(1+z), _[1]['templf'])
         
-        ax.step(wobs[ok], _mcont[ok], color='pink', alpha=0.8, where='mid')
-        ax.step(wobs[ok], _model[ok], color='r', alpha=0.8, where='mid')
+        ax.step(wobs[ok], (_mcont*unit_conv)[ok], color='pink', alpha=0.8, where='mid')
+        ax.step(wobs[ok], (_model*unit_conv)[ok], color='r', alpha=0.8, where='mid')
         
         cc = utils.MPL_COLORS
         for w, c in zip([3727, 4980, 6565, 9070, 9530, 1.094e4, 1.282e4, 
@@ -755,10 +944,11 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
                         
             
         if mdraws is not None:
-            ax.step(wobs[ok], mdraws[ok,:], color='r', alpha=np.maximum(1./draws, 0.02), zorder=-100, where='mid')
+            ax.step(wobs[ok], (mdraws.T*unit_conv).T[ok,:],
+                    color='r', alpha=np.maximum(1./draws, 0.02), zorder=-100, where='mid')
 
         if show_cont:
-            ax.plot(wobs[ok], _Acont, color='olive', alpha=0.3)
+            ax.plot(wobs[ok], (_Acont.T*unit_conv[ok]).T, color='olive', alpha=0.3)
             
         ax.fill_between(ax.get_xlim(), [-100, -100], [0, 0], color='0.8', 
                         alpha=0.5, zorder=-1)
@@ -809,9 +999,9 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
             ax.set_visible(False)
             continue
         
-        ymax = np.maximum(_model[ok].max(), 10*np.median(eflam[ok]))
+        ymax = np.maximum((_model*unit_conv)[ok].max(), 10*np.median((eflam*unit_conv)[ok]))
         
-        ymin = np.minimum(-0.1*ymax, -3*np.median(eflam[ok]))
+        ymin = np.minimum(-0.1*ymax, -3*np.median((eflam*unit_conv)[ok]))
         ax.set_ylim(ymin, ymax*1.3)
         # print(xl, ymax)
     
