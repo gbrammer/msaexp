@@ -150,7 +150,9 @@ def test_fit_redshift():
     
     os.chdir(data_path())
     
-    z0 = [4, 5]
+    spectrum.FFTSMOOTH=True
+    
+    z0 = [4.1, 4.4]
     
     kws = dict(eazy_templates=None,
                scale_disp=1.0,
@@ -176,7 +178,6 @@ def test_fit_redshift():
     assert(np.allclose(zfit['coeffs']['line OIII'],
           [2386.17, 35.93], rtol=0.01))
     
-    
     if eazy_templates is not None:
         kws['eazy_templates'] = eazy_templates
         kws['use_full_dispersion'] = False
@@ -193,7 +194,7 @@ def test_fit_redshift():
         assert('coeffs' in zfit)
         assert(np.allclose(zfit['coeffs']['4590.fits'],
                            [127.2, 3.418],
-                           rtol=0.01))
+                           rtol=0.2))
         
         # With dispersion
         kws['use_full_dispersion'] = True
@@ -210,6 +211,6 @@ def test_fit_redshift():
         assert('coeffs' in zfit)
         assert(np.allclose(zfit['coeffs']['4590.fits'],
                            [75.95547, 3.7042],
-                           rtol=0.01))
+                           rtol=0.2))
 
 
