@@ -150,10 +150,8 @@ def test_fit_redshift():
     
     os.chdir(data_path())
     
-    spectrum.FFTSMOOTH=True
-    
-    z0 = [4.1, 4.4]
-    
+    spectrum.FFTSMOOTH = True
+        
     kws = dict(eazy_templates=None,
                scale_disp=1.0,
                nspline=33, 
@@ -163,6 +161,7 @@ def test_fit_redshift():
                )
     
     z=4.2341
+    z0 = [4.1, 4.4]
     
     fig, zfit = spectrum.plot_spectrum(f'ceers-prism.1345_933.v0.spec.fits',
                                        z=z,
@@ -182,7 +181,7 @@ def test_fit_redshift():
         kws['eazy_templates'] = eazy_templates
         kws['use_full_dispersion'] = False
         fig, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
-                              z0=[4,5],
+                              z0=z0,
                               is_prism=True,
                               **kws)
         
@@ -199,7 +198,7 @@ def test_fit_redshift():
         # With dispersion
         kws['use_full_dispersion'] = True
         fig, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
-                              z0=[4,5],
+                              z0=z0,
                               is_prism=True,
                               **kws)
         
