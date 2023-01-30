@@ -292,6 +292,19 @@ def regions_from_metafile(metafile, **kwargs):
     return regions
 
 
+def regions_from_fits(file, **kwargs):
+    with pyfits.open(file) as im:
+        metafile = im[0].header['MSAMETFL']
+        metaid = im[0].header['MSAMETID']
+        dither_point = im[0].header['PATT_NUM']
+        
+    metf = MSAMetafile(metafile)
+    regions = metf.regions_from_metafile(msa_metadata_id=metaid,
+                                         dither_point_index=dither_point,
+                                         **kwargs)
+    return regions
+
+
 class MSAMetafile():
     def __init__(self, metafile):
         """
@@ -323,9 +336,10 @@ class MSAMetafile():
         self.src_table = src
 
 
-    def regions_from_metafile(self, dither_point_index=None, msa_metadata_id=None, fit_degree=2, as_string=False, with_bars=True, **kwargs):
+    def get_transforms(self, dither_point_index=None, msa_metadata_id=None, fit_degree=2, verbose=False, **kwargs):
         """
-        Get slit footprints in sky coords
+        Fit for transforms between slit (row, col) and (ra, dec)
+        
         """
         from astropy.modeling.models import Polynomial2D
         from astropy.modeling.fitting import LinearLSQFitter
@@ -338,7 +352,7 @@ class MSAMetafile():
             dither_point_index = self.shutter_table['dither_point_index'].min()
         if msa_metadata_id is None:
             msa_metadata_id = self.shutter_table['msa_metadata_id'].min()
-    
+        
         dith = (self.shutter_table['dither_point_index'] == dither_point_index) 
         metid = (self.shutter_table['msa_metadata_id'] == msa_metadata_id)
         exp = dith & metid
@@ -352,7 +366,13 @@ class MSAMetafile():
         # Fit for transformations
         coeffs = {}
         inv_coeffs = {}
-
+        
+        if verbose:
+            output = f'# msametfl = {self.metafile}\n'
+            output += f'# dither_point_index = {dither_point_index}\n'
+            output += f'# msa_metadata_id = {msa_metadata_id}'
+            print(output)
+            
         for qi in np.unique(si['shutter_quadrant']):
             q = si['shutter_quadrant'] == qi
             # print(qi, q.sum())
@@ -362,11 +382,43 @@ class MSAMetafile():
 
             pra = fitter(p2, row[q], col[q], si['ra'][q])
             pdec = fitter(p2, row[q], col[q], si['dec'][q])
+            
+            # RMS of the fit
+            xra = pra(row[q], col[q])
+            xdec = pdec(row[q], col[q])
+            dra = (si['ra'][q]-xra)*np.cos(si['dec'][q]/180*np.pi)*3600*1000
+            dde = (si['dec'][q]-xdec)*3600*1000
+            pra.rms = np.std(dra)
+            pdec.rms = np.std(dde)
+            pra.N = q.sum()
+            
+            if verbose:
+                print(f'# Q{qi} N={q.sum()}  rms= {pra.rms:.1f}, {pdec.rms:.1f} mas')
+                
             coeffs[qi] = pra, pdec
 
             prow = fitter(p2, si['ra'][q], si['dec'][q], row[q])
             pcol = fitter(p2, si['ra'][q], si['dec'][q], col[q])
             inv_coeffs[qi] = prow, pcol
+        
+        return dith, metid, coeffs, inv_coeffs
+
+
+    def regions_from_metafile(self, as_string=False, with_bars=True, **kwargs):
+        """
+        Get slit footprints in sky coords
+        """
+        import grizli.utils
+        
+        dith, metid, coeffs, inv_coeffs = self.get_transforms(**kwargs)
+        
+        exp = dith & metid
+    
+        has_offset = np.isfinite(self.shutter_table['estimated_source_in_shutter_x'])
+        has_offset &= np.isfinite(self.shutter_table['estimated_source_in_shutter_y'])
+    
+        is_src = (self.shutter_table['source_id'] > 0) & (has_offset)
+        si = self.shutter_table[exp & is_src]
     
         # Regions for a particular exposure
         se = self.shutter_table[exp]
@@ -396,23 +448,30 @@ class MSAMetafile():
             sr.meta['is_source'] = np.isfinite(se['estimated_source_in_shutter_x'][i])
         
             if sr.meta['is_source']:
-                sr.ds9_properties = "color=green"
-            else:
                 sr.ds9_properties = "color=cyan"
+            else:
+                sr.ds9_properties = "color=lightblue"
         
             regions.append(sr)
         
         if as_string:
             output = f'# msametfl = {self.metafile}\n'
-            output += f'# dither_point_index = {dither_point_index}\n'
-            output += f'# msa_metadata_id = {msa_metadata_id}\n'
+            
+            di = self.shutter_table['dither_point_index'][dith][0]
+            output += f'# dither_point_index = {di}\n'
+            mi = self.shutter_table['msa_metadata_id'][metid][0]
+            output += f'# msa_metadata_id = {mi}\n'
+            
+            for qi in coeffs:
+                pra, pdec = coeffs[qi]
+                output += f'# Q{qi} N={pra.N}  rms= {pra.rms:.1f}, {pdec.rms:.1f} mas\n'
             
             output += 'icrs\n'
             for sr in regions:
                 m = sr.meta
                 if m['is_source']:
                     output += f"circle({m['ra']:.7f}, {m['dec']:.7f}, 0.2\")"
-                    output += f" # color=white text=xx{m['source_id']}yy\n"
+                    output += f" # color=cyan text=xx{m['source_id']}yy\n"
                 
                 for r in sr.region:
                     output += r + '\n'
