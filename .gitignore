@@ -5,6 +5,9 @@ docs/examples/*txt
 docs/examples/*yaml
 docs/examples/*reg
 
+docs/examples/FILTER*
+docs/examples/templates
+
 msaexp/version.py
 
 msaexp/tests/data/ceers-prism.1345_933.v0.spec*

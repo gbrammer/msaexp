@@ -282,7 +282,125 @@ def get_slit_corners(slit, wave=None, verbose=False):
     ra_corner, dec_corner, _w = s2w(slit_x, slit_y, wave)
     
     return np.array([ra_corner, dec_corner])
+
+
+def pad_msa_metafile(metafile, pad=1, source_ids=None, positive_ids=False, prefix='src_', verbose=True):
+    """
+    Pad a MSAMETFL with dummy slits and trim to a subset of source_ids
     
+    Parameters
+    ----------
+    metafile : str
+        Filename of the MSA metadata file (``MSAMETFL``)
+    
+    pad : int
+        Padding of dummy slits
+    
+    source_ids : list, None
+        List of source_id 
+    
+    positive_ids : bool
+        If no ``source_ids`` provided, generate sources with `source_id > 0`
+    
+    prefix : str
+        Prefix of new file to create (``prefix + metafile``)
+    
+    Returns
+    -------
+    
+    output_file : str
+        Filename of new table
+    
+    """
+    from astropy.table import Table
+    import grizli.utils
+    
+    msa = MSAMetafile(metafile)
+
+    all_ids = np.unique(msa.shutter_table['source_id'])
+    
+    if source_ids is None:
+        if positive_ids:
+            source_ids = all_ids[all_ids > 0]
+        else:
+            source_ids = all_ids[all_ids != 0]
+
+    six = np.in1d(msa.shutter_table['source_id'], source_ids)
+
+    if six.sum() == 0:
+        msg = f'msaexp.utils.pad_msa_metafile: {source_ids} not found in {metafile}.'
+        msg += f'  Available ids are {list(all_ids)}'
+        raise ValueError(msg)
+    
+    slitlets = np.unique(msa.shutter_table['slitlet_id'][six])
+    im = pyfits.open(metafile)
+    
+    shut = Table(im['SHUTTER_INFO'].data)
+    shut = shut[np.in1d(shut['slitlet_id'], slitlets)]
+
+    # Add a shutter on either side
+    row = {}
+    for k in shut.colnames:
+        row[k] = shut[k][0]
+
+    row['shutter_state'] = 'CLOSED'
+    row['background'] = 'Y'
+    row['estimated_source_in_shutter_x'] = np.nan
+    row['estimated_source_in_shutter_y'] = np.nan
+
+    new_rows = []
+
+    for src_id in source_ids:
+        six = shut['source_id'] == src_id
+        shutters = np.unique(shut['shutter_column'][six])
+        quad = shut['shutter_quadrant'][six][0]
+        slit_id = shut['slitlet_id'][six][0]
+    
+        for mid in np.unique(shut['msa_metadata_id'][six]):
+            mix = (shut['msa_metadata_id'] == mid) & (six)
+            for eid in np.unique(shut['dither_point_index'][mix]):
+                for p in range(pad):
+                    for s in [shutters.min()-(p+1), shutters.max()+(p+1)]:
+                        row['msa_metadata_id'] = mid
+                        row['dither_point_index'] = eid
+                        row['shutter_column'] = s
+                        row['shutter_quadrant'] = quad
+                        row['slitlet_id'] = slit_id
+                        row['source_id'] = src_id
+                        nrow = {}
+                        for k in row:
+                            nrow[k] = row[k]
+                        new_rows.append(nrow)
+                
+    for row in new_rows:
+        shut.add_row(row)
+    
+    src = Table(im['SOURCE_INFO'].data)
+    src = src[np.in1d(src['source_id'], source_ids)]
+
+    hdus = {'SHUTTER_INFO': pyfits.BinTableHDU(shut), 
+            'SOURCE_INFO': pyfits.BinTableHDU(src)}
+
+    for e in hdus:
+        for k in im[e].header:
+            if k not in hdus[e].header:
+                #print(e, k, im[e].header[k])
+                hdus[e].header[k] = im[e].header[k]
+        im[e] = hdus[e]
+    
+    output_file = prefix + metafile
+    
+    im.writeto(output_file, overwrite=True)
+    im.close()
+    
+    if verbose:
+        msg = f'msaexp.utils.pad_msa_metafile: Trim {metafile} to {list(source_ids)}\n'
+        msg += f'msaexp.utils.pad_msa_metafile: pad = {pad}'
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=True, 
+                                 show_date=True)
+
+    return output_file
+
 
 def regions_from_metafile(metafile, **kwargs):
     """
@@ -1387,7 +1505,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     hdul.append(pyfits.BinTableHDU(data=prof, name='PROF1D'))
     
     if output_root is not None:
-        hdul.writeto(f'{output_root}.driz.fits', overwrite=True)
+        hdul.writeto(f'{output_root}.spec.fits', overwrite=True)
         
     return hdul
 
