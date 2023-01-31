@@ -433,7 +433,10 @@ class MSAMetafile():
         regions = []
     
         for i in range(len(se)):
-
+            
+            if se['shutter_quadrant'][i] not in coeffs:
+                continue
+                
             pra, pdec = coeffs[se['shutter_quadrant'][i]]
             sra = pra(row[i] + sx, col[i]+sy)
             sdec = pdec(row[i] + sx, col[i]+sy)
