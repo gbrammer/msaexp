@@ -193,9 +193,11 @@ class SlitData():
 
 
 class NirspecPipeline():
-    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True):
+    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0):
         """
         """
+        from .utils import pad_msa_metafile
+        
         self.mode = mode
         utils.LOGFILE = self.mode + '.log.txt'
         
@@ -221,6 +223,20 @@ class NirspecPipeline():
         self.slitlets = OrderedDict()
         
         self.last_step = None
+        
+        self.msametfl = None
+        
+        if len(self.files) > 0:
+            with pyfits.open(self.files[0]) as im:
+                msametfl = im[0].header['MSAMETFL']
+                
+            if (pad > 0) | (source_ids is not None):
+                msametfl = pad_msa_metafile(msametfl,
+                                            pad=pad,
+                                            source_ids=source_ids)
+            
+            self.msametfl = msametfl
+            print(f'msaexp.NirspecPipeline: mode={mode} msametfl={msametfl}')
 
 
     @property
@@ -260,7 +276,7 @@ class NirspecPipeline():
             return self.targets.index(key)
 
 
-    def preprocess(self, set_context=True):
+    def preprocess(self, set_context=True, fix_rows=True, scale_rnoise=True, **kwargs):
         """
         Run grizli exposure-level preprocessing
         
@@ -292,11 +308,22 @@ class NirspecPipeline():
             jwst_utils.exposure_oneoverf_correction(file, erode_mask=False, 
                                     in_place=True, axis=0,
                                     deg_pix=256)
-        
+            
+            if fix_rows:
+                jwst_utils.exposure_oneoverf_correction(file, erode_mask=False, 
+                                        in_place=True, axis=1,
+                                        deg_pix=2048)
+                                        
         # bias
         for file in self.files:
             with pyfits.open(file, mode='update') as im:
                 dq = (im['DQ'].data & 1025) == 0
+                
+                if im[0].header['DETECTOR'] == 'NRS2':
+                    dq[:,:1400] = False
+                else:
+                    dq[:,1400:] = False
+
                 bias_level = np.nanmedian(im['SCI'].data[dq])
                 msg = f'msaexp.preprocess : bias level {file} ='
                 msg += f' {bias_level:.4f}'
@@ -304,12 +331,28 @@ class NirspecPipeline():
                                   show_date=True)
             
                 im['SCI'].data -= bias_level
-                im.flush()
+                im[0].header['MASKBIAS'] = bias_level, 'Bias level'
             
+                if scale_rnoise:
+                    resid = im['SCI'].data / np.sqrt(im['VAR_RNOISE'].data)
+                    rms = utils.nmad(resid[dq])
+        
+                    msg = f'msaexp.preprocess : rms of empty pixels {file} ='
+                    msg += f' {rms:.2f}'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                      show_date=True)
+
+                    im['SCI'].data -= bias_level
+                    im[0].header['SCLRNOISE'] = rms, 'RNOISE Scale factor'
+        
+                    im['VAR_RNOISE'].data *= rms**2
+                
+                im.flush()
+                
         return True
     
     
-    def run_jwst_pipeline(self, verbose=True):
+    def run_jwst_pipeline(self, verbose=True, run_flag_open=True, run_bar_shadow=True, **kwargs):
         """
         Steps taken from https://github.com/spacetelescope/jwebbinar_prep/blob/main/spec_mode/spec_mode_stage_2.ipynb
 
@@ -319,6 +362,7 @@ class NirspecPipeline():
         Extract2dStep - identify slits and set slit WCS
         FlatFieldStep - slit-level flat field
         PathLossStep - NIRSpec path loss
+        BarShadowStep - Bar shadow correction
         PhotomStep - Photometric calibration
         """
         # AssignWcs
@@ -334,15 +378,25 @@ class NirspecPipeline():
 
         if 'wcs' not in self.pipe:
             wstep = AssignWcsStep()
-            self.pipe['wcs'] = [wstep.call(jwst.datamodels.ImageModel(f))
-                                for f in self.files]
+            
+            wcs = []
+            for file in self.files:
+                with pyfits.open(file) as hdu:
+                    hdu[0].header['MSAMETFL'] = self.msametfl
+                    wcs.append(wstep.call(jwst.datamodels.ImageModel(hdu)))
+            
+            self.pipe['wcs'] = wcs
+            
+            # self.pipe['wcs'] = [wstep.call(jwst.datamodels.ImageModel(f))
+            #                     for f in self.files]
+
         self.last_step = 'wcs'
 
         # step = ImprintStep()
         # pipe['imp'] = [step.call(obj) for obj in pipe[last]]
         # last = 'imp'
 
-        if 'open' not in self.pipe:
+        if ('open' not in self.pipe) & run_flag_open:
             step = MSAFlagOpenStep()
             self.pipe['open'] = []
             
@@ -353,7 +407,7 @@ class NirspecPipeline():
                 
                 self.pipe['open'].append(step.call(obj))
                 
-        self.last_step = 'open'
+            self.last_step = 'open'
 
         if '2d' not in self.pipe:
             step2d = Extract2dStep()
@@ -394,7 +448,18 @@ class NirspecPipeline():
         
         self.last_step = 'path'
 
-        # Skip BarShadow
+        if run_bar_shadow:
+            bar_step = BarShadowStep()
+            self.pipe['bar'] = []
+            
+            for i, obj in enumerate(self.pipe[self.last_step]):
+                msg = f'msaexp.jwst.BarShadowStep: {self.files[i]}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
+                                  show_date=True)
+                
+                self.pipe['bar'].append(bar_step.call(obj))
+            
+            self.last_step = 'bar'
         
         if 'phot' not in self.pipe:
             phot_step = PhotomStep()
@@ -1578,8 +1643,8 @@ class NirspecPipeline():
             return True
             
         else:
-            self.preprocess()
-            self.run_jwst_pipeline()
+            self.preprocess(**kwargs)
+            self.run_jwst_pipeline(**kwargs)
         
         self.slitlets = self.initialize_slit_metadata()
         
