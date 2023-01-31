@@ -227,16 +227,17 @@ class NirspecPipeline():
         self.msametfl = None
         
         if len(self.files) > 0:
-            with pyfits.open(self.files[0]) as im:
-                msametfl = im[0].header['MSAMETFL']
+            if os.path.exists(self.files[0]):
+                with pyfits.open(self.files[0]) as im:
+                    msametfl = im[0].header['MSAMETFL']
                 
-            if (pad > 0) | (source_ids is not None):
-                msametfl = pad_msa_metafile(msametfl,
-                                            pad=pad,
-                                            source_ids=source_ids)
+                if (pad > 0) | (source_ids is not None):
+                    msametfl = pad_msa_metafile(msametfl,
+                                                pad=pad,
+                                                source_ids=source_ids)
             
-            self.msametfl = msametfl
-            print(f'msaexp.NirspecPipeline: mode={mode} msametfl={msametfl}')
+                self.msametfl = msametfl
+                print(f'msaexp.NirspecPipeline: mode={mode} msametfl={msametfl}')
 
 
     @property
