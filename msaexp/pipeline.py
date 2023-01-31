@@ -115,13 +115,15 @@ def download_msa_meta_files():
         mastquery.utils.download_from_mast(msa)
 
 
-def exposure_groups(path='./', verbose=True):
+def exposure_groups(path='./', files=None, verbose=True):
     """
     Group by MSAMETFL, grating, filter, detector
     """
 
-    files = glob.glob('*rate.fits')
-    files.sort()
+    if files is None:
+        files = glob.glob('*rate.fits')
+        files.sort()
+        
     keys = ['filter','grating','effexptm','detector', 'msametfl']
     rows = []
     for file in files:
