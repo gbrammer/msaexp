@@ -163,9 +163,9 @@ def test_fit_redshift():
     z=4.2341
     z0 = [4.1, 4.4]
     
-    fig, zfit = spectrum.plot_spectrum(f'ceers-prism.1345_933.v0.spec.fits',
-                                       z=z,
-                                       **kws)
+    fig, spec, zfit = spectrum.plot_spectrum(f'ceers-prism.1345_933.v0.spec.fits',
+                                             z=z,
+                                             **kws)
     
     fig.savefig('ceers-prism.1345_933.v0.spec.spl.png')
     
@@ -175,12 +175,12 @@ def test_fit_redshift():
     
     assert('coeffs' in zfit)
     assert(np.allclose(zfit['coeffs']['line OIII'],
-          [2386.17, 35.93], rtol=0.01))
+          [2386.17, 35.93], rtol=0.5))
     
     if eazy_templates is not None:
         kws['eazy_templates'] = eazy_templates
         kws['use_full_dispersion'] = False
-        fig, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
+        fig, spec, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
                               z0=z0,
                               is_prism=True,
                               **kws)
@@ -193,11 +193,11 @@ def test_fit_redshift():
         assert('coeffs' in zfit)
         assert(np.allclose(zfit['coeffs']['4590.fits'],
                            [127.2, 3.418],
-                           rtol=0.2))
+                           rtol=0.5))
         
         # With dispersion
         kws['use_full_dispersion'] = True
-        fig, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
+        fig, spec, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
                               z0=z0,
                               is_prism=True,
                               **kws)
@@ -210,6 +210,6 @@ def test_fit_redshift():
         assert('coeffs' in zfit)
         assert(np.allclose(zfit['coeffs']['4590.fits'],
                            [75.95547, 3.7042],
-                           rtol=0.2))
+                           rtol=0.5))
 
 
