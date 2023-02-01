@@ -556,7 +556,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     return zgrid, chi2
 
 
-def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=4, update=True, verbose=True, init=(3, 10), **kwargs):
+def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=4, update=True, verbose=True, init=(1, 3), **kwargs):
     """
     """
     from scipy.stats import norm
