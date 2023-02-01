@@ -768,16 +768,16 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     
     full_chi2 = ((flam - _model)**2/eflam**2)[mask].sum()
     cont_chi2 = ((flam - _mcont)**2/eflam**2)[mask].sum()
-    
+
     try:
         oktemp = okt & (coeffs != 0)
-        
-        AxT = _Ax[:,mask][oktemp,:].T
-        
+            
+        AxT = (_A[oktemp,:]/eflam)[:,mask].T
+    
         covar_i = utils.safe_invert(np.dot(AxT.T, AxT))
         covar = utils.fill_masked_covar(covar_i, oktemp)
         covard = np.sqrt(covar.diagonal())
-
+            
         has_covar = True
     except:
         has_covar = False
