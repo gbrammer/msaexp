@@ -982,8 +982,8 @@ class NirspecPipeline():
             _sci[~_dq] = 0
             _ivar[~_dq] = 0
 
-            _bkg = _sci*0.
-            _bkgn = _sci*0.
+            _bkg = np.zeros(_sci.shape)
+            _bkgn = np.zeros(_sci.shape, dtype=int)
 
             _wcs = _slit.meta.wcs
             d2w = _wcs.get_transform('detector', 'world')
@@ -1016,159 +1016,14 @@ class NirspecPipeline():
                     continue
                     
                 _dq = (_sbg.dq & bad_dq_bits) == 0
-                try:
-                    _bkg += _sbg.data*_dq
-                    _bkgn += _dq
+                try:                    
+                    _bkg[_dq] += _sbg.data[_dq]
+                    _bkgn[_dq] += 1
+                    
                 except ValueError:
                     #print('background failed', j)
                     continue
-
-            # _sci = None
-            # if ip % (self.N-1) == 0:
-            #     if (ip//(self.N-1)) in skip:
-            #         continue
-            #
-            #     axi = axes[ip//(self.N-1)]
-            #     for j in p:
-            #         if _sci is None:
-                    #     _slit = pipe[j].slits[i]
-                    #
-                    #     if 'bkg' in self.pipe:
-                    #         _bkg_slit = self.pipe['bkg'][j].slits[i]
-                    #     else:
-                    #         _bkg_slit = None
-                    #
-                    #     sh = _slit.data.shape
-                    #
-                    #     _dq = (pipe[j].slits[i].dq & bad_dq_bits) == 0
-                    #     _sci = pipe[j].slits[i].data
-                    #     _ivar = 1/pipe[j].slits[i].err**2
-                    #     _dq &= _sci*np.sqrt(_ivar) > clip_sigma
-                    #     _sci[~_dq] = 0
-                    #     _ivar[~_dq] = 0
-                    #
-                    #     _bkg = _sci*0.
-                    #     _bkgn = _sci*0.
-                    #
-                    #     _wcs = _slit.meta.wcs
-                    #     d2w = _wcs.get_transform('detector', 'world')
-                    #
-                    #     yp, xp = np.indices(sh)
-                    #
-                    #     _res = msautils.slit_trace_center(_slit,
-                    #                               with_source_ypos=True,
-                    #                               index_offset=0.5)
-                    #
-                    #     xd, yd, _w, _, _ = _res
-                    #
-                    #     xtr = xd
-                    #     if trace_sign > 0:
-                    #         ytr = slitlet['ytrace']*2 - yd + yoffset
-                    #     else:
-                    #         ytr = yd + yoffset
-                    #
-                    #     # # Trace along expected source position
-                    #     # s2d = _wcs.get_transform('slit_frame', 'detector')
-                    #     # d2s = _wcs.get_transform('detector', 'slit_frame')
-                    #     # s2w = _wcs.get_transform('slit_frame', 'world')
-                    #     # d2w = _wcs.get_transform('detector', 'world')
-                    #     #
-                    #     # bbox = _wcs.bounding_box
-                    #     # grid = wcstools.grid_from_bounding_box(bbox)
-                    #     # _, sy, slam = np.array(d2s(*grid))
-                    #     #
-                    #     # smi = np.nanmin(sy)
-                    #     # sma = np.nanmax(sy)
-                    #     #
-                    #     # x = np.arange(sh[1], dtype=float)
-                    #     # xd, yd = x, x*0.+sh[0]//2
-                    #     #
-                    #     # for _iter in range(3):
-                    #     #     xs, ys, ls = d2s(xd, yd)
-                    #     #     xd, yd = s2d(x*0, x*0. + _slit.source_ypos, ls)
-                    #     #     yd = np.interp(x, xd, yd)
-                    #     #     xd = x
-                    #     #
-                    #     # dith = _slit.meta.dither.instance
-                    #     # if dith['position_number'] == 1:
-                    #     #     # Center world coord in slit
-                    #     #     rs, ds, _ = s2w(0, _slit.source_ypos, np.median(ls))
-                    #     #     slitlet['slit_ra'] = rs
-                    #     #     slitlet['slit_dec'] = ds
-                    #     #
-                    #     #     xref = xd*1.
-                    #     #     yref = yd*1.
-                    #     #
-                    #     #     xtr = x*1
-                    #     #     ytr = yref + yoffset + 0.5
-                    #     #
-                    #     # else:
-                    #     #
-                    #     #     ytr = yref*2 - yd + yoffset + 0.5
-                    #
-                    #     _ras, _des, ws = d2w(xtr, ytr)
-                    #
-                    #     # rs, ds, ws = _wcs.forward_transform(x,
-                    #     #                              x*0+np.nanmean(yp[_dq]))
-                    #     # if _ra is None:
-                    #     #     if (slitlet['source_ra'] > 0):
-                    #     #         _ra = slitlet['source_ra']
-                    #     #         _dec = slitlet['source_dec']
-                    #     #     else:
-                    #     #         x0 = np.nanmean(xp[_dq])
-                    #     #         y0 = np.nanmean(yp[_dq])
-                    #     #         _ra, _dec, w0 = _wcs.forward_transform(x0, y0)
-                    #     #         msg = f'msaexp.extract_spectrum: Set '
-                    #     #         msg += f' source_ra/source_dec: '
-                    #     #         msg += f'{_ra}, {_dec}'
-                    #     #         utils.log_comment(utils.LOGFILE, msg,
-                    #     #                           verbose=True)
-                    #     #
-                    #     #         slitlet['source_ra'] = _ra
-                    #     #         slitlet['source_dec'] = _dec
-                    #     #
-                    #     # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-                    #     # yeval = np.nanmean(ytr)
-                    #     #
-                    #     # dytest = [0]
-                    #     # for _dy in range(sh[0]):
-                    #     #     dytest.extend([-_dy, _dy])
-                    #     #
-                    #     # for dy in dytest:
-                    #     #     rs, ds, ws = _wcs.forward_transform(x,
-                    #     #                                         x*0+yeval+dy)
-                    #     #     if verbose:
-                    #     #         print('dy: ', (~np.isfinite(ws)).sum(), dy)
-                    #     #
-                    #     #     if (~np.isfinite(ws)).sum() == 0:
-                    #     #         if verbose:
-                    #     #             print('y center: ', dy)
-                    #     #         break
-                    #     #
-                    #     # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-                    #     # ytr -= 0.5
-                    #     # ytr += yoffset
-                    #     # xtr = x*1
-                    #     #
-                    #     # # Todo - calculate ws again with offset?
-                    #     # rx, dx, ws = _wcs.forward_transform(xtr, ytr)
-                    #
-                    # else:
-                    #     _sbg = pipe[j].slits[i]
-                    #     dy_off = (_sbg.meta.dither.y_offset -
-                    #               _slit.meta.dither.y_offset)
-                    #
-                    #     if np.abs(dy_off) < min_dyoffset:
-                    #         continue
-                    #
-                    #     _dq = (_sbg.dq & bad_dq_bits) == 0
-                    #     try:
-                    #         _bkg += _sbg.data*_dq
-                    #         _bkgn += _dq
-                    #     except ValueError:
-                    #         #print('background failed', j)
-                    #         continue
-
+                    
                 if (np.nanmax(_bkg) == 0) & (not get_slit_data):
                     axi = axes[ip]
                     axi.imshow(_sci*0., vmin=-0.05, vmax=0.3,
@@ -1183,7 +1038,7 @@ class NirspecPipeline():
                 if np.isfinite(ws).sum() == 0:
                     continue
 
-                _bkgn[_bkgn == 0] = 1
+                # _bkgn[_bkgn == 0] = 1
                 _clean = _sci - _bkg/_bkgn
                                 
                 bad = ~np.isfinite(_clean)
@@ -1198,6 +1053,8 @@ class NirspecPipeline():
                     _bkg_slit.data = _clean*1
                     _bkg_slit.dq = (bad*1).astype(_bkg_slit.dq.dtype)
                     _bkg_slit.has_background = True
+                    _bkg_slit._bkg = _bkg
+                    _bkg_slit._bkgn = _bkgn
                     
                 prof = prf(yp.flatten()*0, (yp - ytr).flatten()).reshape(sh)
                         
