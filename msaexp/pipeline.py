@@ -198,7 +198,7 @@ class NirspecPipeline():
     def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0):
         """
         """
-        from .utils import pad_msa_metafile
+        from .msa import pad_msa_metafile
         
         self.mode = mode
         utils.LOGFILE = self.mode + '.log.txt'
