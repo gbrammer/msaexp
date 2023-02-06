@@ -69,30 +69,34 @@ def pad_msa_metafile(metafile, pad=1, source_ids=None, positive_ids=False, prefi
     row['background'] = 'Y'
     row['estimated_source_in_shutter_x'] = np.nan
     row['estimated_source_in_shutter_y'] = np.nan
-
+    row['primary_source'] = 'N'
+    
     new_rows = []
 
     for src_id in source_ids:
         six = shut['source_id'] == src_id
-        shutters = np.unique(shut['shutter_column'][six])
-        quad = shut['shutter_quadrant'][six][0]
-        slit_id = shut['slitlet_id'][six][0]
     
         for mid in np.unique(shut['msa_metadata_id'][six]):
             mix = (shut['msa_metadata_id'] == mid) & (six)
+            quad = shut['shutter_quadrant'][mix][0]
+            slit_id = shut['slitlet_id'][mix][0]
+            shutters = np.unique(shut['shutter_column'][mix])
             for eid in np.unique(shut['dither_point_index'][mix]):
                 for p in range(pad):
                     for s in [shutters.min()-(p+1), shutters.max()+(p+1)]:
+
                         row['msa_metadata_id'] = mid
                         row['dither_point_index'] = eid
                         row['shutter_column'] = s
                         row['shutter_quadrant'] = quad
                         row['slitlet_id'] = slit_id
                         row['source_id'] = src_id
-                        nrow = {}
+                        
+                        new_row = {}
                         for k in row:
-                            nrow[k] = row[k]
-                        new_rows.append(nrow)
+                            new_row[k] = row[k]
+                        
+                        new_rows.append(new_row)
                 
     for row in new_rows:
         shut.add_row(row)
