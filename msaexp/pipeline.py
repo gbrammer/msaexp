@@ -198,7 +198,7 @@ class NirspecPipeline():
     def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0):
         """
         """
-        from .msa import pad_msa_metafile
+        from .msa import pad_msa_metafile, MSAMetafile
         
         self.mode = mode
         utils.LOGFILE = self.mode + '.log.txt'
@@ -227,6 +227,7 @@ class NirspecPipeline():
         self.last_step = None
         
         self.msametfl = None
+        self.msa = None
         
         if len(self.files) > 0:
             if os.path.exists(self.files[0]):
@@ -240,8 +241,11 @@ class NirspecPipeline():
             
                 self.msametfl = msametfl
                 print(f'msaexp.NirspecPipeline: mode={mode} msametfl={msametfl}')
-
-
+                
+                self.msa = MSAMetafile(self.msametfl)
+                with open(self.msametfl.replace('.fits','.reg'),'w') as fp:
+                    fp.write(self.msa.regions_from_metafile(as_string=True, with_bars=True))
+                
     @property
     def grating(self):
         return '-'.join(self.mode.split('-')[-3:-1])
