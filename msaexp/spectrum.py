@@ -37,6 +37,8 @@ SCALE_UNCERTAINTY = 1.0
 
 FFTSMOOTH = False
 
+__all__ = ["fit_redshift", "plot_spectrum"]
+
 def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True):
     """
     Smooth a template with a wavelength-dependent dispersion function
