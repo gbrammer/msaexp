@@ -133,13 +133,49 @@ def pad_msa_metafile(metafile, pad=1, source_ids=None, positive_ids=False, prefi
 
 def regions_from_metafile(metafile, **kwargs):
     """
+    Wrapper around `msaexp.msa.MSAMetafile.regions_from_metafile`
+    
+    Parameters
+    ----------
+    metafile : str
+        Name of a MSAMETFL metadata file
+    
+    kwargs : dict
+        Keyword arguments are passed through to
+        `~msaexp.msa.MSAMetafile.regions_from_metafile`.
+    
+    Returns
+    -------
+    regions : str, list
+        Output from `~msaexp.msa.MSAMetafile.regions_from_metafile`
+    
     """
     metf = MSAMetafile(metafile)
     regions = metf.regions_from_metafile(**kwargs)
+    
     return regions
 
 
 def regions_from_fits(file, **kwargs):
+    """
+    Wrapper around `msaexp.msa.MSAMetafile.regions_from_metafile`
+    
+    Parameters
+    ----------
+    file : str
+        Exposure filename, e.g., `..._rate.fits`.  The `dither_point_index` and 
+        `msa_metadata_id` will be determined from the file header
+    
+    kwargs : dict
+        Keyword arguments are passed through to
+        `~msaexp.msa.MSAMetafile.regions_from_metafile`.
+    
+    Returns
+    -------
+    regions : str, list
+        Output from `~msaexp.msa.MSAMetafile.regions_from_metafile`
+    
+    """
     with pyfits.open(file) as im:
         metafile = im[0].header['MSAMETFL']
         metaid = im[0].header['MSAMETID']

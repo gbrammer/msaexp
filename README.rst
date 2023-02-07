@@ -17,7 +17,16 @@ Tools for extracting JWST NIRSpec MSA spectra directly from the telescope exposu
 
 Under heavy construction....
 
-Documentation will be here: https://msaexp.readthedocs.io/, though it's essentially just the module API for now.
-
 .. note::
     Please submit any questions/comments/problems you have through the `Issues <https://github.com/gbrammer/msaexp/issues>`_ interface.
+
+~~~~~~~~~~~~~
+Documentation
+~~~~~~~~~~~~~
+
+Documentation will be here: https://msaexp.readthedocs.io/, though it's essentially just the module API for now.
+
+The overall procedure is demonstrated in two notebooks:
+
+- `process-rxj2129.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-rxj2129.ipynb>`_: Demo with prism data from JWST program `DD-2767 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2756&observatory=JWST>`_ (PI: Pat Kelly)
+- `process-smacs0723.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-smacs0723.ipynb>`_: Demo with medium resolution data from the JWST `ERO-2736 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2736&observatory=JWST>`_ program on the cluster SMACS-0723 (PI: Klaus Pontoppidon)

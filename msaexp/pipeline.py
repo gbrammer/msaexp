@@ -31,11 +31,40 @@ FILTERS = ['clear', 'f070lp','f100lp','f170lp','f290lp']
 ACQ_FILTERS = ['f140x','f110w']
 DETECTORS = ['nrs1','nrs2']
 
+
 __all__ = ["query_program", "exposure_groups", "NirspecPipeline"]
+
 
 def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d']):
     """
-    Query and download MSA exposures for a given program
+    Query and download MSA exposures for a given program from MAST
+    
+    Parameters
+    ----------
+    prog : int
+        Program ID
+    
+    download : bool
+        Download results
+    
+    detectors: list
+        List of detectors to consider ('nrs1','nrs2')
+    
+    gratings : list
+        List of gratings to consider ('prism','g140m','g140h','f235m','g235h','g395m','g395h')
+    
+    filters : list
+        List of filters to consider ('clear', 'f070lp','f100lp','f170lp','f290lp')
+    
+    extensions : list
+        File extensions to query.  ``s2d`` should have a one-to-one mapping with the level-1
+        countrate ``rate`` images, which are what we're after
+    
+    Returns
+    -------
+    res : `~astropy.table.Table`
+        Query result
+    
     """
     import mastquery.jwst
     import mastquery.utils
@@ -119,7 +148,25 @@ def download_msa_meta_files():
 
 def exposure_groups(path='./', files=None, verbose=True):
     """
-    Group by MSAMETFL, grating, filter, detector
+    Group files by MSAMETFL, grating, filter, detector
+    
+    Parameters
+    ----------
+    path : str
+        Path to ``rate.fits`` files
+    
+    files : list, None
+        Explicit list of ``rate.fits`` files to consider.  Otherwise, `glob` in working 
+        directory
+    
+    verbose : bool
+        Status messages
+    
+    Returns
+    -------
+    groups : dict
+        Dictionary of exposure groups
+    
     """
 
     if files is None:
@@ -154,7 +201,35 @@ class SlitData():
     """
     def __init__(self, file='jw02756001001_03101_00001_nrs1_rate.fits', step='phot', verbose=True, read=False, indices=None, targets=None):
         """
-        Load saved slits
+        Load slitlet objects from stored data files
+        
+        Parameters
+        ----------
+        file : str
+            Parent exposure file
+        
+        step : str
+            Calibration pipeline processing step of the output slitlet file
+        
+        verbose : bool
+            Print status messages
+        
+        read : bool
+            Don't just find the filenames but also read the data
+        
+        indices : list, None
+            Optional slit indices of specific files
+        
+        targets : list, None
+            Optional target names of specific individual sources
+        
+        Attributes
+        ----------
+        slits : list
+            List of `jwst.datamodels.SlitModel` objects
+        
+        files : list
+            Filenames of slitlet data
         """
 
         self.slits = []
@@ -180,12 +255,15 @@ class SlitData():
 
     @property
     def N(self):
+        """
+        Number of slitlets
+        """
         return len(self.files)
 
 
     def read_data(self, verbose=True):
         """
-        Read files into SlitModel objects
+        Read files into SlitModel objects in `slits` attribute
         """
         from jwst.datamodels import SlitModel
 
@@ -199,6 +277,51 @@ class SlitData():
 class NirspecPipeline():
     def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0):
         """
+        Container class for NIRSpec data, generally in groups split by grating/filter/detector
+        
+        Parameters
+        ----------
+        mode : str
+            Group / mode name, i.e., in the groups computed in 
+            `msaexp.pipeline.exposure_groups`
+        
+        files : list
+            Explicit list of exposure or slitlet files
+        
+        verbose : bool
+            Print status messages
+        
+        source_ids : list
+            Specific list of source ids to trim from the MSA metadata file
+        
+        pad : int
+            Number of dummy slits to pad the open slitlets
+        
+        Attributes
+        ----------
+        mode : str
+            Group name
+        
+        files : list
+            List of exposure (``rate.fits``) filenames
+        
+        pipe : dict
+            Dictionary with data from the various calibration pipeline products.  The final
+            flux-calibrated data should generally be in ``pipe['phot']``
+        
+        last_step : str
+            The last step of the calibration pipeline that was run, e.g., 'phot'
+        
+        slitlets : dict
+            Slitlet metadata
+        
+        msametfl : str
+            Filename of the MSAMETFL metadata file
+        
+        msa : `msaexp.msa.MSAMetafile`
+            MSA metadata object, perhaps that has been modified by the parameters
+            ``source_ids`` and ``pad`` above
+        
         """
         from .msa import pad_msa_metafile, MSAMetafile
         
@@ -247,19 +370,29 @@ class NirspecPipeline():
                 self.msa = MSAMetafile(self.msametfl)
                 with open(self.msametfl.replace('.fits','.reg'),'w') as fp:
                     fp.write(self.msa.regions_from_metafile(as_string=True, with_bars=True))
-                
+
+
     @property
     def grating(self):
+        """
+        Grating name, e.g., 'prism'
+        """
         return '-'.join(self.mode.split('-')[-3:-1])
 
 
     @property
     def detector(self):
+        """
+        Detector name, e.g., 'nrs1'
+        """
         return self.mode.split('-')[-1]
 
 
     @property
     def N(self):
+        """
+        Number of *exposures* for this group
+        """
         return len(self.files)
 
 
@@ -268,8 +401,8 @@ class NirspecPipeline():
         """
         Reformatted target names for background and negative source names
         
-        ``background_{i}`` to ``b{i}``
-        ``xxx_-{i}`` to ``xxx_m{i}``
+        - ``background_{i}`` to ``b{i}``
+        - ``xxx_-{i}`` to ``xxx_m{i}``
         
         """
         return list(self.slitlets.keys())
@@ -289,9 +422,26 @@ class NirspecPipeline():
         """
         Run grizli exposure-level preprocessing
         
-        1. snowball masking
-        2. 1/f correction
-        3. median "bias" removal
+        1. Snowball masking
+        2. Apply 1/f correction
+        3. Median "bias" removal
+        4. Rescale RNOISE
+        
+        Parameters
+        ----------
+        set_context : bool
+            Set the `CRDS_CTX` based on the keyword in the exposure files
+        
+        fix_rows : bool
+            Apply 1/f correction to detector rows, as well as columns
+        
+        scale_rnoise : bool
+            Calculate rescaling of the ``VAR_RNOISE`` data extension based on pixel statistics
+        
+        Returns
+        -------
+        status : bool
+            True if completed OK
         
         """
         
@@ -367,12 +517,29 @@ class NirspecPipeline():
 
         See also https://jwst-pipeline.readthedocs.io/en/latest/jwst/pipeline/calwebb_spec2.html#calwebb-spec2
 
-        AssignWcs - initialize WCS and populate slit bounding_box data
-        Extract2dStep - identify slits and set slit WCS
-        FlatFieldStep - slit-level flat field
-        PathLossStep - NIRSpec path loss
-        BarShadowStep - Bar shadow correction
-        PhotomStep - Photometric calibration
+        - `AssignWcs`:  initialize WCS and populate slit bounding_box data
+        - `Extract2dStep`:  identify slits and set slit WCS
+        - `FlatFieldStep`:  slit-level flat field
+        - `PathLossStep`:  NIRSpec path loss
+        - `BarShadowStep`:  Bar shadow correction
+        - `PhotomStep`:  Photometric calibration
+        
+        Parameters
+        ----------
+        verbose : bool
+            Printing status messages
+        
+        run_flag_open : bool
+            Run `jwst.msaflagopen.MSAFlagOpenStep` after `AssignWcsStep`
+        
+        run_bar_shadow : bool
+            Run `jwst.barshadow.BarShadowStep` after `PathLossStep`
+        
+        Returns
+        -------
+        status : bool
+            True if completed successfully
+        
         """
         # AssignWcs
         import jwst.datamodels
@@ -516,6 +683,27 @@ class NirspecPipeline():
 
     def initialize_slit_metadata(self, use_yaml=True, yoffset=0, prof_sigma=1.8/2.35, skip=[]):
         """
+        Initialize the `slitlets` metadata dictionary
+        
+        Parameters
+        ----------
+        use_yaml : bool
+            Read data from stored yaml file
+        
+        yoffset : float
+            Default cross-dispersion offset for source centering
+        
+        prof_sigma : float
+            Default profile width
+        
+        skip : list
+            Exposures to skip
+        
+        Returns
+        -------
+        slitlets : dict
+            Slitlet metadata
+        
         """
         import yaml
         from . import utils as msautils
@@ -594,6 +782,9 @@ class NirspecPipeline():
     def slit_source_regions(self, color='magenta'):
         """
         Make region file of source positions
+        
+        **Deprecated**, see `~msaexp.msa.MSAMetafile.regions_from_metafile`.
+        
         """
         regfile = f'{self.mode}.reg'
         with open(regfile, 'w') as fp:
@@ -612,6 +803,7 @@ class NirspecPipeline():
 
     def set_background_slits(self):
         """
+        Initialize elements in ``self.pipe['bkg']`` for background-subtracted slitlets
         """
         from tqdm import tqdm
         from jwst.datamodels import SlitModel
@@ -619,15 +811,6 @@ class NirspecPipeline():
         self.pipe['bkg'] = self.load_slit_data(step=self.last_step,
                                                targets=self.targets)
         
-        # self.pipe['bkg'] = []
-        #
-        # for j in tqdm(range(self.N)):
-        #     self.pipe['bkg'][j].slits = []
-        #     for i in range(len(self.pipe['phot'][j].slits)):
-        #         s = self.pipe['phot'][j].slits[i].copy()
-        #         s.has_background = False
-        #         self.pipe['bkg'][j].slits.append(s)
-                                                   
         for j in range(self.N):
             for s in self.pipe['bkg'][j].slits:
                 s.has_background = False
@@ -648,8 +831,6 @@ class NirspecPipeline():
         if key.startswith('background'):
             bounds[0] = (-8,8)
             
-        # print('xxx', bounds)
-        
         _slit_data = self.extract_spectrum(key, 
                                           fit_profile_params={},
                                       flux_unit=FLAM_UNIT,
@@ -665,30 +846,7 @@ class NirspecPipeline():
         yp, xp = np.indices(sh)
         x = xp[0,:]
         _dq = ~bad
-        # _ra = slitlet['source_ra']
-        # _dec = slitlet['source_dec']
-        #
-        # rs, ds, ws = _wcs.forward_transform(x,
-        #                              x*0+np.nanmean(yp[_dq]))
-        # if _ra <= 0:
-        #     x0 = np.nanmean(xp[_dq])
-        #     y0 = np.nanmean(yp[_dq])
-        #     _ra, _dec, ws = _wcs.forward_transform(x0, y0)
-        #
-        # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-        # yeval = np.nanmean(ytr)
-        # dytest = [0]
-        # for _dy in range(sh[0]):
-        #     dytest.extend([-_dy, _dy])
-        #
-        # for dy in dytest:
-        #     rs, ds, ws = _wcs.forward_transform(x,
-        #                                         x*0+yeval+dy)
-        #     if (~np.isfinite(ws)).sum() == 0:
-        #         break
-        #
-        # xtr, ytr = _wcs.backward_transform(_ra, _dec, ws)
-        # ytr -= 0.5
+        
         _res = msautils.slit_trace_center(_slit, 
                                   with_source_ypos=True, 
                                   index_offset=0.5)
@@ -813,6 +971,7 @@ class NirspecPipeline():
 
     def drizzle_2d(self, key, drizzle_params={}, **kwargs):
         """
+        not used...
         """
         from jwst.datamodels import SlitModel, ModelContainer
         from jwst.resample.resample_spec import ResampleSpecData
@@ -871,9 +1030,6 @@ class NirspecPipeline():
             
             msg = 'msaexp.get_slit_traces: '
             
-            #if j == self.N-1:
-            #    msg += f'! no index position found for {key}'
-            #else:
             msg += f'Trace set at index {jref} for {key}'
 
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
@@ -882,7 +1038,7 @@ class NirspecPipeline():
 
     def extract_spectrum(self, key, slit_key=None, prof_sigma=None, fit_profile_params={'min_delta':100}, pstep=1.0, show_sn=True, flux_unit=FNU_UNIT, vmax=0.2, yoffset=None, skip=None, bad_dq_bits=(1 | 1024), clip_sigma=-4, ntrim=5, get_slit_data=False, verbose=False, center2d=False, trace_sign=1, min_dyoffset=0.2, **kwargs):
         """
-        Extract 2D spectrum
+        Main function for extracting 2D/1D spectra from individual slitlets
         """                
         from gwcs import wcstools
         from photutils.psf import IntegratedGaussianPRF
@@ -1346,9 +1502,13 @@ class NirspecPipeline():
                 if close:
                     plt.close('all')
 
+
     def get_slit_polygons(self, include_yoffset=False):
         """
         Get slit polygon regions using slit wcs
+        
+        **Deprecated**, use `~msaexp.msa.MSAMetafile.regions_from_metafile`.
+        
         """
         from tqdm import tqdm
         slit_key = self.last_step
@@ -1432,7 +1592,23 @@ class NirspecPipeline():
 
     def load_slit_data(self, step='phot', verbose=True, indices=None, targets=None):
         """
-        Load slit data from files
+        Load slitlet data from saved files.  This script runs `msaexp.pipeline.SlitData` for
+        each exposure file in the group.
+        
+        Parameters
+        ----------
+        step : str
+            Calibration pipeline processing step
+        
+        verbose : bool
+            Print status messages
+        
+        indices : list, None
+            Optional slit indices of specific files
+        
+        targets : list, None
+            Optional target names of specific individual sources
+        
         """
         slit_lists = [SlitData(file, step=step, read=False,
                                indices=indices, targets=targets)
@@ -1451,6 +1627,7 @@ class NirspecPipeline():
 
     def parse_slit_info(self, write=True):
         """
+        Parse information from / to ``{mode}.slits.yaml`` file
         """
         import yaml
 
@@ -1534,6 +1711,7 @@ class NirspecPipeline():
 
 def make_summary_tables(root='msaexp', zout=None):
     """
+    Make a summary table of all extracted sources
     """
     import yaml
     import astropy.table
