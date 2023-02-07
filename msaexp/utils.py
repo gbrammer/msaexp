@@ -4,6 +4,7 @@ import os
 import numpy as np
 import astropy.io.fits as pyfits
 
+
 def summary_from_metafiles():
     """
     """
@@ -26,8 +27,8 @@ def rename_source(source_name):
     """
     Adjusted source names
     
-    background_{i} > b{i}
-    xxx_-{i} > xxx_m{i}
+    ``background_{i} > b{i}``
+    ``xxx_-{i} > xxx_m{i}``
     
     """
     name =  source_name.replace('background_','b')
@@ -752,7 +753,7 @@ DRIZZLE_PARAMS = dict(output=None,
 
 def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, **kwargs):
     """
-    Run `jwst.resample.resample_spec import ResampleSpecData` on a list of 
+    Run `jwst.resample.resample_spec.ResampleSpecData` on a list of 
     List of `jwst.datamodels.slit.SlitModel` objects.
         
     Parameters

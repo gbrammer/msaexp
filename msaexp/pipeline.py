@@ -31,6 +31,8 @@ FILTERS = ['clear', 'f070lp','f100lp','f170lp','f290lp']
 ACQ_FILTERS = ['f140x','f110w']
 DETECTORS = ['nrs1','nrs2']
 
+__all__ = ["query_program", "exposure_groups", "NirspecPipeline"]
+
 def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d']):
     """
     Query and download MSA exposures for a given program
@@ -264,10 +266,10 @@ class NirspecPipeline():
     @property
     def targets(self):
         """
-        Reformatted target name:
+        Reformatted target names for background and negative source names
         
-        background_{i} > b{i}
-        xxx_-{i} > xxx_m{i}
+        ``background_{i}`` to ``b{i}``
+        ``xxx_-{i}`` to ``xxx_m{i}``
         
         """
         return list(self.slitlets.keys())
