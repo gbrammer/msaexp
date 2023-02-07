@@ -8,7 +8,7 @@ Install with `pip`
     # Install with pip
     pip install msaexp
     python -c "import msaexp; print(msaexp.__version__)"
-    
+
 
 Install from the repository
 ===========================
@@ -29,9 +29,4 @@ Install from the repository
     
     ### Run the test
     pytest
-    
-    
-Binder Demo
-~~~~~~~~~~~
-.. image:: https://mybinder.org/badge_logo.svg
- :target: https://mybinder.org/v2/gh/gbrammer/msaexp/HEAD?filepath=docs%2Fexamples%2Fprocess-rxj2129.ipynb
+
