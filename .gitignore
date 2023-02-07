@@ -7,6 +7,7 @@ docs/examples/*reg
 
 docs/examples/FILTER*
 docs/examples/templates
+docs/api/*
 
 msaexp/version.py
 
