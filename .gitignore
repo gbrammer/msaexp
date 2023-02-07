@@ -9,6 +9,8 @@ docs/examples/FILTER*
 docs/examples/templates
 docs/api/*
 
+docs/examples/codespace/*
+
 msaexp/version.py
 
 msaexp/tests/data/ceers-prism.1345_933.v0.*
