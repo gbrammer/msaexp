@@ -1,0 +1,7 @@
+matplotlib
+numpy
+scipy
+astropy
+sphinx_astropy
+grizli
+tqdm
