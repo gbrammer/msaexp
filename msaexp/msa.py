@@ -788,8 +788,34 @@ class MSAMetafile():
         
         Returns
         -------
-        tab : `~grizli.utils.GTable`
+        tab : `~astropy.table.Table`
             Summary table with slit information.
+        
+        Examples
+        --------
+        
+        .. code-block:: python
+            :dedent:
+            
+            >>> from msaexp import msa
+            >>> uri = 'https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/'
+            >>> meta = msa.MSAMetafile(uri+'jw02756001001_01_msa.fits')
+            >>> res = meta.make_summary_table(msa_metadata_id=None,
+                                              image_path=None,
+                                              write_tables=False)
+            >>> print(res[-10:])
+            source_id    ra       dec     nexp Exp1 Exp2 Exp3
+            --------- -------- ---------- ---- ---- ---- ----
+               320023 3.610363 -30.414991    3  -o-  o--  --o
+               320029 3.557964 -30.426137    3  -o-  o--  --o
+               320035 3.616975 -30.419344    3  -o-  o--  --o
+               340975 3.576616 -30.401801    3  ---  ---  ---
+               410005 3.604646 -30.392461    3  ---  ---  ---
+               410044 3.592863 -30.396336    3  -o-  o--  --o
+               410045 3.592619 -30.397096    3  -o-  o--  --o
+               410067 3.571049 -30.388132    3  -o-  o--  --o
+               500002 3.589697 -30.398156    2  --o  -o-     
+               500003 3.591399 -30.401982    3  -o-  o--  --o
         
         """
         from tqdm import tqdm
