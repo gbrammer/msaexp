@@ -767,7 +767,7 @@ class MSAMetafile():
         return fig, ax
     
     
-    def make_summary_table(self, msa_metadata_id=None, image_path='slit_images', **kwargs):
+    def make_summary_table(self, msa_metadata_id=None, image_path='slit_images', write_tables=True, **kwargs):
         """
         Make a summary table for all sources in the mask
         
@@ -777,7 +777,10 @@ class MSAMetafile():
             Metadata id in ``shutter_table``
         
         image_path : str
-            Path for slitlet thumbnail images
+            Path for slitlet thumbnail images with filename derived from `self.metafile`.
+        
+        write_tables : bool
+            Write FITS and HTML versions of the summary table
         
         kwargs : dict
             Arguments passed to `~msaexp.msa.MSAMetafile.plot_slitlet` if ``image_path``
@@ -786,8 +789,7 @@ class MSAMetafile():
         Returns
         -------
         tab : `~grizli.utils.GTable`
-            Summary table with slit information.  The table is also written to HTML and FITS
-            tables with filename derived from `self.metafile`.
+            Summary table with slit information.
         
         """
         from tqdm import tqdm
@@ -881,10 +883,11 @@ class MSAMetafile():
             
             tab['thumb'] = [f'<img src="{im}" height=200px />' for im in slit_images]
         
-        tab.write_sortable_html(mroot+'_slits.html', max_lines=5000,
+        if write_tables:
+            tab.write_sortable_html(mroot+'_slits.html', max_lines=5000,
                                 filter_columns=['ra','dec','source_id'],
                                 localhost=False,
                                 use_json=False)
         
-        tab.write(mroot+'_slits.fits', overwrite=True)
+            tab.write(mroot+'_slits.fits', overwrite=True)
         return tab
