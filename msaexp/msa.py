@@ -189,9 +189,29 @@ def regions_from_fits(file, **kwargs):
 
 
 class MSAMetafile():
-    def __init__(self, metafile):
+    def __init__(self, filename):
         """
         Helper for parsing MSAMETFL metadata files
+        
+        Parameters
+        ----------
+        filename : str
+            Filename of an `_msa.fits` metadata file or a FITS file with a keyword
+            `MSAMETFL` in the primary header, e.g., a `_rate.fits` file.
+        
+        Attributes
+        ----------
+        filename : str
+            Input filename
+        
+        metafile : str
+            Filename of the MSAMETFL, either ``filename`` itself or derived from it
+        
+        shutter_table : `~astropy.table.Table`
+            Table of shutter metadata
+        
+        src_table : `~astropy.table.Table`
+            Table of source information
         
         Examples
         --------
@@ -210,7 +230,8 @@ class MSAMetafile():
             
             fig, axes = plt.subplots(1,3,figsize=(9,2.6), sharex=True, sharey=True)
             cosd = np.cos(np.median(meta.src_table['dec'])/180*np.pi)
-        
+            
+            # Show offset slitlets from three dithered exposures
             for i in [0,1,2]:
                 ax = axes[i]
                 ax.scatter(meta.src_table['ra'], meta.src_table['dec'],
@@ -252,23 +273,21 @@ class MSAMetafile():
             fig.tight_layout(pad=0.5)
         
         
-        Attributes
-        ----------
-        metafile : str
-            Filename
-        
-        shutter_table : `~astropy.table.Table`
-            Table of shutter metadata
-        
-        src_table : `~astropy.table.Table`
-            Table of source information
-
         """
         from astropy.table import Table
-
-        self.metafile = metafile
         
-        with pyfits.open(metafile) as im:
+        self.filename = filename
+        
+        if filename.endswith('_msa.fits'):
+            self.metafile = filename
+        else:
+            with pyfits.open(filename) as _im:
+                if 'MSAMETFL' not in _im[0].header:
+                    raise ValueError(f'{filename}[0].header does not have MSAMETFL keyword')
+                else:
+                    self.metafile = _im[0].header['MSAMETFL']
+        
+        with pyfits.open(self.metafile) as im:
             src = Table(im['SOURCE_INFO'].data)
             shut = Table(im['SHUTTER_INFO'].data)
     
@@ -527,7 +546,7 @@ class MSAMetafile():
         return output
     
     
-    def plot_slitlet(self, source_id=110003, cutout_size=1.5, step=None, rgb_filters=None, figsize=(4,4), ax=None, add_labels=True, dither_point_index=1, msa_metadata_id=None):
+    def plot_slitlet(self, source_id=110003, dither_point_index=1, msa_metadata_id=None, cutout_size=1.5, step=None, rgb_filters=None, rgb_scale=5, rgb_invert=False, figsize=(4,4), ax=None, add_labels=True, set_axis_labels=True):
         """
         Make a plot showing a slitlet
         
@@ -536,6 +555,12 @@ class MSAMetafile():
         source_id : int
             Source id, must be in ``src_table``
         
+        dither_point_index : int
+            Dither to show
+        
+        msa_metadata_id : int
+            Optional specified ``msa_metadata_id`` in ``shutter_table``
+        
         cutout_size : float
             Cutout half-width, arcsec
         
@@ -543,7 +568,14 @@ class MSAMetafile():
             Place to mark axis labels, defaults to ``floor(cutout_size)``
         
         rgb_filters : list, None
-            List of filters to use for an RGB cutout
+            List of filters to use for an RGB cutout.  Will be grayscale if just one item
+            specified.
+        
+        rgb_scale : float
+            Scaling of the image thumbnail if ``rgb_filters`` specified
+        
+        rgb_invert : bool
+            Invert color map if ``rgb_filters`` specified
         
         figsize : tuple
             Size if generating a new figure
@@ -553,12 +585,6 @@ class MSAMetafile():
         
         add_labels : bool
             Add plot labels
-        
-        dither_point_index : int
-            Dither to show
-        
-        msa_metadata_id : int
-            Optional specified ``msa_metadata_id`` in ``shutter_table``
         
         Returns
         -------
@@ -608,6 +634,25 @@ class MSAMetafile():
             fig.tight_layout(pad=1.0)
             fig.show()
         
+        .. plot::
+            :include-source:
+            
+            # With grayscale cutout
+            
+            import matplotlib.pyplot as plt
+            from msaexp import msa
+            
+            uri = 'https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/'
+            meta = msa.MSAMetafile(uri+'jw02756001001_01_msa.fits')
+            
+            fig, ax = plt.subplots(1,1,figsize=(4,4))
+            
+            filters = ['f160w']
+            _ = meta.plot_slitlet(source_id=110003, cutout_size=1.5,
+                                  rgb_filters=filters, ax=ax, rgb_invert=True)
+            
+            fig.tight_layout(pad=1.0)
+            fig.show()
         
         """
         import numpy as np
@@ -631,21 +676,37 @@ class MSAMetafile():
             fig, ax = plt.subplots(1,1,figsize=figsize)
         else:
             fig = None
-        
-        extent = (ra + cutout_size/3600/cosd, ra - cutout_size/3600./cosd,
-                  dec - cutout_size/3600., dec + cutout_size/3600.)
-        
+                
         #cutout_size = 2.5 # arcsec
         if rgb_filters is not  None:
-            cutout = 'https://grizli-cutout.herokuapp.com/thumb?coords={ra},{dec}'
-            cutout += '&filters=' + ','.join(rgb_filters)
-            cutout += '&size={cutout_size}&scl=5'
-            url = cutout.format(ra=ra, dec=dec, cutout_size=cutout_size)
+            url = f'https://grizli-cutout.herokuapp.com/thumb?coords={ra},{dec}'
+            url += f'&filters=' + ','.join(rgb_filters)
+            url += f'&size={cutout_size}&scl={rgb_scale}&invert={rgb_invert}'
+            
+            #url = cutout.format(ra=ra, dec=dec, cutout_size=cutout_size)
+
+            if rgb_invert:
+                src_color = 'k'
+            else:
+                src_color = 'w'
         
-            rgb = np.array(PIL.Image.open(urlopen(url)))
-            ax.imshow(rgb, origin='lower', extent=extent, interpolation='Nearest')
-            src_color = 'w'
+            try:
+                rgb = np.array(PIL.Image.open(urlopen(url)))
+                # rgb = np.roll(np.roll(rgb, 2, axis=0), -2, axis=1)
+                pscale = np.round(2*cutout_size/rgb.shape[0]/0.05)*0.05
+                thumb_size = rgb.shape[0]/2.*pscale
+                extent = (ra + thumb_size/3600/cosd, ra - thumb_size/3600./cosd,
+                          dec - thumb_size/3600., dec + thumb_size/3600.)
+                
+                ax.imshow(np.flip(rgb, axis=0),
+                          origin='lower',
+                          extent=extent, interpolation='Nearest')
+            except:
+                src_color = 'k'
         else:
+            extent = (ra + cutout_size/3600/cosd, ra - cutout_size/3600./cosd,
+                      dec - cutout_size/3600., dec + cutout_size/3600.)
+            
             ax.set_xlim(extent[:2])
             ax.set_ylim(extent[2:])
             src_color = 'k'
@@ -676,7 +737,7 @@ class MSAMetafile():
         ax.set_xticks(xt)
         ax.set_yticks(yt)
         
-        if fig is not None:
+        if set_axis_labels:
             ax.set_yticklabels([f'-{step}"', 'Dec.', f'+{step}"'])
             ax.set_xticklabels([f'+{step}"', 'R.A.', f'-{step}"'])
         
@@ -700,7 +761,130 @@ class MSAMetafile():
                     ha='right', va='bottom',
                     transform=ax.transAxes, color=src_color, fontsize=8)
                     
-        #fig.tight_layout(pad=1)
+        if fig is not None:
+            fig.tight_layout(pad=1)
         
         return fig, ax
+    
+    
+    def make_summary_table(self, msa_metadata_id=None, image_path='slit_images', **kwargs):
+        """
+        Make a summary table for all sources in the mask
         
+        Parameters
+        ----------
+        msa_metadata_id : int, None
+            Metadata id in ``shutter_table``
+        
+        image_path : str
+            Path for slitlet thumbnail images
+        
+        kwargs : dict
+            Arguments passed to `~msaexp.msa.MSAMetafile.plot_slitlet` if ``image_path``
+            specified
+        
+        Returns
+        -------
+        tab : `~grizli.utils.GTable`
+            Summary table with slit information.  The table is also written to HTML and FITS
+            tables with filename derived from `self.metafile`.
+        
+        """
+        from tqdm import tqdm
+        import grizli.utils
+        
+        if msa_metadata_id is None:
+            msa_metadata_id = self.shutter_table['msa_metadata_id'].min()
+        
+        shut = self.shutter_table[self.shutter_table['msa_metadata_id'] == msa_metadata_id]
+        
+        sources = grizli.utils.Unique(shut['source_id'], verbose=False)
+        
+        root = os.path.basename(self.metafile).split('_msa.fits')[0]
+        
+        tab = grizli.utils.GTable()
+        tab['source_id'] = sources.values
+        tab['ra'] = -1.
+        tab['dec'] = -1.
+        tab['ra'][sources.indices] = shut['ra']
+        tab['dec'][sources.indices] = shut['dec']
+        
+        tab['ra'].format = '.6f'
+        tab['dec'].format = '.6f'
+        tab['ra'].description = 'Target R.A. (degrees)'
+        tab['dec'].description = 'Target Dec. (degrees)'
+        
+        tab.meta['root'] = root
+        tab.meta['msa_metadata_id'] = msa_metadata_id
+        
+        exps = np.unique(shut['dither_point_index'])
+        
+        tab['nexp'] = 0
+        for exp in exps:
+            exp_ids = shut['source_id'][shut['dither_point_index'] == exp]
+            tab['nexp'] += np.in1d(tab['source_id'], exp_ids)
+            
+            slitlets = []
+            for s in tab['source_id']:
+                if s in exp_ids:
+                    ix = sources[s] & (shut['dither_point_index'] == exp)
+                    so = np.argsort(shut['shutter_column', 'primary_source'][ix])
+                    ss = ''
+                    # ss = f'{ix.sum()} '
+                    for p in shut['primary_source'][ix][so]:
+                        if p == 'Y':
+                            ss += 'o'
+                        else:
+                            ss += '-'
+                    slitlets.append(ss)
+                else:
+                    slitlets.append('')
+            
+            tab[f'Exp{exp}'] = slitlets
+        
+        mroot = f'{root}_{msa_metadata_id}'
+        
+        if image_path is not None:
+            slit_images = []
+            if not os.path.exists(image_path):
+                os.makedirs(image_path)
+            
+            print(f'Make {len(tab)} slit thumbnail images:')
+            
+            for src, ra in tqdm(zip(tab['source_id'], tab['ra'])):
+                slit_image = os.path.join(image_path,
+                                          f'{mroot}_{src}_slit.png')
+                slit_image = slit_image.replace('_-', '_m')
+                slit_images.append(slit_image)
+                
+                if os.path.exists(slit_image):
+                    continue
+                elif ra <= 0.00001:
+                    continue
+                
+                # Make slit cutout
+                dith = shut['dither_point_index'][sources[src]].min()
+                fig, ax = self.plot_slitlet(source_id=src,
+                                            dither_point_index=dith,
+                                            msa_metadata_id=msa_metadata_id,
+                                            **kwargs)
+                
+                fig.savefig(slit_image)
+                plt.close(fig)
+                
+                if 0:
+                    kwargs = dict(cutout_size=1.5, step=None,
+                                  rgb_filters=['f200w-clear','f150w-clear','f115w-clear'],
+                                  rgb_scale=5, rgb_invert=False,
+                                  figsize=(4,4),
+                                  ax=None, add_labels=True, set_axis_labels=True)
+            
+            tab['thumb'] = [f'<img src="{im}" height=200px />' for im in slit_images]
+        
+        tab.write_sortable_html(mroot+'_slits.html', max_lines=5000,
+                                filter_columns=['ra','dec','source_id'],
+                                localhost=False,
+                                use_json=False)
+        
+        tab.write(mroot+'_slits.fits', overwrite=True)
+        return tab
