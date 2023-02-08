@@ -21,3 +21,11 @@ def test_wrapper():
                                        as_string=True,
                                        with_bars=True)
     
+def test_summary():
+    
+    uri = 'https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/'
+    meta = msa.MSAMetafile(uri+'jw02756001001_01_msa.fits')
+    
+    res = meta.make_summary_table(msa_metadata_id=None,
+                                  image_path=None,
+                                  write_tables=False)
