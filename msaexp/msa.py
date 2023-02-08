@@ -819,6 +819,8 @@ class MSAMetafile():
         
         """
         from tqdm import tqdm
+        import matplotlib.pyplot as plt
+        
         import grizli.utils
         
         if msa_metadata_id is None:
