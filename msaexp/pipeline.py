@@ -35,7 +35,7 @@ DETECTORS = ['nrs1','nrs2']
 __all__ = ["query_program", "exposure_groups", "NirspecPipeline"]
 
 
-def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d']):
+def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d'], extra_filters=[]):
     """
     Query and download MSA exposures for a given program from MAST
     
@@ -60,6 +60,9 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
         File extensions to query.  ``s2d`` should have a one-to-one mapping with the level-1
         countrate ``rate`` images, which are what we're after
     
+    extra_filters : list
+        Additional query filters from, e.g., `mastquery.jwst.make_query_filter`
+    
     Returns
     -------
     res : `~astropy.table.Table`
@@ -82,9 +85,9 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
     
     if filters is not None:
         query += mastquery.jwst.make_query_filter('filter', values=filters)
-        
+    
     res = mastquery.jwst.query_jwst(instrument='NRS',
-                                    filters=query, 
+                                    filters=query + extra_filters, 
                                     extensions=extensions,
                                     rates_and_cals=False)
     
@@ -1662,7 +1665,7 @@ class NirspecPipeline():
         return info
 
 
-    def full_pipeline(self, load_saved='phot', run_extractions=True, indices=None, targets=None, initialize_bkg=True, make_regions=True, **kwargs):
+    def full_pipeline(self, load_saved='phot', run_preprocess=True, run_extractions=True, indices=None, targets=None, initialize_bkg=True, make_regions=True, **kwargs):
         """
         Run all steps through extractions
         """
@@ -1686,7 +1689,9 @@ class NirspecPipeline():
             return True
             
         else:
-            self.preprocess(**kwargs)
+            if run_preprocess:
+                self.preprocess(**kwargs)
+            
             self.run_jwst_pipeline(**kwargs)
         
         self.slitlets = self.initialize_slit_metadata()
