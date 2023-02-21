@@ -438,7 +438,7 @@ def get_slit_sign(slit):
     return sign
 
 
-def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_scale=1, log_wave=False, refmodel=None, verbose=True, wave_range=None, wave_step=None, wave_array=None, ypad=2, get_weighted_center=False, center_on_source=True, **kwargs):
+def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_scale=1, log_wave=False, refmodel=None, verbose=True, wave_range=None, wave_step=None, wave_array=None, ypad=2, force_nypix=None, force_yoffset=None, get_weighted_center=False, center_on_source=True, fix_slope=None, **kwargs):
     """
     Create a spatial/spectral WCS covering footprint of the input
     
@@ -652,8 +652,17 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
         #slope = -pscale / pscale_ratio
     
     slope = sign * pscale / pscale_ratio
+    if fix_slope is not None:
+        slope = sign * fix_slope
+        
     if center_on_source:
          intercept += sign * slit_center_offset
+    
+    if force_nypix is not None:
+        ny = force_nypix
+    
+    if force_yoffset is not None:
+        intercept += slope*force_yoffset
     
     y_slit_model = Linear1D(
             slope=slope,
@@ -685,9 +694,9 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
                                              lookup_table=pixel_coord,
                                              bounds_error=False,
                                              fill_value=np.nan)
-    
-    data_size = (ny, len(target_waves))
 
+    data_size = (ny, len(target_waves))
+        
     # Construct the final transform
     mapping = Mapping((0, 1, 0))
     mapping.inverse = Mapping((2, 1))
@@ -740,6 +749,74 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     return target_waves, header, data_size, output_wcs
 
 
+def build_slit_centered_wcs(slit, waves, pscale_ratio=1, ypad=0, force_nypix=21, slit_center=0., center_on_source=False, get_from_ypos=True, phase=0, fix_slope=None, **kwargs):
+    
+    from gwcs import wcstools
+    
+    if get_from_ypos:
+        yoff = slit.source_ypos/0.1 - 0.5
+    else:
+        sc = slit.copy()
+
+        refwcs = slit.meta.wcs
+        d2s = refwcs.get_transform('detector', 'slit_frame')
+
+        bbox = refwcs.bounding_box
+        grid = wcstools.grid_from_bounding_box(bbox)
+        _, s, lam = np.array(d2s(*grid))
+    
+        if center_on_source:
+            s0 = slit.source_ypos
+        else:
+            s0 = slit_center
+        
+        sc.data = sc.data*0.+np.exp(-(s-s0)**2/2/0.3**2)
+    
+        DRIZZLE_PARAMS = dict(output=None,
+                          single=True,
+                          blendheaders=True,
+                          pixfrac=1.0,
+                          kernel='point',
+                          fillval=0,
+                          wht_type='ivm',
+                          good_bits=0,
+                          pscale_ratio=1.0,
+                          pscale=None)
+
+        _data = build_regular_wavelength_wcs([sc], center_on_source=False, 
+                                                          wave_array=waves, 
+                                                          force_nypix=force_nypix,
+                                                          ypad=ypad,
+                                                          pscale_ratio=pscale_ratio,
+                                                          verbose=False,
+                                                          fix_slope=fix_slope) 
+
+        _waves, _header, _drz = drizzle_slits_2d([sc], build_data=_data,
+                                                          drizzle_params=DRIZZLE_PARAMS)
+    
+        prof = np.nansum(_drz[0].data, axis=1)
+        if prof.max() == 0:
+            return _data
+        
+        # plt.plot(prof)
+    
+        xc = (np.arange(len(prof))*prof).sum()/prof.sum()
+        yoff = xc - (force_nypix-1)/2 + phase
+    
+    #print('yoffset: ', yoff, xc)
+    
+    slit.drizzle_slit_offset = yoff
+    
+    _xdata = build_regular_wavelength_wcs([slit], center_on_source=False, 
+                                                       wave_array=waves, 
+                                                       force_nypix=force_nypix,
+                                                       force_yoffset=yoff,
+                                                       ypad=0, verbose=False,
+                                                       fix_slope=fix_slope) 
+    
+    return _xdata
+
+
 DRIZZLE_PARAMS = dict(output=None,
                       single=False,
                       blendheaders=True,
@@ -751,7 +828,7 @@ DRIZZLE_PARAMS = dict(output=None,
                       pscale_ratio=1.0,
                       pscale=None)
 
-def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, **kwargs):
+def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, centered_wcs=False, **kwargs):
     """
     Run `jwst.resample.resample_spec.ResampleSpecData` on a list of 
     List of `jwst.datamodels.slit.SlitModel` objects.
@@ -798,6 +875,11 @@ def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, **kw
     else:
         target_waves, header, data_size, output_wcs = build_data
     
+    if centered_wcs:
+        _ = build_slit_centered_wcs(slits[0], target_waves, **kwargs)
+        target_waves, header, data_size, output_wcs = _ 
+        print(f'Center on target: output shape = {data_size}')
+        
     # Own drizzle single to get variances
     if 'single' in drizzle_params:
         run_single = drizzle_params['single']
@@ -965,8 +1047,26 @@ def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=
     yp, xp = np.indices(sh)
     
     if profile_slice is not None:
+        if not isinstance(profile_slice, slice):
+            if isinstance(profile_slice[0], int):
+                # pixels
+                profile_slice = slice(*profile_slice)
+            else:
+                # Wavelengths interpolated on pixel grid
+                sh = drizzled_slits[0].data.shape
+                xpix = np.arange(sh[1])
+                ypix = np.zeros(sh[1]) + sh[0]/2
+    
+                _wcs = drizzled_slits[0].meta.wcs
+                _, _, wave0 = _wcs.forward_transform(xpix, ypix)
+                xsl = np.cast[int](np.round(np.interp(profile_slice, wave0, xpix)))
+                xsl = np.clip(xsl, 0, sh[1])
+                print(f'Wavelength slice: {profile_slice} > {xsl} pix')
+                profile_slice = slice(*xsl)
+            
         prof1d = np.nansum((sci2d * wht2d)[:,profile_slice], axis=1) 
         prof1d /= np.nansum(wht2d[:,profile_slice], axis=1)
+            
         slice_limits = profile_slice.start, profile_slice.stop
     else:
         prof1d = np.nansum(sci2d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
@@ -978,12 +1078,7 @@ def combine_2d_with_rejection(drizzled_slits, outlier_threshold=5, grow=0, trim=
     ok[np.where(ok)[0][-1:]] = False
     
     ok &= (prof1d > 0)
-    
-    # expected center
-    # xtr, ytr, _, _, _ = slit_trace_center(drizzled_slits[0],
-    #                                       with_source_ypos=1,
-    #                                       index_offset=0.5)
-                                          
+                                              
     xpix = np.arange(sh[0])
     # ytrace = np.nanmedian(ytr)
     # print('xxx', ytrace, sh[0]/2)
@@ -1161,7 +1256,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, z=None, ny=None, output_root=None, unit='fnu'):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.3, z=None, ny=None, output_root=None, unit='fnu'):
     """
     Figure showing drizzled hdu
     """
@@ -1189,7 +1284,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     if unit == 'flam':
         yscl = yscl*(sp['wave']/2.)**2
         
-    axes[0].imshow(hdul['SCI'].data/yscl, vmin=-0.3*ymax, vmax=ymax, 
+    axes[0].imshow(hdul['SCI'].data/yscl, vmin=vmin*ymax, vmax=ymax, 
                    aspect='auto', cmap=cmap, 
                    interpolation='nearest')
                    
