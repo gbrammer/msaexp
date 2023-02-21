@@ -4,6 +4,8 @@ Fits, etc. to extracted spectra
 """
 import os
 import time
+import warnings
+
 import numpy as np
 
 import scipy.ndimage as nd
@@ -335,7 +337,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               use_full_dispersion=use_full_dispersion,
                               sys_err=sys_err)
         
-        for k in ['coeffs', 'covar', 'model', 'mline', 'full_chi2', 'cont_chi2']:
+        for k in ['coeffs', 'covar', 'model', 'mline', 'fullchi2', 'contchi2']:
             if k in spl_data:
                 data[f'spl_{k}'] = spl_data[k]
         
@@ -397,18 +399,22 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
             oiii = ['OIII-4959','OIII-5007']
             sii = ['SII-6717', 'SII-6731']
             hlines += ['Ha','NII']
-            hlines += ['Ha+NII', 'H7', 'NeIII-3968']
+            hlines += ['H7', 'NeIII-3968']
             
         for l in [*hlines, *oiii, 'OIII-4363', 'OII',
                   'HeII-4687', 
                   *sii,
                   'OII-7325', 'ArIII-7138', 'SIII-9068', 'SIII-9531',
-                  'OI-6302', 'PaD', 'PaG', 'PaB', 'PaA', 'HeI-1083', 
+                  'OI-6302', 'PaD', 'PaG', 'PaB', 'PaA', 'HeI-1083',
+                  'BrA','BrB','BrG','BrD','PfB','PfG','PfD','PfE','Pa8','Pa9','Pa10',
                   'NeIII-3867', 'HeI-5877', 
                   'HeII-1640', 'CIV-1549',
                   'CIII-1908', 'OIII-1663', 'NIII-1750', 'Lya',
                   'MgII', 'NeV-3346', 'NeVI-3426']:
 
+            if l not in lw:
+                continue
+            
             lwi = lw[l][0]*(1+z)
 
             if lwi < wobs.min()*1.e4:
@@ -442,7 +448,8 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
                                                                    central_wave=lwi,
                                     fwhm=fwhm_ang, name=name).flux*lri/np.sum(lr[l])
 
-        _, _A, tline = utils.array_templates(templates, 
+        _, _A, tline = utils.array_templates(templates,
+                                             max_R=10000,
                                              wave=wobs.astype(float)*1.e4,
                                              apply_igm=False)
 
@@ -475,7 +482,8 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
                                                     flux=tflam, name=t.name)
     
             # ToDo: smooth with dispersion
-            _, _A, tline = utils.array_templates(templates, 
+            _, _A, tline = utils.array_templates(templates,
+                                                 max_R=10000,
                                                  wave=wrest,
                                                  z=z, apply_igm=True)
     
@@ -693,10 +701,10 @@ def setup_spectrum(file, bkg=0., sys_err=0.02):
     spec.equiv = u.spectral_density(spec['wave'].data*spec['wave'].unit)
     
     spec['to_flam'] = (1*spec['flux'].unit).to(flam_unit, equivalencies=spec.equiv).value
-    spec.meta['flam_unit'] = flam_unit
+    spec.meta['flamunit'] = flam_unit.unit
     
-    spec.meta['flux_unit'] = spec['flux'].unit
-    spec.meta['wave_unit'] = spec['wave'].unit
+    spec.meta['fluxunit'] = spec['flux'].unit
+    spec.meta['waveunit'] = spec['wave'].unit
     
     spec['wave'] = spec['wave'].value
     spec['flux'] = spec['flux'].value
@@ -796,19 +804,19 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         if t.startswith('line '):
             print(f'{t:>20}   {coeffs[i]:8.1f} ± {covard[i]:8.1f}')
     
-    if 'source_ra' not in spec.meta:
-        spec.meta['source_ra'] = 0.0
-        spec.meta['source_dec'] = 0.0
-        spec.meta['source_name'] = 'unknown'
+    if 'srcra' not in spec.meta:
+        spec.meta['srcra'] = 0.0
+        spec.meta['srcdec'] = 0.0
+        spec.meta['srcname'] = 'unknown'
     
     spec['model'] = _model/spec['to_flam']
     spec['mline'] = _mline/spec['to_flam']
     
     data = {'z': float(z),
             'file':file,
-            'ra': float(spec.meta['source_ra']),
-            'dec': float(spec.meta['source_dec']),
-            'name': str(spec.meta['source_name']),
+            'ra': float(spec.meta['srcra']),
+            'dec': float(spec.meta['srcdec']),
+            'name': str(spec.meta['srcname']),
             'wmin':float(spec['wave'][mask].min()),
             'wmax':float(spec['wave'][mask].max()),
             'coeffs':cdict,
@@ -821,11 +829,11 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
             'mline':[float(m) for m in _mline/spec['to_flam']],
             'templates':templates, 
             'dof': int(mask.sum()), 
-            'full_chi2': float(full_chi2), 
-            'cont_chi2': float(cont_chi2),
+            'fullchi2': float(full_chi2), 
+            'contchi2': float(cont_chi2),
            }
             
-    for k in ['z','wmin','wmax','dof','full_chi2','cont_chi2']:
+    for k in ['z','wmin','wmax','dof','fullchi2','contchi2']:
         spec.meta[k] = data[k]
         
     #fig, axes = plt.subplots(len(ranges)+1,1,figsize=figsize)
@@ -846,14 +854,17 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     _Acont[_Acont < 0.001*_Acont.max()] = np.nan
     
     if (draws is not None) & has_covar:
-        mu = np.random.multivariate_normal(coeffs[oktemp], covar_i, size=draws)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mu = np.random.multivariate_normal(coeffs[oktemp], covar_i, size=draws)
+            
         #print('draws', draws, mu.shape, _A.shape)
         mdraws = _A[oktemp,:].T.dot(mu.T)
     else:
         mdraws = None
     
     if plot_unit is not None:
-        unit_conv = (1*spec.meta['flam_unit']).to(plot_unit,
+        unit_conv = (1*spec.meta['flamunit']).to(plot_unit,
                                    equivalencies=spec.equiv).value
     else:
         unit_conv = np.ones(len(wobs))
