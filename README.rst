@@ -26,8 +26,9 @@ Documentation
 
 Documentation will be here: https://msaexp.readthedocs.io/, though it's essentially just the module API for now.
 
-The overall procedure is demonstrated in two notebooks:
+The overall procedure is demonstrated in these notebooks:
 
+- `drizzled-nirspec.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/drizzled-nirspec.ipynb>`_: Demo of new drizzling and combination code (`0.6.0`) with prism data from JWST program `GO-1433 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=1433&observatory=JWST>`_ (PI: Dan Coe)
 - `process-rxj2129.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-rxj2129.ipynb>`_: Demo with prism data from JWST program `DD-2767 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2756&observatory=JWST>`_ (PI: Pat Kelly)
 - `process-smacs0723.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-smacs0723.ipynb>`_: Demo with medium resolution data from the JWST `ERO-2736 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2736&observatory=JWST>`_ program on the cluster SMACS-0723 (PI: Klaus Pontoppidon)
 
