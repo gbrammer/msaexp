@@ -677,13 +677,8 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
                 profile_slice = slice(*profile_slice)
             else:
                 # Wavelengths interpolated on pixel grid
-                sh = drizzled_slits[0].data.shape
                 xpix = np.arange(sh[1])
-                ypix = np.zeros(sh[1]) + sh[0]/2
-    
-                _wcs = drizzled_slits[0].meta.wcs
-                _, _, wave0 = _wcs.forward_transform(xpix, ypix)
-                xsl = np.cast[int](np.round(np.interp(profile_slice, wave0, xpix)))
+                xsl = np.cast[int](np.round(np.interp(profile_slice, waves, xpix)))
                 xsl = np.clip(xsl, 0, sh[1])
                 print(f'Wavelength slice: {profile_slice} > {xsl} pix')
                 profile_slice = slice(*xsl)
@@ -707,7 +702,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
     y0 = yp - ytrace
         
     if prf_center is None:
-        prf_center = np.nanargmax(prof1d*msk) - (sh[0]-1)/2.
+        prf_center = np.nanargmax(prof1d) - (sh[0]-1)/2.
         if verbose:
             print(f'Set prf_center: {prf_center} {sh} {ok.sum()}')
     

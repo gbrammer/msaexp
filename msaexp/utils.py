@@ -1698,6 +1698,7 @@ def calculate_psf_fwhm():
     """
     import scipy.stats
     import webbpsf
+    import matplotlib.pyplot as plt
     
     nspec = webbpsf.NIRSpec()
     nspec.image_mask = 'S200A1' # 0.2 arcsec slit
