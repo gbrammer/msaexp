@@ -446,7 +446,6 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             avg = np.nanmedian(sci, axis=0)
             
         avg_w = ivar.sum(axis=0)
-        print('xxx init ', flagged.sum(), sci.size, avg.size)
         
         ## Subsequent passes - weighted average with outlier rejection
         for _iter in range(3):
