@@ -1,9 +1,11 @@
 """
 """
 import os
+import warnings
 import numpy as np
 import astropy.io.fits as pyfits
 
+import grizli.utils
 
 def summary_from_metafiles():
     """
@@ -209,6 +211,102 @@ def detector_bounding_box(file):
         yaml.dump(slit_borders, stream=fp)
 
     return slit_borders
+
+
+def slit_metadata_to_header(slit, key='', header=None):
+    """
+    Get selected metadata.
+    
+    This would be similar to
+    
+    .. code-block:: python
+        :dedent:
+    
+        from stdatamodels import fits_support
+        hdul, _asdf = fits_support.to_fits(slit._instance, schema=slit._schema)
+    
+    and getting the keywords from `hdul`, but here the keywords are renamed slightly to
+    allow adding the `key` suffix.
+    
+    Parameters
+    ----------
+    slit : `jwst.datamodels.SlitModel`
+        Slit data model
+    
+    key : str, int
+        Key that will be appended to header keywords, e.g., ``header[f'FILE{key}']``.  Should
+        have just one or two characters to avoid making HIERARCH keywords longer than the 
+        FITS standard eight characters.
+    
+    header : `~astropy.io.fits.Header`
+        Add keys to existing header
+    
+    Returns
+    -------
+    header : `~astropy.io.fits.Header`
+    
+    """
+    if header is None:
+        h = pyfits.Header()
+    else:
+        h = header
+        
+    meta = slit.meta.instance
+    
+    h[f'FILE{key}']    = meta['filename'], 'Data filename'
+    h[f'CALVER{key}']  = (meta['calibration_software_version'], 'Calibration software version')
+    h[f'CRDS{key}']    = (meta['ref_file']['crds']['context_used'], 'CRDS context')
+    
+    h[f'GRAT{key}']    = meta['instrument']['grating'], 'Instrument grating'
+    h[f'FILTER{key}']  = meta['instrument']['filter'], 'Instrument filter'
+    
+    h[f'MSAMET{key}']  = meta['instrument']['msa_metadata_file'], 'MSAMETF metadata file'
+    h[f'MSAID{key}']   = meta['instrument']['msa_metadata_id'], 'MSAMETF metadata id'
+    h[f'MSACONF{key}'] = (meta['instrument']['msa_configuration_id'],
+                        'MSAMETF metadata configuration id')
+                       
+    h[f'SLITID{key}'] = slit.slitlet_id, 'slitlet_id from MSA file'
+    h[f'SRCNAM{key}'] = slit.source_name, 'source_name from MSA file'
+    h[f'SRCID{key}']  = slit.source_id, 'source_id from MSA file'
+    h[f'SRCRA{key}']  = slit.source_ra, 'source_ra from MSA file'
+    h[f'SRCDEC{key}'] = slit.source_dec, 'source_dec from MSA file'
+    
+    h[f'PIXSR{key}']  = slit.meta.photometry.pixelarea_steradians, 'Pixel area, sr'
+    h[f'TOUJY{key}']  = 1.e12*h[f'PIXSR{key}'], 'Conversion to uJy/pix'
+    
+    h[f'DETECT{key}'] = meta['instrument']['detector'], 'Instrument detector name'
+    h[f'XSTART{key}'] = slit.ystart, 'Left detector pixel of 2D cutout'
+    h[f'XSIZE{key}']  = slit.xsize, 'X size of 2D cutout'
+    h[f'YSTART{key}'] = slit.ystart, 'Lower detector pixel of 2D cutout'
+    h[f'YSIZE{key}']  = slit.ysize, 'Y size of 2D cutout'
+
+    h[f'RA_REF{key}'] = meta['wcsinfo']['ra_ref'],  'Exposure RA reference position'
+    h[f'DE_REF{key}'] = meta['wcsinfo']['dec_ref'], 'Exposure Dec reference position'
+    h[f'RL_REF{key}'] = meta['wcsinfo']['roll_ref'], 'Exposure roll referencev'
+    h[f'V2_REF{key}'] = meta['wcsinfo']['v2_ref'],  'Exposure V2 reference position'
+    h[f'V3_REF{key}'] = meta['wcsinfo']['v3_ref'],  'Exposure V3 reference position'
+    h[f'V3YANG{key}'] = meta['wcsinfo']['v3yangle'], 'Exposure V3 y angle'
+    
+    h[f'RA_V1{key}']  = meta['pointing']['ra_v1'], '[deg] RA of telescope V1 axis'
+    h[f'DEC_V1{key}'] = meta['pointing']['dec_v1'], '[deg] Dec of telescope V1 axis'
+    h[f'PA_V3{key}']  = meta['pointing']['pa_v3'], '[deg] Position angle of V3 axis'
+    
+    h[f'EXPSTR{key}'] = meta['exposure']['start_time_mjd'], 'Exposure start MJD'
+    h[f'EXPEND{key}'] = meta['exposure']['start_time_mjd'], 'Exposure end MJD'
+    h[f'EFFEXP{key}'] = (meta['exposure']['effective_exposure_time'],
+                         'Effective exposure time')
+
+    h[f'DITHN{key}'] = meta['dither']['position_number'], 'Dither position number'
+    h[f'DITHX{key}'] = meta['dither']['x_offset'], 'Dither x offset'
+    h[f'DITHY{key}'] = meta['dither']['y_offset'], 'Dither y offset'
+    h[f'DITHT{key}'] = meta['dither']['nod_type'], 'Dither nod type'
+    
+    h[f'NFRAM{key}'] = meta['exposure']['nframes'], 'Number of frames'
+    h[f'NGRP{key}']  = meta['exposure']['ngroups'], 'Number of groups'
+    h[f'NINTS{key}'] = meta['exposure']['nints'], 'Number of integrations'
+    h[f'RDPAT{key}'] = meta['exposure']['readpatt'], 'Readout pattern'
+    
+    return h
 
 
 def slit_trace_center(slit, with_source_ypos=True, index_offset=0.):
@@ -543,13 +641,17 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     
     # Set linear dispersion
     if wave_range is None:
-        lmin = np.nanmin(target_waves)
-        lmax = np.nanmax(target_waves)
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore', category=RuntimeWarning)
+            lmin = np.nanmin(target_waves)
+            lmax = np.nanmax(target_waves)
     else:
         lmin, lmax = wave_range
         
     if wave_step is None:
-        dlam = np.nanmedian(np.diff(target_waves))*wave_scale
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore', category=RuntimeWarning)
+            dlam = np.nanmedian(np.diff(target_waves))*wave_scale
     else:
         dlam = wave_step*1.
     
@@ -574,18 +676,24 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
             dl = np.diff(target_waves)
             target_waves = np.append(target_waves, target_waves[:-1]+dl/2.)
             target_waves.sort()
+                    
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore', category=RuntimeWarning)
             
-        lmin = np.nanmin(target_waves)
-        lmax = np.nanmax(target_waves)
-        dlam = np.nanmedian(np.diff(target_waves))
+            lmin = np.nanmin(target_waves)
+            lmax = np.nanmax(target_waves)
+            dlam = np.nanmedian(np.diff(target_waves))
         
     if wave_array is not None:
         msg = f'Set user-defined wavelength grid (size={wave_array.size})'
         
         target_waves = wave_array*1.
-        lmin = np.nanmin(target_waves)
-        lmax = np.nanmax(target_waves)
-        dlam = np.nanmedian(np.diff(target_waves))
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore', category=RuntimeWarning)
+            
+            lmin = np.nanmin(target_waves)
+            lmax = np.nanmax(target_waves)
+            dlam = np.nanmedian(np.diff(target_waves))
         
     if verbose:
         print('build_regular_wavelength_wcs: ' + msg)
@@ -749,7 +857,9 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     return target_waves, header, data_size, output_wcs
 
 
-def build_slit_centered_wcs(slit, waves, pscale_ratio=1, ypad=0, force_nypix=21, slit_center=0., center_on_source=False, get_from_ypos=True, phase=0, fix_slope=None, **kwargs):
+def build_slit_centered_wcs(slit, waves, pscale_ratio=1, ypad=0, force_nypix=21, slit_center=0., center_on_source=False, get_from_ypos=True, phase=-0.5, fix_slope=None, **kwargs):
+    """
+    """
     
     from gwcs import wcstools
     
@@ -776,30 +886,34 @@ def build_slit_centered_wcs(slit, waves, pscale_ratio=1, ypad=0, force_nypix=21,
                           single=True,
                           blendheaders=True,
                           pixfrac=1.0,
-                          kernel='point',
+                          kernel='square',
                           fillval=0,
                           wht_type='ivm',
                           good_bits=0,
                           pscale_ratio=1.0,
                           pscale=None)
 
-        _data = build_regular_wavelength_wcs([sc], center_on_source=False, 
-                                                          wave_array=waves, 
-                                                          force_nypix=force_nypix,
-                                                          ypad=ypad,
-                                                          pscale_ratio=pscale_ratio,
-                                                          verbose=False,
-                                                          fix_slope=fix_slope) 
+        _data = build_regular_wavelength_wcs([sc],
+                                             center_on_source=False, 
+                                             wave_array=waves, 
+                                             force_nypix=force_nypix,
+                                             ypad=ypad,
+                                             pscale_ratio=pscale_ratio,
+                                             verbose=False,
+                                             fix_slope=fix_slope) 
 
-        _waves, _header, _drz = drizzle_slits_2d([sc], build_data=_data,
-                                                          drizzle_params=DRIZZLE_PARAMS)
-    
-        prof = np.nansum(_drz[0].data, axis=1)
+        _waves, _header, _drz = drizzle_slits_2d([sc],
+                                                 build_data=_data,
+                                                 drizzle_params=DRIZZLE_PARAMS,
+                                                 )
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore', category=RuntimeWarning)
+            prof = np.nansum(_drz[0].data, axis=1)
+        
         if prof.max() == 0:
             return _data
         
-        # plt.plot(prof)
-    
         xc = (np.arange(len(prof))*prof).sum()/prof.sum()
         yoff = xc - (force_nypix-1)/2 + phase
     
@@ -807,12 +921,14 @@ def build_slit_centered_wcs(slit, waves, pscale_ratio=1, ypad=0, force_nypix=21,
     
     slit.drizzle_slit_offset = yoff
     
-    _xdata = build_regular_wavelength_wcs([slit], center_on_source=False, 
-                                                       wave_array=waves, 
-                                                       force_nypix=force_nypix,
-                                                       force_yoffset=yoff,
-                                                       ypad=0, verbose=False,
-                                                       fix_slope=fix_slope) 
+    _xdata = build_regular_wavelength_wcs([slit],
+                                          center_on_source=False, 
+                                          wave_array=waves, 
+                                          force_nypix=force_nypix,
+                                          force_yoffset=yoff,
+                                          ypad=0, verbose=False,
+                                          fix_slope=fix_slope,
+                                          ) 
     
     return _xdata
 
@@ -1256,7 +1372,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.3, z=None, ny=None, output_root=None, unit='fnu'):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.15, z=None, ny=None, output_root=None, unit='fnu', recenter=True):
     """
     Figure showing drizzled hdu
     """
@@ -1290,11 +1406,21 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
                    
     axes[0].set_yticklabels([])
     y0 = hdul['SPEC1D'].header['YTRACE'] + hdul['SPEC1D'].header['PROFCEN']
+    
+    if 'BKGOFF' in hdul['SCI'].header:
+        yt = hdul['SCI'].header['BKGOFF']
+    else:
+        yt = 5
+    
     if ny is not None:
         axes[0].set_ylim(y0-ny, y0+ny)
         axes[0].set_yticks([y0])
+        if recenter:
+            axes[0].set_ylim(y0-2*ny, y0+2*ny)
     else:
-        axes[0].set_yticks([y0-4, y0+4])
+        axes[0].set_yticks([y0-yt, y0+yt])
+        if recenter:
+            axes[0].set_ylim(y0-2*yt, y0+2*yt)
         
     # Extraction profile
     ap = a2d[0][1]
@@ -1304,7 +1430,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     sh = hdul['SCI'].data.shape
     sli = (hdul['PROF1D'].header['PROFSTRT'],
            hdul['PROF1D'].header['PROFSTOP'])
-           
+    
     if sli != (0, sh[1]):
         
         dy = np.diff(axes[0].get_ylim())[0]
@@ -1325,14 +1451,18 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
                 ha='right', va='center',
                 bbox={'fc':'w', 'ec':'None', 'alpha':1.},
                 transform=ap.transAxes, fontsize=7)
-    #
+    
     ap.spines.right.set_visible(False)
     ap.spines.top.set_visible(False)
     
     ap.set_ylim(axes[0].get_ylim())
-    ap.set_yticks([y0-4, y0+4])
+    ap.set_yticks([y0-yt, y0+yt])
+    
+    if recenter:
+        ap.set_ylim(y0-2*yt, y0+2*yt)
+        
     ap.grid()
-    ap.set_xlim(-0.5, 1)
+    ap.set_xlim(-0.5, 1.3)
     ap.set_xticklabels([])
     ap.set_yticklabels([])
     
@@ -1418,11 +1548,12 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         xticks = [f'{w:0.2}' for w in wrest[in_range]]
         #xticks[0] = f'z={z:.3f}' #' {xticks[0]}'
         axes[0].set_xticklabels(xticks)
-        axes[1].text(0.03,0.96, f'z={z:.4f}',
+        axes[1].text(0.03,0.90, f'z={z:.4f}',
                       ha='left', va='top',
                       transform=axes[1].transAxes,
                       fontsize=8, 
-                      bbox={'fc':'w', 'alpha':0.5, 'ec':'None'})
+                      bbox={'fc':'w', 'alpha':0.5, 'ec':'None'},
+                      )
                       
                      
         mrest = np.arange(0.1, 1.91, 0.01)
@@ -1436,12 +1567,18 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         axes[0].set_xticklabels([])
         axes[0].grid()
     
-    if output_root is not None:
-        axes[1].text(0.97,0.96, output_root,
-                      ha='right', va='top',
+    if 'SRCNAME' in hdul['SCI'].header:
+        if output_root is not None:
+            label = f"{output_root} {hdul['SCI'].header['SRCNAME']}"
+        else:
+            label = f"{hdul['SCI'].header['SRCNAME']}"
+        
+        axes[1].text(0.03,0.97, label,
+                      ha='left', va='top',
                       transform=axes[1].transAxes,
                       fontsize=8, 
-                      bbox={'fc':'w', 'alpha':0.5, 'ec':'None'})
+                      bbox={'fc':'w', 'alpha':0.5, 'ec':'None'},
+                      )
         
     if xlim is not None:
         xvi = np.interp(xlim, sp['wave'], np.arange(len(sp)))
@@ -1554,6 +1691,168 @@ def extract_all():
         hdul.append(pyfits.ImageHDU(data=profile2d, header=header, name='PROFILE'))
         
         hdul.flush()
+
+
+def calculate_psf_fwhm():
+    """
+    Use WebbPSF to calculate the FWHM as a function of wavelength assuming 0.2" fixed slit
+    """
+    import scipy.stats
+    import webbpsf
+    import matplotlib.pyplot as plt
+    
+    nspec = webbpsf.NIRSpec()
+    nspec.image_mask = 'S200A1' # 0.2 arcsec slit
+
+    psfs = {}
+    for wave in [0.6, 0.7, 0.8, 0.9, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 5.5]:
+        print(wave)
+        psfs[wave] = nspec.calc_psf(monochromatic=wave*1.e-6, oversample=4, 
+                                    detector_oversample=4)
+    #
+    norm = scipy.stats.norm()
+
+    N = len(psfs)
+    fig, axes = plt.subplots(2,N, figsize=(2*len(psfs),4), sharex=False, sharey=False)
+
+    fwhm_wave = []
+
+    for i, w in enumerate(psfs):
+        psf = psfs[w]
+        ax = axes[0][i]
+        ext = 'OVERSAMP'
+        ax.imshow(np.log10(psf[ext].data))
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+                       
+        prof = psf[ext].data.sum(axis=1)
+        ax = axes[1][i]
+        Nx = len(prof)
+        ax.plot(prof/prof.sum(), marker='.')
+        cdf = np.cumsum(prof/prof.sum())
+        ax.plot(cdf/2)
+    
+        x = np.arange(Nx)
+        fwhm = np.diff(np.interp(norm.cdf(np.array([-1,1])*2.35/2), cdf, x))
+        fwhm_wave.append(fwhm[0])
+    
+        print(w, fwhm/4)
+        ax.set_ylim(-0.1, 0.5)
+        ax.set_xlim(Nx/2-20, Nx/2+20)
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+
+def get_nirspec_psf_fwhm(wave):
+    """
+    Get PSF FWHM in pix based on WebbPSF
+    
+    Parameters
+    ----------
+    wave : float, array-like
+        Wavelength in microns
+    
+    """
+    fwhm_table = grizli.utils.read_catalog("""# wave fwhm_pix
+    0.6 1.04
+    0.7 0.80
+    0.8 0.67
+    0.9 0.63
+    1.0 0.62
+   1.25 0.68
+    1.5 0.79
+    2.0 0.89
+    2.5 0.95
+    3.0 1.08
+    4.0 1.41
+    5.0 1.78
+    5.5 1.94""")
+    
+    fwhm = np.interp(wave, fwhm_table['wave'], fwhm_table['fwhm_pix'],
+                     left=fwhm_table['fwhm_pix'][0],
+                     right=fwhm_table['fwhm_pix'][-1])
+    
+    return fwhm
+
+
+def make_nirspec_gaussian_profile(waves, sigma=0.5, ycenter=0., ny=31, weight=1, bkg_offset=6, bkg_parity=[-1,1]):
+    """
+    Make a pixel-integrated Gaussian profile
+    """
+    import scipy.special
+    
+    yp, xp = np.indices((ny+1, len(waves)))
+    y0 = (ny-1)/2
+    
+    psf_fwhm = get_nirspec_psf_fwhm(waves)
+    sig = np.sqrt((psf_fwhm/2.35)**2 + sigma**2)
+    
+    ysig = (yp - y0 - 0.5 - ycenter) / sig
+    
+    cdf = 1/2*(1 + scipy.special.erf(ysig/np.sqrt(2)))
+    
+    prf = np.diff(cdf, axis=0)
+    
+    if bkg_offset is not None:
+        bkgn = prf*0.
+        bkgd = bkgn*0
         
+        for p in bkg_parity:
+            bkgn += np.roll(prf*weight, p*bkg_offset, axis=0)
+            bkgd += np.roll(weight, p*bkg_offset, axis=0)
+            
+        prf -= bkgn/bkgd
+        
+    return prf
+
+
+def objfun_prf(params, waves, sci2d, wht2d, ycenter, sigma, bkg_offset, bkg_parity, fit_type, ret, verbose):
+    """
+    Objective function for fitting the 2D profile
+    """
+    if fit_type == 1:
+        sigma = params[0]
+    elif fit_type == 2:
+        ycenter = params[0]
+    else:
+        ycenter, sigma = params
+        
+    ny = sci2d.shape[0]
+    prf = make_nirspec_gaussian_profile(waves,
+                           sigma=sigma,
+                           ycenter=ycenter,
+                           ny=ny,
+                           weight=wht2d,
+                           bkg_offset=bkg_offset,
+                           bkg_parity=bkg_parity)
+    
+    prf *= prf > 0
+    
+    ok = np.isfinite(sci2d*prf*wht2d) & (wht2d > 0) & (sci2d != 0) #& (prf != 0)
+    norm = (sci2d*prf*wht2d)[ok].sum() / (prf**2*wht2d)[ok].sum()
+    model = norm*prf
+        
+    if 0:
+        p2 = prf*1
+        p2 *= (p2 > 0)
+
+        num = np.nansum((sci2d*p2*wht2d), axis=0)
+        den = np.nansum((p2**2*wht2d), axis=0)
+        norm = num/den
+
+        model = norm*prf
+    
+    chi = (sci2d - model)*np.sqrt(wht2d)
+    
+    chi2 = (chi[ok]**2).sum()
+    if verbose:
+        print(params, chi2)
+    
+    if ret == 1:
+        return norm, model
+    elif ret == 2:
+        return chi[ok].flatten()
+    elif ret == 3:
+        return chi2
     
         
