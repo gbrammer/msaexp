@@ -1567,17 +1567,18 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         axes[0].set_xticklabels([])
         axes[0].grid()
     
-    if output_root is not None:
-        label = f"{output_root} {hdul['SCI'].header['SRCNAME']}"
-    else:
-        label = f"{hdul['SCI'].header['SRCNAME']}"
+    if 'SRCNAME' in hdul['SCI'].header:
+        if output_root is not None:
+            label = f"{output_root} {hdul['SCI'].header['SRCNAME']}"
+        else:
+            label = f"{hdul['SCI'].header['SRCNAME']}"
         
-    axes[1].text(0.03,0.97, label,
-                  ha='left', va='top',
-                  transform=axes[1].transAxes,
-                  fontsize=8, 
-                  bbox={'fc':'w', 'alpha':0.5, 'ec':'None'},
-                  )
+        axes[1].text(0.03,0.97, label,
+                      ha='left', va='top',
+                      transform=axes[1].transAxes,
+                      fontsize=8, 
+                      bbox={'fc':'w', 'alpha':0.5, 'ec':'None'},
+                      )
         
     if xlim is not None:
         xvi = np.interp(xlim, sp['wave'], np.arange(len(sp)))
