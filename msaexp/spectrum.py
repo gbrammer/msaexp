@@ -231,7 +231,7 @@ def smooth_template_disp(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1
 SMOOTH_TEMPLATE_DISP_FUNC = smooth_template_disp_eazy
 
 
-def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], zstep=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None, is_prism=False, use_full_dispersion=False, ranges=None, sys_err=0.02):
+def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], zstep=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None, is_prism=False, use_full_dispersion=False, ranges=None, sys_err=0.02, halpha_prism=['Ha+NII']):
     """
     """
     import yaml
@@ -275,7 +275,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                                   eazy_templates=eazy_templates,
                                   Rline=Rline,
                                   use_full_dispersion=use_full_dispersion,
-                                  sys_err=sys_err)
+                                  sys_err=sys_err,
+                                  halpha_prism=halpha_prism)
 
     zbest0 = zg0[np.argmin(chi0)]
     
@@ -289,7 +290,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                                   eazy_templates=eazy_templates,
                                   Rline=Rline,
                                   use_full_dispersion=use_full_dispersion,
-                                  sys_err=sys_err)
+                                  sys_err=sys_err,
+                                  halpha_prism=halpha_prism)
                                   
     zbest = zg1[np.argmin(chi1)]
     
@@ -325,7 +327,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               scale_disp=scale_disp,
                               eazy_templates=eazy_templates,
                               use_full_dispersion=use_full_dispersion,
-                              sys_err=sys_err)
+                              sys_err=sys_err,
+                              halpha_prism=halpha_prism)
     
     if eazy_templates is not None:
         spl_fig, sp2, spl_data = plot_spectrum(file, z=zbest, show_cont=True,
@@ -335,7 +338,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               scale_disp=scale_disp,
                               eazy_templates=None,
                               use_full_dispersion=use_full_dispersion,
-                              sys_err=sys_err)
+                              sys_err=sys_err,
+                              halpha_prism=halpha_prism)
         
         for k in ['coeffs', 'covar', 'model', 'mline', 'fullchi2', 'contchi2']:
             if k in spl_data:
@@ -370,7 +374,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     return fig, sp, data
 
 
-def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, scale_disp=1.0, use_full_dispersion=False, disp=None, grating='prism'):
+def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, scale_disp=1.0, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII']):
     """
     """
     from grizli import utils
@@ -385,31 +389,42 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
             templates[k] = bspl[k]
 
         # templates = {}
-        hlines = ['Hb', 'Hg', 'Hd','H8','H9', 'H10', 'H11', 'H12']
-
         if grating in ['prism']:
+            hlines = ['Hb', 'Hg', 'Hd']
+            
             if z > 5:
                 oiii = ['OIII-4959','OIII-5007']
+                hene = ['HeII-4687', 'NeIII-3867']
+                o4363 = ['OIII-4363']
+                
             else:
                 oiii = ['OIII']
+                hene = []
+                o4363 = []
                 
             sii = ['SII']
-            hlines += ['Ha+NII', 'NeIII-3968']
+            hlines += halpha_prism + ['NeIII-3968']
+            fuv = ['OIII-1663']
         else:
+            hlines = ['Hb', 'Hg', 'Hd','H8','H9', 'H10', 'H11', 'H12']
+            
+            hene = ['HeII-4687', 'NeIII-3867']
+            o4363 = ['OIII-4363']
             oiii = ['OIII-4959','OIII-5007']
             sii = ['SII-6717', 'SII-6731']
             hlines += ['Ha','NII']
             hlines += ['H7', 'NeIII-3968']
+            fuv = ['OIII-1663', 'HeII-1640', 'CIV-1549']
             
-        for l in [*hlines, *oiii, 'OIII-4363', 'OII',
-                  'HeII-4687', 
+        for l in [*hlines, *oiii, *o4363, 'OII',
+                  *hene, 
                   *sii,
                   'OII-7325', 'ArIII-7138', 'SIII-9068', 'SIII-9531',
                   'OI-6302', 'PaD', 'PaG', 'PaB', 'PaA', 'HeI-1083',
                   'BrA','BrB','BrG','BrD','PfB','PfG','PfD','PfE','Pa8','Pa9','Pa10',
-                  'NeIII-3867', 'HeI-5877', 
-                  'HeII-1640', 'CIV-1549',
-                  'CIII-1908', 'OIII-1663', 'NIII-1750', 'Lya',
+                  'HeI-5877', 
+                  *fuv,
+                  'CIII-1908', 'NIII-1750', 'Lya',
                   'MgII', 'NeV-3346', 'NeVI-3426']:
 
             if l not in lw:
@@ -493,7 +508,7 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
     return templates, tline, _A
     
     
-def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.0, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02):
+def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.0, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, halpha_prism=['Ha+NII']):
     """
     """
     import time
@@ -540,6 +555,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
                             use_full_dispersion=use_full_dispersion,
                             disp=spec.disp,
                             grating=spec.grating,
+                            halpha_prism=halpha_prism,
                             )
         
         okt = _A[:,mask].sum(axis=1) > 0
@@ -713,7 +729,7 @@ def setup_spectrum(file, bkg=0., sys_err=0.02):
     return spec
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, **kwargs):
+def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, halpha_prism=['Ha+NII'], **kwargs):
     """
     """
     global SCALE_UNCERTAINTY
@@ -749,6 +765,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
                         use_full_dispersion=use_full_dispersion,
                         disp=spec.disp,
                         grating=spec.grating,
+                        halpha_prism=halpha_prism,
                         )
             
     if scale_uncertainty_kwargs is not None:
