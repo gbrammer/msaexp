@@ -394,12 +394,12 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
             
             if z > 5:
                 oiii = ['OIII-4959','OIII-5007']
-                hene = ['HeII-4687', 'NeIII-3867']
+                hene = ['HeII-4687', 'NeIII-3867','HeI-3889']
                 o4363 = ['OIII-4363']
                 
             else:
                 oiii = ['OIII']
-                hene = []
+                hene = ['HeI-3889']
                 o4363 = []
                 
             sii = ['SII']
@@ -425,7 +425,9 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
                   'HeI-5877', 
                   *fuv,
                   'CIII-1908', 'NIII-1750', 'Lya',
-                  'MgII', 'NeV-3346', 'NeVI-3426']:
+                  'MgII', 'NeV-3346', 'NeVI-3426',
+                  'HeI-7065', 'HeI-8446',
+                   ]:
 
             if l not in lw:
                 continue
@@ -654,7 +656,7 @@ def setup_spectrum(file, bkg=0., sys_err=0.02):
             spec = utils.read_catalog(im['SPEC1D'])
             if 'POLY0' in spec.meta:
                 pc = []
-                for pi in range(3):
+                for pi in range(10):
                     if f'POLY{pi}' in spec.meta:
                         pc.append(spec.meta[f'POLY{pi}'])
                 
