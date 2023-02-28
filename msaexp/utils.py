@@ -262,7 +262,7 @@ def slit_metadata_to_header(slit, key='', header=None):
     
     h[f'MSAMET{key}']  = meta['instrument']['msa_metadata_file'], 'MSAMETF metadata file'
     h[f'MSAID{key}']   = meta['instrument']['msa_metadata_id'], 'MSAMETF metadata id'
-    h[f'MSACONF{key}'] = (meta['instrument']['msa_configuration_id'],
+    h[f'MSACNF{key}'] = (meta['instrument']['msa_configuration_id'],
                         'MSAMETF metadata configuration id')
                        
     h[f'SLITID{key}'] = slit.slitlet_id, 'slitlet_id from MSA file'
@@ -1500,16 +1500,22 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         
     xt = xt[(xt > sp['wave'].min()) & (xt < sp['wave'].max())]
     xv = np.interp(xt, sp['wave'], np.arange(len(sp)))
+    if major < 0.1:
+        xtl = [f'{v:.2f}' for v in xt]
+    elif major >= 1:
+        xtl = [f'{v:.0f}' for v in xt]
+    else:
+        xtl = [f'{v:.1f}' for v in xt]
 
     xtm = xtm[(xtm > sp['wave'].min()) & (xtm < sp['wave'].max())]
     xvm = np.interp(xtm, sp['wave'], np.arange(len(sp)))
     
     for ax in axes:
         ax.set_xticks(xvm, minor=True)
-        ax.set_xticks(xv, minor=False)
+        ax.set_xticks(xv, minor=False)                
         ax.xaxis.set_ticks_position('both')
 
-    axes[1].set_xticklabels(xt)
+    axes[1].set_xticklabels(xtl)
     axes[1].grid()
     
     if z is not None:

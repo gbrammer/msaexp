@@ -124,7 +124,7 @@ def center_wcs(slit, waves, center_on_source=False, force_nypix=31, fix_slope=No
     return wcs_data, offset_to_source, metadata_tuple(slit)
 
 
-def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True, drizzle_params=DRIZZLE_PARAMS, master_bkg=None, waves=None, wave_sample=1, log_step=True, force_nypix=31, center_on_source=False, center_phase=-0.5, fix_slope=None, outlier_threshold=5, sn_threshold=3, bar_threshold=0.7, err_threshold=1000, bkg_offset=5, bkg_parity=[1,-1], mask_padded=False, show_drizzled=True, show_slits=True, imshow_kws=IMSHOW_KWS, **kwargs):
+def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True, drizzle_params=DRIZZLE_PARAMS, master_bkg=None, wave_arrays={}, wave_sample=1, log_step=True, force_nypix=31, center_on_source=False, center_phase=-0.5, fix_slope=None, outlier_threshold=5, sn_threshold=3, bar_threshold=0.7, err_threshold=1000, bkg_offset=5, bkg_parity=[1,-1], mask_padded=False, show_drizzled=True, show_slits=True, imshow_kws=IMSHOW_KWS, **kwargs):
     """
     Implementing more direct drizzling of multiple 2D slitlets
     
@@ -153,8 +153,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
     master_bkg : array-like
         Master background to replace local background derived from the drizzled product
     
-    waves : array-like
-        Explicit arget wavelength array
+    wave_arrays : dict
+        Explicit target wavelength arrays with keys for `{grating}-{filter}` combinations
     
     wave_sample, log_step : float, bool
         If `waves` not specified, generate with `msaexp.utils.get_standard_wavelength_grid`
@@ -283,11 +283,14 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         slits = gratings[gr]
         
         ## Default wavelengths
-        if waves is None:
-            waves = utils.get_standard_wavelength_grid(grating,
+        if gr in wave_arrays:
+            waves = wave_arrays[gr]
+        else:
+            waves = utils.get_standard_wavelength_grid(gr.split('-')[0],
                                                        sample=wave_sample,
                                                        log_step=log_step)
         
+        # print(gr, len(waves), waves.min(), waves.max())
         ## Drizzle 2D spectra
         drz = None
         drz_ids = []
@@ -304,6 +307,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         for i in range(len(slits)): #[18:40]:
             slit = slits[i]
             if 'background' in slit.source_name:
+                continue
+            elif slit.data.shape[1] < 50:
                 continue
             
             _center = center_wcs(slit,
@@ -566,6 +571,31 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
 def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS, with_background=False):
     """
     Make a figure showing drizzled slitlets
+    
+    Parameters
+    ----------
+    slits : list
+        List of slitlet objects
+    
+    sci : (N,NY,NX) array
+        Science array of drizzled slitlets
+    
+    ivar : (N,NY,NX) array
+        Science array if inverse variance weights
+    
+    hdul : `~astropy.io.fits.HDUList`
+        Drizzle-combined HDU
+    
+    figsize : tuple
+        Figure size
+    
+    imshow_kws : dict
+        Keywords passed to `~matplotlib.pyplot.imshow`
+    
+    Returns
+    -------
+    fig : Figure
+    
     """
     avg = hdul['SCI'].data
     xvalid = np.isfinite(avg).sum(axis=0) > 0
@@ -608,6 +638,23 @@ def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, imshow_kws=IMSH
 def show_drizzled_product(hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS):
     """
     Make a figure showing drizzled product
+    
+    Parameters
+    ----------
+    hdul : `~astropy.io.fits.HDUList`
+        Drizzle combined HDU
+    
+    figsize : tuple
+        Figure size
+    
+    imshow_kws : dict
+        kwargs for `~matplotlib.pyplot.imshow`
+    
+    Returns
+    -------
+    fig : Figure
+        Figure object
+    
     """
     
     avg = hdul['SCI'].data
@@ -650,13 +697,75 @@ def show_drizzled_product(hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS):
     return fig
 
 
-def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
-                            prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), 
-                            center_limit=4,
-                            fit_prf=True, fix_center=False, fix_sigma=False, trim=0,
-                            bkg_offset=6, bkg_parity=[-1,1], verbose=True, **kwargs):
+def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], verbose=True, **kwargs):
     """
     Optimal extraction from 2D arrays
+                            
+    Parameters
+    ----------
+    waves : 1D array
+        Wavelengths, microns
+    
+    sci2d : 2D array
+        Data array
+    
+    wht2d : 2D array
+        Inverse variance weight array
+    
+    profile_slice : tuple, slice
+        Slice along wavelength axis where to determine the cross-dispersion profile.  If a 
+        tuple of floats, interpret as wavelength limits in microns
+    
+    prf_center : float
+        Profile center, relative to the cross-dispersion center of the array.  If `None`, then
+        try to estimate it from the data
+    
+    prf_sigma : float
+        Width of the extraction profile in pixels
+    
+    sigma_bounds : (float, float)
+        Parameter bounds for `prf_sigma`
+    
+    center_limit : float
+        Maximum offset from `prf_center` allowed
+    
+    fit_prf : bool
+        Fit the profile.  If False, then just use the fixed values of `prf_center` and 
+        `prf_sigma`
+    
+    fix_center : bool
+        Fix the centering in the fit
+    
+    fix_sigma : bool
+        Fix the width in the fit
+    
+    bkg_offset, bkg_parity : int, list
+        Parameters for the local background determination (see 
+        `~msaexp.drizzle.drizzle_slitlets`).  The profile is "subtracted" in the
+        same way as the data.
+    
+    verbose : bool
+        Status messages
+    
+    kwargs : dict
+        Ignored keyword args
+    
+    Returns
+    -------
+    sci2d_out : array
+        Output 2D sci array
+    
+    wht2d_out : array
+        Output 2D wht array
+    
+    profile2d : array
+        2D optimal extraction profile
+    
+    spec : `~astropy.table.Table`
+        Optimally-extracted 1D spectrum
+    
+    prof_tab : `~astropy.table.Table`
+        Table of the collapsed 1D profile
     """
     import scipy.ndimage as nd
     import astropy.units as u
@@ -687,9 +796,9 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
             
         slice_limits = profile_slice.start, profile_slice.stop
         
-        pmask = ok & False
-        pmask[:,profile_slice] = True
-        ok &= ~pmask
+        pmask = ok & True
+        pmask[:,profile_slice] &= True
+        ok &= pmask
         
     else:
         prof1d = np.nansum(sci2d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
@@ -719,8 +828,15 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
     if fit_type == 0:
         args = (waves, sci2d, wht_mask, prf_center, prf_sigma,
                 bkg_offset, bkg_parity, 3, 1, (verbose > 1))
+
         pnorm, pmodel = utils.objfun_prf([prf_center, prf_sigma], *args)
         profile2d = pmodel/pnorm
+        pmask = (profile2d > 0) & np.isfinite(profile2d)
+        profile2d[~pmask] = 0
+        
+        fit_center = prf_center
+        fit_sigma = prf_sigma
+        
     else:
         # Fit it
         if fix_sigma:
@@ -763,7 +879,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
         pfit1d = np.nansum((wht2d*profile2d*sci1d)[:,profile_slice], axis=1) 
         pfit1d /= np.nansum(wht2d[:,profile_slice], axis=1)
     else:
-        pfit1d = np.nansum(profile2d*sci1d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
+        pfit1d = np.nansum(profile2d*sci1d*wht2d, axis=1) / np.nansum(wht2d, axis=1)
     
     if trim > 0:
         bad = nd.binary_dilation(wht1d <= 0, iterations=trim)
@@ -816,6 +932,31 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
 
 def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, **kwargs):
     """
+    Run 1D extraction on arrays from a combined dataset
+    
+    Parameters
+    ----------
+    hdul : `~astropy.io.fits.HDUList`
+        Output data from from `~msaexp.drizzle.drizzle_slitlets`
+    
+    prf_center : float, None
+        Initial profile center.  If not specified, get from the `'SRCYPIX'` keyword in 
+        `hdul['SCI'].header`
+    
+    master_bkg : array
+        Optional master background to use instead of `hdul['BKG'].data`
+    
+    verbose : bool
+        Printing status messages
+    
+    kwargs : dict
+        Keyword arguments passed to `msaexp.drizzle.make_optimal_extraction`
+    
+    Returns
+    -------
+    outhdu : `~astropy.io.fits.HDUList`
+        Modified HDU including 1D extraction
+    
     """
         
     if master_bkg is None:

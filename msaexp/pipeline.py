@@ -26,7 +26,7 @@ utils.set_warnings()
 FLAM_UNIT = 1.e-19*u.erg/u.second/u.cm**2/u.Angstrom
 FNU_UNIT = u.microJansky
 
-GRATINGS = ['prism','g140m','g140h','f235m','g235h','g395m','g395h']
+GRATINGS = ['prism','g140m','g140h','g235m','g235h','g395m','g395h']
 FILTERS = ['clear', 'f070lp','f100lp','f170lp','f290lp']
 ACQ_FILTERS = ['f140x','f110w']
 DETECTORS = ['nrs1','nrs2']
@@ -491,10 +491,10 @@ class NirspecPipeline():
                 msg += f' {bias_level:.4f}'
                 utils.log_comment(utils.LOGFILE, msg, verbose=True, 
                                   show_date=True)
-            
+                
                 im['SCI'].data -= bias_level
                 im[0].header['MASKBIAS'] = bias_level, 'Bias level'
-            
+                
                 if scale_rnoise:
                     resid = im['SCI'].data / np.sqrt(im['VAR_RNOISE'].data)
                     rms = utils.nmad(resid[dq])
@@ -504,7 +504,6 @@ class NirspecPipeline():
                     utils.log_comment(utils.LOGFILE, msg, verbose=True, 
                                       show_date=True)
 
-                    im['SCI'].data -= bias_level
                     im[0].header['SCLRNOISE'] = rms, 'RNOISE Scale factor'
         
                     im['VAR_RNOISE'].data *= rms**2

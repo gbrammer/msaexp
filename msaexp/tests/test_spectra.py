@@ -7,6 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 plt.ioff()
 
+import astropy.io.fits as pyfits
+
 from .. import utils, spectrum, pipeline
 
 pipe = None
@@ -117,6 +119,11 @@ def test_drizzle_combine():
     plt.close('all')
     froot = 'ceers-prism'
     hdul.writeto(f'{froot}.{key}.v0.spec.fits', overwrite=True)
+    
+    # Figure
+    with pyfits.open(f'{froot}.{key}.v0.spec.fits') as outhdu:
+        fig = utils.drizzled_hdu_figure(outhdu, unit='fnu')
+        fig.savefig(f'{froot}.{key}.v0.spec.fnu.png')
 
 
 def test_load_templates():
