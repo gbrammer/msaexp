@@ -124,7 +124,7 @@ def center_wcs(slit, waves, center_on_source=False, force_nypix=31, fix_slope=No
     return wcs_data, offset_to_source, metadata_tuple(slit)
 
 
-def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True, drizzle_params=DRIZZLE_PARAMS, master_bkg=None, waves=None, wave_sample=1, log_step=True, force_nypix=31, center_on_source=False, center_phase=-0.5, fix_slope=None, outlier_threshold=5, sn_threshold=3, bar_threshold=0.7, err_threshold=1000, bkg_offset=5, bkg_parity=[1,-1], mask_padded=False, show_drizzled=True, show_slits=True, imshow_kws=IMSHOW_KWS, **kwargs):
+def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True, drizzle_params=DRIZZLE_PARAMS, master_bkg=None, wave_arrays={}, wave_sample=1, log_step=True, force_nypix=31, center_on_source=False, center_phase=-0.5, fix_slope=None, outlier_threshold=5, sn_threshold=3, bar_threshold=0.7, err_threshold=1000, bkg_offset=5, bkg_parity=[1,-1], mask_padded=False, show_drizzled=True, show_slits=True, imshow_kws=IMSHOW_KWS, **kwargs):
     """
     Implementing more direct drizzling of multiple 2D slitlets
     
@@ -153,8 +153,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
     master_bkg : array-like
         Master background to replace local background derived from the drizzled product
     
-    waves : array-like
-        Explicit arget wavelength array
+    wave_arrays : dict
+        Explicit target wavelength arrays with keys for `{grating}-{filter}` combinations
     
     wave_sample, log_step : float, bool
         If `waves` not specified, generate with `msaexp.utils.get_standard_wavelength_grid`
@@ -283,11 +283,14 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         slits = gratings[gr]
         
         ## Default wavelengths
-        if waves is None:
-            waves = utils.get_standard_wavelength_grid(grating,
+        if gr in wave_arrays:
+            waves = wave_arrays[gr]
+        else:
+            waves = utils.get_standard_wavelength_grid(gr.split('-')[0],
                                                        sample=wave_sample,
                                                        log_step=log_step)
         
+        # print(gr, len(waves), waves.min(), waves.max())
         ## Drizzle 2D spectra
         drz = None
         drz_ids = []
@@ -304,6 +307,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         for i in range(len(slits)): #[18:40]:
             slit = slits[i]
             if 'background' in slit.source_name:
+                continue
+            elif slit.data.shape[1] < 50:
                 continue
             
             _center = center_wcs(slit,
@@ -687,9 +692,9 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
             
         slice_limits = profile_slice.start, profile_slice.stop
         
-        pmask = ok & False
-        pmask[:,profile_slice] = True
-        ok &= ~pmask
+        pmask = ok & True
+        pmask[:,profile_slice] &= True
+        ok &= pmask
         
     else:
         prof1d = np.nansum(sci2d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
@@ -719,8 +724,15 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
     if fit_type == 0:
         args = (waves, sci2d, wht_mask, prf_center, prf_sigma,
                 bkg_offset, bkg_parity, 3, 1, (verbose > 1))
+
         pnorm, pmodel = utils.objfun_prf([prf_center, prf_sigma], *args)
         profile2d = pmodel/pnorm
+        pmask = (profile2d > 0) & np.isfinite(profile2d)
+        profile2d[~pmask] = 0
+        
+        fit_center = prf_center
+        fit_sigma = prf_sigma
+        
     else:
         # Fit it
         if fix_sigma:
@@ -763,7 +775,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
         pfit1d = np.nansum((wht2d*profile2d*sci1d)[:,profile_slice], axis=1) 
         pfit1d /= np.nansum(wht2d[:,profile_slice], axis=1)
     else:
-        pfit1d = np.nansum(profile2d*sci1d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
+        pfit1d = np.nansum(profile2d*sci1d*wht2d, axis=1) / np.nansum(wht2d, axis=1)
     
     if trim > 0:
         bad = nd.binary_dilation(wht1d <= 0, iterations=trim)
