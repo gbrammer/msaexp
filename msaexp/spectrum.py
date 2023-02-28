@@ -39,7 +39,7 @@ SCALE_UNCERTAINTY = 1.0
 
 FFTSMOOTH = False
 
-__all__ = ["fit_redshift", "plot_spectrum"]
+__all__ = ["fit_redshift", "plot_spectrum", "read_spectrum", "calc_uncertainty_scale"]
 
 def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True):
     """
@@ -233,6 +233,65 @@ SMOOTH_TEMPLATE_DISP_FUNC = smooth_template_disp_eazy
 
 def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], zstep=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None, is_prism=False, use_full_dispersion=False, ranges=None, sys_err=0.02, halpha_prism=['Ha+NII']):
     """
+    Fit spectrum for the redshift
+    
+    Parameters
+    ----------
+    file : str
+        Spectrum filename
+    
+    z0 : (float, float)
+        Redshift range
+    
+    zstep : (float, float)
+        Step sizes in `dz/(1+z)`
+    
+    eazy_templates : list, None
+        List of `eazy.templates.Template` objects.  If not provided, just use dummy spline
+        continuum and emission line templates
+    
+    nspline : int
+        Number of splines to use for dummy continuum
+    
+    scale_disp : float
+        Scale factor of nominal dispersion files, i.e., `scale_disp > 1` increases the 
+        spectral resolution
+    
+    vel_width : float
+        Velocity width the emission line templates
+    
+    Rline : float
+        Original spectral resolution used to sample the line templates
+    
+    is_prism : bool
+        Is the spectrum from the prism?
+    
+    use_full_dispersion : bool
+        Convolve `eazy_templates` with the full wavelength-dependent dispersion function
+    
+    ranges : list of tuples
+        Wavelength ranges for the subplots
+    
+    sys_err : float
+        Systematic uncertainty added in quadrature with nominal uncertainties
+    
+    halpha_prism : list
+        Line template names to use for Halpha and [NII], i.e., `['Ha+NII']` fits with a 
+        fixed line ratio and `['Ha','NII']` fits them separately but with a fixed line 
+        ratio between 6548/6584
+    
+    Returns
+    -------
+    fig : Figure
+        Diagnostic figure
+    
+    sp : `~astropy.table.Table`
+        A copy of the 1D spectrum as fit with additional columns describing the best-fit
+        templates
+    
+    data : dict
+        Fit metadata
+    
     """
     import yaml
     def float_representer(dumper, value):
@@ -242,7 +301,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     yaml.add_representer(float, float_representer)
     
     #is_prism |= ('clear' in file)
-    spec = setup_spectrum(file, sys_err=sys_err)
+    spec = read_spectrum(file, sys_err=sys_err)
     is_prism |= spec.grating in ['prism']
     
     if 'spec.fits' in file:
@@ -376,6 +435,38 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
 
 def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, scale_disp=1.0, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII']):
     """
+    Generate fitting templates
+    
+    wobs : array
+        Observed-frame wavelengths of the spectrum to fit, microns
+    
+    z : float
+        Redshift
+    
+    wfull : array
+        Full wavelength array of the templates
+    
+    bspl : dict
+        Spline templates for dummy continuum
+    
+    eazy_templates : list
+        Optional list of `eazy.templates.Template` template objects to use in place of the 
+        spline + line templates
+    
+    vel_width : float
+        Velocity width of the individual emission line templates
+    
+    Returns
+    -------
+    templates : list
+        List of the computed template objects
+    
+    tline : array
+        Boolean list of which templates are line components
+    
+    _A : (NT, NWAVE) array
+        Design matrix of templates interpolated at `wobs`
+    
     """
     from grizli import utils
     
@@ -512,6 +603,23 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
     
 def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.0, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, halpha_prism=['Ha+NII']):
     """
+    Fit redshifts on a grid
+    
+    Parameters
+    ----------
+    zgrid : array
+        Redshifts to fit
+    
+    others : see `msaexp.spectrum.fit_redshift`
+    
+    Returns
+    -------
+    zgrid : array
+        Copy of `zgrid`
+    
+    chi2 : array
+        Chi-squared of the template fits at redshifts from `zgrid`
+    
     """
     import time
     import os
@@ -528,7 +636,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     
     import matplotlib.pyplot as plt
     
-    spec = setup_spectrum(file, sys_err=sys_err)
+    spec = read_spectrum(file, sys_err=sys_err)
             
     flam = spec['flux']*spec['to_flam']
     eflam = spec['full_err']*spec['to_flam']
@@ -584,8 +692,49 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     return zgrid, chi2
 
 
-def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=4, update=True, verbose=True, init=(1, 3), **kwargs):
+def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=3, update=True, verbose=True, init=(1, 3), **kwargs):
     """
+    Compute a polynomial scaling of the spectrum uncertainties.  The procedure is to fit for
+    coefficients of a polynomial multiplied to the `err` array of the spectrum such that 
+    `(flux - model)/(err*scl)` residuals are `N(0,1)`
+    
+    Parameters
+    ----------
+    file : str
+        Spectrum filename
+    
+    data : tuple
+        Precomputed outputs from `msaexp.spectrum.plot_spectrum`
+    
+    method : str
+        Optimization method for `scipy.optimize.minimize`
+    
+    order : int
+        Degree of the correction polynomial
+    
+    update : bool
+        Update the global `msaexp.spectrum.SCALE_UNCERTAINTY` array with the fit result
+    
+    verbose : bool
+        Print status messages
+    
+    init : (float, float)
+        Masking for the fit initialization
+    
+    kwargs : dict
+        Keyword arguments for `msaexp.spectrum.plot_spectrum` if `data` not specified
+    
+    Returns
+    -------
+    spec : `~astropy.table.Table`
+        The spectrum as fit
+    
+    escale : array
+        The wavelength-dependent scaling of the uncertainties
+    
+    res : object
+        Output from `scipy.optimize.minimize`
+    
     """
     from scipy.stats import norm
     from scipy.optimize import minimize
@@ -646,8 +795,52 @@ def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=4, update=
     return spec, 10**np.polyval(res.x, spec['wave']), res
 
 
-def setup_spectrum(file, bkg=0., sys_err=0.02):
+def setup_spectrum(file, **kwargs):
     """
+    Deprecated, use `msaexp.spectrum.read_spectrum`
+    """
+    return read_spectrum(file, **kwargs)
+
+
+def read_spectrum(file, sys_err=0.02, **kwargs):
+    """
+    Read a spectrum and apply flux and/or uncertainty scaling
+    
+    Flux scaling `corr` is applied if there are `POLY[i]` keywords in the spectrum metadata, 
+    with
+    
+    .. code-block:: python
+        :dedent:
+        
+        >>> coeffs = [header[f'POLY{i}'] for i in range(order+1)]
+        >>> corr = np.polyval(coeffs, np.log(spec['wave']*1.e4))
+    
+    Parameters
+    ----------
+    file : str
+        Fits filename of a file that includes a `~astropy.io.fits.BinTableHDU` table of an
+        extracted spectrum
+    
+    sys_err : float
+        Systematic uncertainty added in quadrature with `err` array
+    
+    Returns
+    -------
+    spec : `~astropy.table.Table`
+        Spectrum table.  Existing columns in `file` should be
+            
+            - ``wave`` : observed-frame wavelength, microns
+            - ``flux`` : flux density, `~astropy.units.microJansky`
+            - ``err`` : Uncertainty on ```flux```
+
+        Columns calculated here are
+        
+            - ``corr`` : flux scaling
+            - ``escale`` : extra scaling of uncertainties
+            - ``full_err`` : Full uncertainty including `sys_err`
+            - ``R`` : spectral resolution
+            - ``valid`` : Data are valid
+    
     """
     global SCALE_UNCERTAINTY
     
@@ -669,19 +862,16 @@ def setup_spectrum(file, bkg=0., sys_err=0.02):
         else:
             spec = utils.read_catalog(file)    
             spec['corr'] = 1.
-        
-    if hasattr(SCALE_UNCERTAINTY,'__len__'):
-        if len(SCALE_UNCERTAINTY) < 6:
-            spec['escale'] = 10**np.polyval(SCALE_UNCERTAINTY, spec['wave'])
-            #print('xx scale coefficients', SCALE_UNCERTAINTY)
-            
-        elif len(SCALE_UNCERTAINTY) == len(spec):
+      
+    if 'escale' not in spec.colnames:  
+        if hasattr(SCALE_UNCERTAINTY,'__len__'):
+            if len(SCALE_UNCERTAINTY) < 6:
+                spec['escale'] = 10**np.polyval(SCALE_UNCERTAINTY, spec['wave'])
+            elif len(SCALE_UNCERTAINTY) == len(spec):
+                spec['escale'] = SCALE_UNCERTAINTY
+        else:
             spec['escale'] = SCALE_UNCERTAINTY
-            #print('xx scale array', SCALE_UNCERTAINTY)
-            
-    else:
-        spec['escale'] = SCALE_UNCERTAINTY
-        # print('xx scale scalar', SCALE_UNCERTAINTY)
+            # print('xx scale scalar', SCALE_UNCERTAINTY)
     
     for c in ['flux','err']:
         if hasattr(spec[c], 'filled'):
@@ -733,10 +923,11 @@ def setup_spectrum(file, bkg=0., sys_err=0.02):
 
 def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, halpha_prism=['Ha+NII'], **kwargs):
     """
+    Make a diagnostic figure
     """
     global SCALE_UNCERTAINTY
         
-    spec = setup_spectrum(file, sys_err=sys_err)
+    spec = read_spectrum(file, sys_err=sys_err)
             
     flam = spec['flux']*spec['to_flam']
     eflam = spec['full_err']*spec['to_flam']
@@ -998,10 +1189,3 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     
     
     return fig, spec, data
-
-#PATH = '/Users/gbrammer/Research/JWST/Projects/RXJ2129/Nirspec/'
-# if 0:
-#     fig, data = plot_spectrum(PATH + 'jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.503, show_cont=True, draws=100, nspline=41,
-#                     figsize=(16, 8), ranges=[(3650, 5100)], Rline=2000)
-
-    
