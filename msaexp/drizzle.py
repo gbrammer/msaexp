@@ -571,6 +571,31 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
 def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS, with_background=False):
     """
     Make a figure showing drizzled slitlets
+    
+    Parameters
+    ----------
+    slits : list
+        List of slitlet objects
+    
+    sci : (N,NY,NX) array
+        Science array of drizzled slitlets
+    
+    ivar : (N,NY,NX) array
+        Science array if inverse variance weights
+    
+    hdul : `~astropy.io.fits.HDUList`
+        Drizzle-combined HDU
+    
+    figsize : tuple
+        Figure size
+    
+    imshow_kws : dict
+        Keywords passed to `~matplotlib.pyplot.imshow`
+    
+    Returns
+    -------
+    fig : Figure
+    
     """
     avg = hdul['SCI'].data
     xvalid = np.isfinite(avg).sum(axis=0) > 0
@@ -613,6 +638,23 @@ def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, imshow_kws=IMSH
 def show_drizzled_product(hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS):
     """
     Make a figure showing drizzled product
+    
+    Parameters
+    ----------
+    hdul : `~astropy.io.fits.HDUList`
+        Drizzle combined HDU
+    
+    figsize : tuple
+        Figure size
+    
+    imshow_kws : dict
+        kwargs for `~matplotlib.pyplot.imshow`
+    
+    Returns
+    -------
+    fig : Figure
+        Figure object
+    
     """
     
     avg = hdul['SCI'].data
@@ -655,13 +697,75 @@ def show_drizzled_product(hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS):
     return fig
 
 
-def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
-                            prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), 
-                            center_limit=4,
-                            fit_prf=True, fix_center=False, fix_sigma=False, trim=0,
-                            bkg_offset=6, bkg_parity=[-1,1], verbose=True, **kwargs):
+def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], verbose=True, **kwargs):
     """
     Optimal extraction from 2D arrays
+                            
+    Parameters
+    ----------
+    waves : 1D array
+        Wavelengths, microns
+    
+    sci2d : 2D array
+        Data array
+    
+    wht2d : 2D array
+        Inverse variance weight array
+    
+    profile_slice : tuple, slice
+        Slice along wavelength axis where to determine the cross-dispersion profile.  If a 
+        tuple of floats, interpret as wavelength limits in microns
+    
+    prf_center : float
+        Profile center, relative to the cross-dispersion center of the array.  If `None`, then
+        try to estimate it from the data
+    
+    prf_sigma : float
+        Width of the extraction profile in pixels
+    
+    sigma_bounds : (float, float)
+        Parameter bounds for `prf_sigma`
+    
+    center_limit : float
+        Maximum offset from `prf_center` allowed
+    
+    fit_prf : bool
+        Fit the profile.  If False, then just use the fixed values of `prf_center` and 
+        `prf_sigma`
+    
+    fix_center : bool
+        Fix the centering in the fit
+    
+    fix_sigma : bool
+        Fix the width in the fit
+    
+    bkg_offset, bkg_parity : int, list
+        Parameters for the local background determination (see 
+        `~msaexp.drizzle.drizzle_slitlets`).  The profile is "subtracted" in the
+        same way as the data.
+    
+    verbose : bool
+        Status messages
+    
+    kwargs : dict
+        Ignored keyword args
+    
+    Returns
+    -------
+    sci2d_out : array
+        Output 2D sci array
+    
+    wht2d_out : array
+        Output 2D wht array
+    
+    profile2d : array
+        2D optimal extraction profile
+    
+    spec : `~astropy.table.Table`
+        Optimally-extracted 1D spectrum
+    
+    prof_tab : `~astropy.table.Table`
+        Table of the collapsed 1D profile
     """
     import scipy.ndimage as nd
     import astropy.units as u
@@ -828,6 +932,31 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None,
 
 def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, **kwargs):
     """
+    Run 1D extraction on arrays from a combined dataset
+    
+    Parameters
+    ----------
+    hdul : `~astropy.io.fits.HDUList`
+        Output data from from `~msaexp.drizzle.drizzle_slitlets`
+    
+    prf_center : float, None
+        Initial profile center.  If not specified, get from the `'SRCYPIX'` keyword in 
+        `hdul['SCI'].header`
+    
+    master_bkg : array
+        Optional master background to use instead of `hdul['BKG'].data`
+    
+    verbose : bool
+        Printing status messages
+    
+    kwargs : dict
+        Keyword arguments passed to `msaexp.drizzle.make_optimal_extraction`
+    
+    Returns
+    -------
+    outhdu : `~astropy.io.fits.HDUList`
+        Modified HDU including 1D extraction
+    
     """
         
     if master_bkg is None:
