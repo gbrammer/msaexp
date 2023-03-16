@@ -228,6 +228,12 @@ def update_slit_metadata(slit):
         slit.source_ra = targ['ra']
         slit.source_dec = targ['dec']
     
+    if not hasattr(slit, 'source_type'):
+        slit.source_type = 'EXTENDED'
+    
+    if slit.source_type is None:
+        slit.source_type = 'EXTENDED'
+    
     if not hasattr(slit, 'slitlet_id'):
         slit.slitlet_id = 9999
 
