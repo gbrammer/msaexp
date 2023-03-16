@@ -213,6 +213,31 @@ def detector_bounding_box(file):
     return slit_borders
 
 
+def update_slit_metadata(slit):
+    """
+    Try to update missing slit metadata
+    """
+    meta = slit.meta.instance
+    is_fixed = meta['instrument']['lamp_mode'] == 'FIXEDSLIT'
+    
+    if is_fixed & (slit.source_name is None):
+        # Set source info for fixed slit targets
+        targ = meta['target']
+        _name = f"{targ['proposer_name'].lower()}_{slit.name}".lower()
+        slit.source_name = _name
+        slit.source_ra = targ['ra']
+        slit.source_dec = targ['dec']
+    
+    if not hasattr(slit, 'source_type'):
+        slit.source_type = 'EXTENDED'
+    
+    if slit.source_type is None:
+        slit.source_type = 'EXTENDED'
+    
+    if not hasattr(slit, 'slitlet_id'):
+        slit.slitlet_id = 9999
+
+
 def slit_metadata_to_header(slit, key='', header=None):
     """
     Get selected metadata.
@@ -254,16 +279,22 @@ def slit_metadata_to_header(slit, key='', header=None):
     meta = slit.meta.instance
     
     h[f'FILE{key}']    = meta['filename'], 'Data filename'
-    h[f'CALVER{key}']  = (meta['calibration_software_version'], 'Calibration software version')
-    h[f'CRDS{key}']    = (meta['ref_file']['crds']['context_used'], 'CRDS context')
+    h[f'CALVER{key}']  = (meta['calibration_software_version'],
+                          'Calibration software version')
+    h[f'CRDS{key}']    = (meta['ref_file']['crds']['context_used'],
+                          'CRDS context')
     
     h[f'GRAT{key}']    = meta['instrument']['grating'], 'Instrument grating'
     h[f'FILTER{key}']  = meta['instrument']['filter'], 'Instrument filter'
     
-    h[f'MSAMET{key}']  = meta['instrument']['msa_metadata_file'], 'MSAMETF metadata file'
-    h[f'MSAID{key}']   = meta['instrument']['msa_metadata_id'], 'MSAMETF metadata id'
-    h[f'MSACNF{key}'] = (meta['instrument']['msa_configuration_id'],
-                        'MSAMETF metadata configuration id')
+    if 'msa_metadata_file' in meta['instrument']:
+        h[f'MSAMET{key}']  = (meta['instrument']['msa_metadata_file'],
+                              'MSAMETF metadata file')
+                              
+        h[f'MSAID{key}']   = (meta['instrument']['msa_metadata_id'],
+                              'MSAMETF metadata id')
+        h[f'MSACNF{key}'] = (meta['instrument']['msa_configuration_id'],
+                             'MSAMETF metadata configuration id')
                        
     h[f'SLITID{key}'] = slit.slitlet_id, 'slitlet_id from MSA file'
     h[f'SRCNAM{key}'] = slit.source_name, 'source_name from MSA file'
@@ -271,10 +302,18 @@ def slit_metadata_to_header(slit, key='', header=None):
     h[f'SRCRA{key}']  = slit.source_ra, 'source_ra from MSA file'
     h[f'SRCDEC{key}'] = slit.source_dec, 'source_dec from MSA file'
     
-    h[f'PIXSR{key}']  = slit.meta.photometry.pixelarea_steradians, 'Pixel area, sr'
+    if slit.meta.photometry.pixelarea_steradians is None:
+        h[f'PIXSR{key}']  = (1.e-12,
+                             'Pixel area, sr')
+    else:
+        h[f'PIXSR{key}']  = (slit.meta.photometry.pixelarea_steradians,
+                             'Pixel area, sr')
+        
     h[f'TOUJY{key}']  = 1.e12*h[f'PIXSR{key}'], 'Conversion to uJy/pix'
     
-    h[f'DETECT{key}'] = meta['instrument']['detector'], 'Instrument detector name'
+    h[f'DETECT{key}'] = (meta['instrument']['detector'],
+                         'Instrument detector name')
+    
     h[f'XSTART{key}'] = slit.ystart, 'Left detector pixel of 2D cutout'
     h[f'XSIZE{key}']  = slit.xsize, 'X size of 2D cutout'
     h[f'YSTART{key}'] = slit.ystart, 'Lower detector pixel of 2D cutout'
@@ -299,8 +338,11 @@ def slit_metadata_to_header(slit, key='', header=None):
     h[f'DITHN{key}'] = meta['dither']['position_number'], 'Dither position number'
     h[f'DITHX{key}'] = meta['dither']['x_offset'], 'Dither x offset'
     h[f'DITHY{key}'] = meta['dither']['y_offset'], 'Dither y offset'
-    h[f'DITHT{key}'] = meta['dither']['nod_type'], 'Dither nod type'
-    
+    if 'nod_type' in meta['dither']:
+        h[f'DITHT{key}'] = meta['dither']['nod_type'], 'Dither nod type'
+    else:
+        h[f'DITHT{key}'] = 'INDEF', 'Dither nod type'
+        
     h[f'NFRAM{key}'] = meta['exposure']['nframes'], 'Number of frames'
     h[f'NGRP{key}']  = meta['exposure']['ngroups'], 'Number of groups'
     h[f'NINTS{key}'] = meta['exposure']['nints'], 'Number of integrations'
