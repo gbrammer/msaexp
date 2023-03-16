@@ -9,6 +9,7 @@ import traceback
 from collections import OrderedDict
 
 from tqdm import tqdm
+import yaml
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,6 +23,8 @@ import jwst
 
 from grizli import utils, prep, jwst_utils
 utils.set_warnings()
+
+from . import utils as msautils
 
 FLAM_UNIT = 1.e-19*u.erg/u.second/u.cm**2/u.Angstrom
 FNU_UNIT = u.microJansky
@@ -670,7 +673,7 @@ class NirspecPipeline():
         # pipe['imp'] = [step.call(obj) for obj in pipe[last]]
         # last = 'imp'
 
-        if ('open' not in self.pipe) & run_flag_open:
+        if ('open' not in self.pipe) & run_flag_open & (~self.is_fixed_slit):
             step = MSAFlagOpenStep()
             self.pipe['open'] = []
             
@@ -699,12 +702,17 @@ class NirspecPipeline():
         if 'flat' not in self.pipe:
             flat_step = FlatFieldStep()
             self.pipe['flat'] = []
-            
+                        
             for i, obj in enumerate(self.pipe[self.last_step]):
                 msg = f'msaexp.jwst.FlatFieldStep: {self.files[i]}'
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                                   show_date=True)
                 
+                # Update metadata for fixed slit
+                if self.is_fixed_slit:
+                    for _slit in obj.slits:
+                        msautils.update_slit_metadata(_slit)
+                        
                 self.pipe['flat'].append(flat_step.call(obj))
                        
         self.last_step = 'flat'
@@ -722,7 +730,7 @@ class NirspecPipeline():
         
         self.last_step = 'path'
 
-        if run_bar_shadow:
+        if run_bar_shadow & (~self.is_fixed_slit):
             bar_step = BarShadowStep()
             self.pipe['bar'] = []
             
@@ -804,8 +812,6 @@ class NirspecPipeline():
             Slitlet metadata
         
         """
-        import yaml
-        from . import utils as msautils
         
         slitlets = OrderedDict()
         
@@ -947,7 +953,6 @@ class NirspecPipeline():
         """
         from photutils.psf import IntegratedGaussianPRF
         from scipy.optimize import minimize
-        from . import utils as msautils
         
         prf = IntegratedGaussianPRF(sigma=2.8/2.35, x_0=0, y_0=0)
         
@@ -1117,7 +1122,6 @@ class NirspecPipeline():
         """
         Set center of slit traces in `slitlets`
         """
-        from . import utils as msautils
         
         msg = f'msaexp.get_slit_traces: Run'
         utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
@@ -1166,8 +1170,6 @@ class NirspecPipeline():
         from gwcs import wcstools
         from photutils.psf import IntegratedGaussianPRF
         import eazy.utils
-        
-        from . import utils as msautils
         
         if key not in self.slitlets:
             print(f'{key} not found in slitlets')
