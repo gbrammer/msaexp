@@ -391,8 +391,10 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
                 wcs_data, offset_to_source, wcs_meta = _center
                 
                 msg = f'msaexp.drizzle.drizzle_slitlets: '
-                msg += f'Recenter on source ({metadata_tuple(slit)}) y={offset_to_source:.2f}'
-                grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
+                msg += f'Recenter on source ({metadata_tuple(slit)})'
+                msg += f' y={offset_to_source:.2f}'
+                grizli.utils.log_comment(grizli.utils.LOGFILE,
+                                         msg, verbose=verbose, 
                                          show_date=False)
                 
                 # Recalculate photometry scaling
@@ -403,8 +405,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             
             # Do the drizzling
             _waves, _header, _drz = utils.drizzle_slits_2d([slit],
-                                                           build_data=wcs_data,
-                                                           drizzle_params=drizzle_params)
+                                           build_data=wcs_data,
+                                           drizzle_params=drizzle_params)
             
             to_ujy_list.append(to_ujy)
             
@@ -416,8 +418,9 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         drz_ids = np.array(drz_ids)
         
         ## Are slitlets tagged as background?
-        is_bkg = np.array([d.startswith('background') for d in drz_ids])
-        is_bkg &= False # ignore, combine them all
+        #is_bkg = np.array([d.startswith('background') for d in drz_ids])
+        #is_bkg &= False # ignore, combine them all
+        is_bkg = np.zeros(len(drz_ids), dtype=bool)
         
         ############ Combined drizzled spectra
         
@@ -431,7 +434,7 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             warnings.simplefilter(action='ignore', category=RuntimeWarning)
             scima = np.nanmax(sci, axis=0)
         
-        flagged = (sci >= scima)
+        flagged = (sci >= scima) & (sci/err > 20)
         flagged |= (err <= 0) | (~np.isfinite(sci)) | (~np.isfinite(err))
         flagged |= sci == 0
         flagged |= ~np.isfinite(sci/err)
@@ -439,7 +442,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         
         for i in range(len(drz_ids)):
             ei = err[i,:,:]
-            emask =  ei > err_threshold*np.median(ei[np.isfinite(ei) & (ei > 0)])
+            emi = np.isfinite(ei) & (ei > 0)
+            emask =  ei > err_threshold*np.median(ei[emi])
             flagged[i,:,:] |= emask
         
         ivar = 1./err**2
@@ -469,7 +473,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             
             for i in range(len(drz_ids)):
                 ei = err[i,:,:]
-                emask =  ei > err_threshold*np.median(ei[np.isfinite(ei) & (ei > 0)])
+                emi = np.isfinite(ei) & (ei > 0)
+                emask =  ei > err_threshold*np.median(ei[emi])
                 flagged[i,:,:] |= emask
             
             ivar = 1./err**2
@@ -513,7 +518,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         
         # Valid data along wavelength axis
         xvalid = np.isfinite(avg).sum(axis=0) > 0
-        xvalid &= nd.binary_erosion(nd.binary_dilation(xvalid, iterations=2), iterations=4)
+        xvalid &= nd.binary_erosion(nd.binary_dilation(xvalid, iterations=2), 
+                                    iterations=4)
                 
         # Build HDUList
         h['EXTNAME'] = 'SCI'
