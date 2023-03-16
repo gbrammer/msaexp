@@ -51,14 +51,16 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
         List of detectors to consider ('nrs1','nrs2')
     
     gratings : list
-        List of gratings to consider ('prism','g140m','g140h','f235m','g235h','g395m','g395h')
+        List of gratings to consider ('prism', 'g140m', 'g140h', 'f235m', 
+        'g235h','g395m','g395h')
     
     filters : list
-        List of filters to consider ('clear', 'f070lp','f100lp','f170lp','f290lp')
+        List of filters to consider ('clear', 'f070lp', 'f100lp', 'f170lp', 
+        'f290lp')
     
     extensions : list
-        File extensions to query.  ``s2d`` should have a one-to-one mapping with the level-1
-        countrate ``rate`` images, which are what we're after
+        File extensions to query.  ``s2d`` should have a one-to-one mapping 
+        with the level-1 countrate ``rate`` images, which are what we're after
     
     extra_filters : list
         Additional query filters from, e.g., `mastquery.jwst.make_query_filter`
@@ -115,6 +117,8 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
     res = res[unique_indices]
 
     skip = np.in1d(res['msametfl'], [None])
+    skip &= ~np.in1d(res['exp_type'], ['NRS_FIXEDSLIT'])
+    
     if skip.sum() > 0:
         print(f'Remove {skip.sum()} rows with msametfl=None')
         res = res[~skip]
@@ -132,21 +136,30 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
     return res
 
 
-def download_msa_meta_files():
+def download_msa_meta_files(files=None, do_download=True):
     """
+    Download ``MSAMETFL`` files indicated in header keywords
     """
     import mastquery.utils
 
-    files = glob.glob('*rate.fits')
+    if files is None:
+        files = glob.glob('*rate.fits')
+        files.sort()
+        
     msa = []
     for file in files:
         with pyfits.open(file) as im:
+            if 'MSAMETFL' not in im[0].header:
+                continue
+            
             msa_file = im[0].header['MSAMETFL']
             if not os.path.exists(msa_file):
                 msa.append(f'mast:JWST/product/{msa_file}')
 
-    if len(msa) > 0:
+    if (len(msa) > 0) & (do_download):
         mastquery.utils.download_from_mast(msa)
+    
+    return msa
 
 
 def exposure_groups(path='./', files=None, verbose=True):
@@ -159,8 +172,8 @@ def exposure_groups(path='./', files=None, verbose=True):
         Path to ``rate.fits`` files
     
     files : list, None
-        Explicit list of ``rate.fits`` files to consider.  Otherwise, `glob` in working 
-        directory
+        Explicit list of ``rate.fits`` files to consider.  Otherwise, `glob` in 
+        working directory
     
     verbose : bool
         Status messages
@@ -176,19 +189,35 @@ def exposure_groups(path='./', files=None, verbose=True):
         files = glob.glob('*rate.fits')
         files.sort()
         
-    keys = ['filter','grating','effexptm','detector', 'msametfl']
+    hkeys = ['filter','grating','effexptm','detector',
+            'msametfl', 'targprop', 'exp_type']
     rows = []
+    
     for file in files:
         with pyfits.open(file) as im:
-            row = [file] + [im[0].header[k] for k in keys]
+            row = [file]
+            for k in hkeys:
+                if k in im[0].header:
+                    row.append(im[0].header[k])
+                else:
+                    row.append(None)
+            
             rows.append(row)
-
-    tab = utils.GTable(names=['file']+keys, rows=rows)
-    keystr = "{msametfl}-{filter}-{grating}-{detector}"
-    tab['key'] = [keystr.format(**row).lower() for row in tab]
-    tab['key'] = [k.replace('_msa.fits','').replace('_','-')
-                  for k in tab['key']]
-
+    
+    tab = utils.GTable(names=['file']+hkeys, rows=rows)
+    keys = []
+    for row in tab:
+        if row['exp_type'] == 'NRS_MSASPEC':
+            keystr = "{msametfl}-{filter}-{grating}-{detector}"
+        else:
+            keystr = "{targprop}-{filter}-{grating}-{detector}"
+        
+        key = keystr.format(**row)
+        key = key.replace('_msa.fits','').replace('_','-')
+        keys.append(key.lower())
+    
+    tab['key'] = keys
+    
     un = utils.Unique(tab['key'], verbose=verbose)
 
     groups = OrderedDict()
@@ -280,7 +309,8 @@ class SlitData():
 class NirspecPipeline():
     def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0):
         """
-        Container class for NIRSpec data, generally in groups split by grating/filter/detector
+        Container class for NIRSpec data, generally in groups split by 
+        grating/filter/detector
         
         Parameters
         ----------
@@ -309,8 +339,9 @@ class NirspecPipeline():
             List of exposure (``rate.fits``) filenames
         
         pipe : dict
-            Dictionary with data from the various calibration pipeline products.  The final
-            flux-calibrated data should generally be in ``pipe['phot']``
+            Dictionary with data from the various calibration pipeline 
+            products.  The final flux-calibrated data should generally be in 
+            ``pipe['phot']``.
         
         last_step : str
             The last step of the calibration pipeline that was run, e.g., 'phot'
@@ -322,8 +353,8 @@ class NirspecPipeline():
             Filename of the MSAMETFL metadata file
         
         msa : `msaexp.msa.MSAMetafile`
-            MSA metadata object, perhaps that has been modified by the parameters
-            ``source_ids`` and ``pad`` above
+            MSA metadata object, perhaps that has been modified by the 
+            parameters ``source_ids`` and ``pad`` above
         
         """
         from .msa import pad_msa_metafile, MSAMetafile
@@ -358,27 +389,67 @@ class NirspecPipeline():
         self.msa = None
         
         if len(self.files) > 0:
-            if os.path.exists(self.files[0]):
+            if os.path.exists(self.files[0]) & (~self.is_fixed_slit):
                 with pyfits.open(self.files[0]) as im:
-                    msametfl = im[0].header['MSAMETFL']
+                    if 'MSAMETFL' not in im[0].header:
+                        msametfl = None
+                    else:
+                        msametfl = im[0].header['MSAMETFL']
                 
                 if (pad > 0) | (source_ids is not None):
-                    msametfl = pad_msa_metafile(msametfl,
-                                                pad=pad,
-                                                source_ids=source_ids)
+                    if (msametfl is not None) & (os.path.exists(msametfl)):
+                        msametfl = pad_msa_metafile(msametfl,
+                                                    pad=pad,
+                                                    source_ids=source_ids)
             
                 self.msametfl = msametfl
-                print(f'msaexp.NirspecPipeline: mode={mode} msametfl={msametfl}')
+                msg = f'msaexp.NirspecPipeline: mode={mode}'
+                msg += f' exp_type={self.exp_type}  msametfl={msametfl}'
+                print(msg)
                 
-                self.msa = MSAMetafile(self.msametfl)
-                with open(self.msametfl.replace('.fits','.reg'),'w') as fp:
-                    fp.write(self.msa.regions_from_metafile(as_string=True, with_bars=True))
+                if self.msametfl is not None:
+                    self.msa = MSAMetafile(self.msametfl)
+                    with open(self.msametfl.replace('.fits','.reg'),'w') as fp:
+                        fp.write(self.msa.regions_from_metafile(as_string=True, 
+                                                                with_bars=True))
 
 
     @property
+    def exp_type(self):
+        """
+        Get data EXP_TYPE
+        
+        Returns
+        -------
+        expt : str
+            ``EXP_TYPE`` keyword from the first file in the file list.  Returns
+            an empty string ``''`` if the file not found or of the keyword not
+            found in the header.
+        
+        """
+        expt = ''
+        
+        if len(self.files) > 0:
+            if os.path.exists(self.files[0]):
+                with pyfits.open(self.files[0]) as im:
+                    if 'EXP_TYPE' in im[0].header:
+                        expt = im[0].header['EXP_TYPE']
+        
+        return expt
+
+
+    @property
+    def is_fixed_slit(self):
+        """
+        Are data in fixed-slit mode with ``EXP_TYPE == 'NRS_FIXEDSLIT'``
+        """
+        return self.exp_type == 'NRS_FIXEDSLIT'
+    
+    
+    @property
     def grating(self):
         """
-        Grating name, e.g., 'prism'
+        Grating name, e.g., 'prism' from ``mode`` string
         """
         return '-'.join(self.mode.split('-')[-3:-1])
 
@@ -386,7 +457,7 @@ class NirspecPipeline():
     @property
     def detector(self):
         """
-        Detector name, e.g., 'nrs1'
+        Detector name, e.g., 'nrs1' from ``mode`` string
         """
         return self.mode.split('-')[-1]
 
@@ -421,7 +492,7 @@ class NirspecPipeline():
             return self.targets.index(key)
 
 
-    def preprocess(self, set_context=True, fix_rows=True, scale_rnoise=True, **kwargs):
+    def preprocess(self, set_context=True, fix_rows=True, scale_rnoise=True, skip_completed=True, **kwargs):
         """
         Run grizli exposure-level preprocessing
         
@@ -439,7 +510,8 @@ class NirspecPipeline():
             Apply 1/f correction to detector rows, as well as columns
         
         scale_rnoise : bool
-            Calculate rescaling of the ``VAR_RNOISE`` data extension based on pixel statistics
+            Calculate rescaling of the ``VAR_RNOISE`` data extension based on 
+            pixel statistics
         
         Returns
         -------
@@ -467,6 +539,11 @@ class NirspecPipeline():
 
         # 1/f correction
         for file in self.files:
+            with pyfits.open(file) as im:
+                if 'ONEFEXP' in im[0].header:
+                    if im[0].header['ONEFEXP'] & skip_completed:
+                        continue
+                        
             jwst_utils.exposure_oneoverf_correction(file, erode_mask=False, 
                                     in_place=True, axis=0,
                                     deg_pix=256)
@@ -485,28 +562,47 @@ class NirspecPipeline():
                     dq[:,:1400] = False
                 else:
                     dq[:,1400:] = False
-
-                bias_level = np.nanmedian(im['SCI'].data[dq])
-                msg = f'msaexp.preprocess : bias level {file} ='
-                msg += f' {bias_level:.4f}'
-                utils.log_comment(utils.LOGFILE, msg, verbose=True, 
-                                  show_date=True)
                 
-                im['SCI'].data -= bias_level
-                im[0].header['MASKBIAS'] = bias_level, 'Bias level'
+                if ('MASKBIAS' in im[0].header) & skip_completed:
+                    bias_level = im[0].header['MASKBIAS']
+                    msg = f'msaexp.preprocess : {file}  bias offset ='
+                    msg += f' {bias_level:7.3f} (from MASKBIAS)'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                      show_date=False)
+                else:
+                    bias_level = np.nanmedian(im['SCI'].data[dq])
+                    msg = f'msaexp.preprocess : {file}  bias offset ='
+                    msg += f' {bias_level:7.3f}'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                      show_date=False)
+                
+                    im['SCI'].data -= bias_level
+                    im[0].header['MASKBIAS'] = bias_level, 'Bias level'
+                    im[0].header['MASKNPIX'] = (dq.sum(),
+                                        'Number of pixels used for bias level')
                 
                 if scale_rnoise:
-                    resid = im['SCI'].data / np.sqrt(im['VAR_RNOISE'].data)
-                    rms = utils.nmad(resid[dq])
-        
-                    msg = f'msaexp.preprocess : rms of empty pixels {file} ='
-                    msg += f' {rms:.2f}'
-                    utils.log_comment(utils.LOGFILE, msg, verbose=True, 
-                                      show_date=True)
+                    
+                    if ('SCLREADN' in im[0].header) & skip_completed:
+                        rms = im[0].header['SCLREADN']
+                        msg = f'msaexp.preprocess : {file}    rms scale ='
+                        msg += f' {rms:>7.2f} (from SCLREADN)'
+                        utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                          show_date=False)
+                    else:
+                        resid = im['SCI'].data / np.sqrt(im['VAR_RNOISE'].data)
+                        rms = utils.nmad(resid[dq])
+                        msg = f'msaexp.preprocess : {file}    rms scale ='
+                        msg += f'{rms:>7.2f}'
+                        utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                          show_date=False)
 
-                    im[0].header['SCLRNOISE'] = rms, 'RNOISE Scale factor'
+                        im[0].header['SCLREADN'] = rms, 'RNOISE Scale factor'
         
-                    im['VAR_RNOISE'].data *= rms**2
+                        im['VAR_RNOISE'].data *= rms**2
+                        
+                        im[0].header['SCLRNPIX'] = (dq.sum(),
+                                    'Number of pixels used for rnoise scale')
                 
                 im.flush()
                 
@@ -677,8 +773,9 @@ class NirspecPipeline():
                     dm = SlitModel(self.pipe[step][j].slits[i].instance)
                     dm.write(slit_file, overwrite=True)
                 except:
-                    utils.log_comment(utils.LOGFILE, 'Failed',
-                                      verbose=verbose)
+                    utils.log_exception(utils.LOGFILE, traceback, verbose=True)
+                    # utils.log_comment(utils.LOGFILE, 'Failed',
+                    #                   verbose=verbose)
                 
         return True
 
