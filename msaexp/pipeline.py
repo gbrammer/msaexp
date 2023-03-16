@@ -835,7 +835,18 @@ class NirspecPipeline():
 
             for ii, o in enumerate(self.pipe[self.last_step]):
                 _slit = o.slits[i]
-                if _slit.source_name.startswith('background'):
+                if _slit.source_name is None:
+                    # Missing info?
+                    src = ii
+                    meta = _slit.instance
+                    for k in ['source_name','source_ra','source_dec',
+                              'source_alias', 'source_id', 'source_type', 
+                              'source_xpos', 'source_ypos']:
+                        
+                        if k not in meta:
+                            meta[k] = getattr(_slit, k)
+                            
+                elif _slit.source_name.startswith('background'):
                     bg.append(ii)
                     bgmeta = _slit.instance
                 else:
@@ -857,13 +868,26 @@ class NirspecPipeline():
             meta['yoffset'] = yoffset
             meta['skip'] = skip
             meta['redshift'] = None
-
+            
+            is_fixed = meta['meta']['instrument']['lamp_mode'] == 'FIXEDSLIT'
+            
+            if is_fixed & (meta['source_name'] is None):
+                # Set source info for fixed slit targets
+                targ = meta['meta']['target']
+                _name = f"{targ['proposer_name'].lower()}_{_slit.name}".lower()
+                meta['source_name'] = _name
+                meta['source_ra'] = targ['ra']
+                meta['source_dec'] = targ['dec']
+                
+            if 'slitlet_id' not in meta:
+                meta['slitlet_id'] = 9999
+                    
             _name = msautils.rename_source(meta['source_name'])
             if _name in yaml_data:
                 for k in meta:
                     if k in yaml_data[_name]:
                         meta[k] = yaml_data[_name][k]
-            
+                        
             msg = '{slit_index:>4}  {slitlet_id:>4} {source_name:>12} '
             msg += ' {source_ra:.6f} {source_dec:.6f}'
             utils.log_comment(utils.LOGFILE, msg.format(**meta), 
