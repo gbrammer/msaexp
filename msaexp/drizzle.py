@@ -124,7 +124,7 @@ def center_wcs(slit, waves, center_on_source=False, force_nypix=31, fix_slope=No
     return wcs_data, offset_to_source, metadata_tuple(slit)
 
 
-def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True, drizzle_params=DRIZZLE_PARAMS, master_bkg=None, wave_arrays={}, wave_sample=1, log_step=True, force_nypix=31, center_on_source=False, center_phase=-0.5, fix_slope=None, outlier_threshold=5, sn_threshold=3, bar_threshold=0.7, err_threshold=1000, bkg_offset=5, bkg_parity=[1,-1], mask_padded=False, show_drizzled=True, show_slits=True, imshow_kws=IMSHOW_KWS, get_quick_data=False,  max_sn_threshold=20, reopen=True, **kwargs):
+def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True, drizzle_params=DRIZZLE_PARAMS, master_bkg=None, wave_arrays={}, wave_sample=1, log_step=True, force_nypix=31, center_on_source=False, center_phase=-0.5, fix_slope=None, outlier_threshold=5, sn_threshold=3, bar_threshold=-0.7, err_threshold=1000, bkg_offset=5, bkg_parity=[1,-1], mask_padded=False, show_drizzled=True, show_slits=True, imshow_kws=IMSHOW_KWS, get_quick_data=False, max_sn_threshold=20, reopen=True, **kwargs):
     """
     Implementing more direct drizzling of multiple 2D slitlets
     
@@ -151,13 +151,16 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         Drizzle parameters passed to `msaexp.utils.drizzle_slits_2d`
     
     master_bkg : array-like
-        Master background to replace local background derived from the drizzled product
+        Master background to replace local background derived from the
+        drizzled product
     
     wave_arrays : dict
-        Explicit target wavelength arrays with keys for `{grating}-{filter}` combinations
+        Explicit target wavelength arrays with keys for `{grating}-{filter}` 
+        combinations
     
     wave_sample, log_step : float, bool
-        If `waves` not specified, generate with `msaexp.utils.get_standard_wavelength_grid`
+        If `waves` not specified, generate with 
+        `msaexp.utils.get_standard_wavelength_grid`
     
     force_nypix, center_on_source, center_phase, fix_slope : int, bool, float, float
         Parameters of `msaexp.drizzle.center_wcs`
@@ -166,42 +169,59 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         Outlier threshold in drizzle combination
     
     sn_threshold : float
-        Mask pixels in slitlets where `data/err < sn_threshold`.  For the prism, essentially
-        all pixels should have S/N > 5 from the background, so this mask can help identify
-        and mask stuck-closed slitlets
+        Mask pixels in slitlets where `data/err < sn_threshold`.  For the 
+        prism, essentially all pixels should have S/N > 5 from the background, 
+        so this mask can help identify and mask stuck-closed slitlets
     
     bar_threshold : float
         Mask pixels in slitlets where `barshadow < bar_threshold`
     
     err_threshold : float
-        Mask pixels in slitlets where `err > err_threshold*median(err)`.  There are some
-        strange pixels with very large uncertainties in the pipeline products.
+        Mask pixels in slitlets where `err > err_threshold*median(err)`.  There 
+        are some strange pixels with very large uncertainties in the pipeline 
+        products.
     
     bkg_offset, bkg_parity : int, list
-        Offset in pixels for defining the local background of the drizzled product, which is
-        derived by rolling the data array by `bkg_offset*bkg_parity` pixels.  The standard
-        three-shutter nod pattern corresponds to about 5 pixels.  An optimal combination seems
+        Offset in pixels for defining the local background of the drizzled 
+        product, which is derived by rolling the data array by 
+        `bkg_offset*bkg_parity` pixels.  The standard three-shutter nod pattern 
+        corresponds to about 5 pixels.  An optimal combination seems
         to be ``fix_slope=0.2``, ``bkg_offset=6``.
     
     mask_padded : bool
-        Mask pixels of slitlets that had been padded around the nominal MSA slitlets
+        Mask pixels of slitlets that had been padded around the nominal MSA 
+        slitlets
     
     show_drizzled : bool
-        Make a figure with `msaexp.drizzle.show_drizzled_product` showing the drizzled combined
-        arrays.  If `output` specified, save to `{output}-{id}-[grating].d2d.png`.
+        Make a figure with `msaexp.drizzle.show_drizzled_product` showing the 
+        drizzled combined arrays.  If `output` specified, save to 
+        `{output}-{id}-[grating].d2d.png`.
     
     show_slits : bool
-        Make a figure with `msaexp.drizzle.show_drizzled_slits` showing the individual drizzled
-        slitlets.  If `output` specified, save to `{output}-{id}-[grating].slit2d.png`.
+        Make a figure with `msaexp.drizzle.show_drizzled_slits` showing the 
+        individual drizzled slitlets.  If `output` specified, save to 
+        `{output}-{id}-[grating].slit2d.png`.
     
     imshow_kws : dict
-        Keyword arguments for ``matplotlib.pyplot.imshow`` in `show_drizzled` and `show_slits`
-        figures.
+        Keyword arguments for ``matplotlib.pyplot.imshow`` in `show_drizzled` 
+        and `show_slits` figures.
+    
+    get_quick_data : bool
+        Just return `waves`, `slits`, and the drizzled `sci` and `err` data 
+        arrays before doing any outlier rejection, etc.
+    
+    max_sn_threshold : float
+        S/N threshold for initial rejection of the maximum pixel in the set
+    
+    reopen : bool
+        Re-initialize `jwst.datamodels.SlitModel` before drizzling to fix
+        apparent memory leak issue
     
     Returns
     -------
     figs : dict
-        Any figures that were created, keys are separated by grating+filter here and below
+        Any figures that were created, keys are separated by grating+filter 
+        here and below
     
     data : dict
         `~astropy.io.fits.HDUList` FITS data for the drizzled output
@@ -227,6 +247,12 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
     ### Read the SlitModels
     gratings = {}
     grating_files = {}
+    
+    msg = f'msaexp.drizzle.drizzle_slitlets: {id} read {len(files)} files'
+    grizli.utils.log_comment(grizli.utils.LOGFILE,
+                             msg, 
+                             verbose=verbose, 
+                             show_date=False)
     
     for file in files:
         slit = jwst.datamodels.SlitModel(file)
@@ -254,32 +280,39 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
     ### DQ mask
     for gr in gratings:
         slits = gratings[gr]
-        for i in range(len(slits)): #[18:40]:
-
-            slit = slits[i]
-
-            if mask_padded:
-                msg = f'Mask padded area of slitlets: {mask_padded*1:.1f}'
-                grizli.utils.log_comment(grizli.utils.LOGFILE,
-                                         msg, verbose=verbose, 
-                                         show_date=False)
-                
-                _wcs = slit.meta.wcs
-                d2s = _wcs.get_transform('detector', 'slit_frame')
-
-                bbox = _wcs.bounding_box
-                grid = wcstools.grid_from_bounding_box(bbox)
-                _, sy, slam = np.array(d2s(*grid))
-                msk = sy < np.nanmin(sy+mask_padded)
-                msk |= sy > np.nanmax(sy-mask_padded)
-                slit.data[msk] = np.nan
+        for slit in slits:
+            utils.update_slit_dq_mask(slit,
+                                      mask_padded=mask_padded,
+                                      bar_threshold=bar_threshold,
+                                      verbose=False)
             
-            if hasattr(slit, 'barshadow'):
-                msk  = slit.barshadow < bar_threshold
-                slit.data[msk] = np.nan
-                
-            slit.dq = (slit.dq & 1025 > 0)*1
-            slit.data[slit.dq > 0] = np.nan
+        # for i in range(len(slits)): #[18:40]:
+        #
+        #     slit = slits[i]
+        #
+        #     if mask_padded:
+        #         msg = f'msaexp.drizzle.drizzle_slitlets: Mask padded area of'
+        #         msg += ' slitlets: {mask_padded*1:.1f}'
+        #         grizli.utils.log_comment(grizli.utils.LOGFILE,
+        #                                  msg, verbose=verbose,
+        #                                  show_date=False)
+        #
+        #         _wcs = slit.meta.wcs
+        #         d2s = _wcs.get_transform('detector', 'slit_frame')
+        #
+        #         bbox = _wcs.bounding_box
+        #         grid = wcstools.grid_from_bounding_box(bbox)
+        #         _, sy, slam = np.array(d2s(*grid))
+        #         msk = sy < np.nanmin(sy+mask_padded)
+        #         msk |= sy > np.nanmax(sy-mask_padded)
+        #         slit.data[msk] = np.nan
+        #
+        #     if hasattr(slit, 'barshadow'):
+        #         msk  = slit.barshadow < bar_threshold
+        #         slit.data[msk] = np.nan
+        #
+        #     slit.dq = (slit.dq & 1025 > 0)*1
+        #     slit.data[slit.dq > 0] = np.nan
             
     #### Loop through gratings
     figs = {}
@@ -317,9 +350,17 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             slit = slits[i]
             if 'background' in slit.source_name:
                 continue
+            elif '-' in slit.source_name:
+                continue
             elif slit.data.shape[1] < 50:
                 continue
             
+            msg = f'msaexp.drizzle.drizzle_slitlets: get wcs from slit {i} = '
+            msg += f' {slit.source_name}'
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, 
+                                     verbose=verbose, 
+                                     show_date=False)
+                
             _center = center_wcs(slit,
                                  waves,
                                  force_nypix=force_nypix,
@@ -354,6 +395,11 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         ##################
         # Now do the drizzling
         
+        msg = f'msaexp.drizzle.drizzle_slitlets: output size = {wcs_data[2]}'
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, 
+                                 verbose=verbose, 
+                                 show_date=False)
+
         # FITS header metadata
         h = pyfits.Header()
         h['BKGOFF'] = bkg_offset, 'Background offset'
@@ -384,9 +430,11 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         for i in range(len(slits)): #[18:40]:
             slit = slits[i]
             
+            _file = grating_files[gr][i]
+            
             msg = f'msaexp.drizzle.drizzle_slitlets: '
             msg += f'{gr} {i:2} {slit.source_name:18} {slit.source_id:9}'
-            msg += f' {slit.source_ypos:.3f} {files[i]} {slit.data.shape}'
+            msg += f' {slit.source_ypos:6.3f} {_file} {slit.data.shape}'
             grizli.utils.log_comment(grizli.utils.LOGFILE, msg, 
                                      verbose=verbose, 
                                      show_date=False)
@@ -425,8 +473,13 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             
             # Do the drizzling
             if reopen:
-                _slit = jwst.datamodels.SlitModel(grating_files[gr][i])
-                utils.update_slit_metadata(_slit)
+                #_slit = jwst.datamodels.SlitModel(grating_files[gr][i])
+                #utils.update_slit_metadata(_slit)
+                _slit = utils.update_slit_dq_mask(grating_files[gr][i],
+                                                  mask_padded=mask_padded,
+                                                  bar_threshold=bar_threshold, 
+                                                  verbose=False)
+                
             else:
                 _slit = slit
                 
@@ -461,7 +514,7 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
                         for i, d in enumerate(drz)])
         
         if get_quick_data:
-            return sci, err
+            return waves, slits, sci, err
             
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore', category=RuntimeWarning)
@@ -608,7 +661,7 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
     return figs, data, wavedata, all_slits, drz_data
 
 
-def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS, with_background=False):
+def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, variable_size=True, imshow_kws=IMSHOW_KWS, with_background=False):
     """
     Make a figure showing drizzled slitlets
     
@@ -639,7 +692,11 @@ def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, imshow_kws=IMSH
     """
     avg = hdul['SCI'].data
     xvalid = np.isfinite(avg).sum(axis=0) > 0
-    xr = np.arange(avg.shape[1])[xvalid]
+    if xvalid.sum() > 1:
+        xr = np.arange(avg.shape[1])[xvalid]
+    else:
+        xr = np.arange(avg.shape[1])
+        
     bkg = hdul['BKG'].data
     
     h = hdul['SCI'].header
@@ -650,17 +707,26 @@ def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, imshow_kws=IMSH
     msk = (ivar > 0)*1.
     msk[ivar <= 0] = np.nan
     
-    fig, axes = plt.subplots(len(slits),1, figsize=figsize, sharex=True, sharey=True)
+    if variable_size:
+        fs = (figsize[0], figsize[1]/3*len(slits))
+    else:
+        fs = figsize
+        
+    fig, axes = plt.subplots(len(slits),1, figsize=fs, sharex=True, 
+                             sharey=True)
+                             
     for i, slit in enumerate(slits):
-        axes[i].imshow((sci[i,:,:] - bkg*with_background)*msk[i,:,:], **imshow_kws)
-        axes[i].text(0.02, 0.02*figsize[1]/figsize[0]*len(slits)*2, slit.meta.filename,
+        axes[i].imshow((sci[i,:,:] - bkg*with_background)*msk[i,:,:], 
+                       **imshow_kws)
+        
+        axes[i].text(0.02, 0.02*figsize[1]/figsize[0]*len(slits)*2, 
+                     slit.meta.filename,
                      ha='left', va='bottom', transform=axes[i].transAxes,
                      bbox={'fc':'w', 'alpha':0.5,'ec':'None'},
                      fontsize=6)
     
     for ax in axes:
         ax.set_yticks([0,x0-bkg_offset, x0,x0+bkg_offset, avg.shape[0]])
-        #ax.set_yticklabels([0, -bkg_offset, int(x0), bkg_offset, avg.shape[0]])
         ax.set_yticklabels([])
                 
         ax.grid()
@@ -699,7 +765,12 @@ def show_drizzled_product(hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS):
     
     avg = hdul['SCI'].data
     xvalid = np.isfinite(avg).sum(axis=0) > 0
-    xr = np.arange(avg.shape[1])[xvalid]
+    #xr = np.arange(avg.shape[1])[xvalid]
+    if xvalid.sum() > 1:
+        xr = np.arange(avg.shape[1])[xvalid]
+    else:
+        xr = np.arange(avg.shape[1])
+    
     bkg = hdul['BKG'].data
     
     h = hdul['SCI'].header
