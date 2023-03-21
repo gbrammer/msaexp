@@ -265,6 +265,7 @@ def update_slit_dq_mask(slit, mask_padded=False, bar_threshold=-1, verbose=True)
         file if the filename was provided
     
     """
+    from gwcs import wcstools
     from jwst.datamodels import SlitModel
     
     if isinstance(slit, str):
