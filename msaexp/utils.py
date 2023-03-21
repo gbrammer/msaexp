@@ -174,9 +174,9 @@ def detector_bounding_box(file):
         if fslit.source_name.startswith('background'):
             props = 'color=white'
         elif '_-' in fslit.source_name:
-            props = 'color=cyan'
-        else:
             props = 'color=magenta'
+        else:
+            props = 'color=cyan'
             
         sr.label = fslit.source_name
         sr.ds9_properties = props        
@@ -186,7 +186,8 @@ def detector_bounding_box(file):
         
         slit_borders[_key] = {'min':[xmin.tolist(), ymin.tolist()], 
                                'max':[xmax.tolist(), ymax.tolist()], 
-                               'cen':[xcen.tolist(), ycen.tolist()], 
+                               'cen':[xcen.tolist(), ycen.tolist()],
+                               'wave':waves,
                                'xstart':fslit.xstart,
                                'xsize':fslit.xsize,
                                'ystart':fslit.ystart,
@@ -196,8 +197,11 @@ def detector_bounding_box(file):
                                'slit_ymax':fslit.slit_ymax,
                                'source_ypos':fslit.source_ypos}
     
-        sr = utils.SRegion(np.array([np.append(xmin, xmax[::-1]), 
-                                     np.append(ymin, ymax[::-1])]),
+        # sr = utils.SRegion(np.array([np.append(xmin, xmax[::-1]),
+        #                              np.append(ymin, ymax[::-1])]),
+        #                    wrap=False)
+        sr = utils.SRegion(np.array([np.append(xmin, xmax[::-1]),
+                                     np.append(ycen-1, (ycen+1)[::-1])]),
                            wrap=False)
                            
         sr.label = fslit.source_name
@@ -236,6 +240,74 @@ def update_slit_metadata(slit):
     
     if not hasattr(slit, 'slitlet_id'):
         slit.slitlet_id = 9999
+
+
+def update_slit_dq_mask(slit, mask_padded=False, bar_threshold=-1, verbose=True):
+    """
+    Update slit dq array and masking for padded slits and barshadow
+    
+    Parameters
+    ----------
+    slit : `jwst.datamodels.SlitModel`, str
+        Filename or data object of a 2D slitlet
+        
+    mask_padded : bool
+        Mask pixels of slitlets that had been padded around the nominal MSA 
+        slitlets
+    
+    bar_threshold : float
+        Mask pixels in slitlets where `barshadow < bar_threshold`
+    
+    Returns
+    -------
+    _slit : `jwst.datamodels.SlitModel`
+        Input data model with modified DQ array, or the object loaded from a
+        file if the filename was provided
+    
+    """
+    from jwst.datamodels import SlitModel
+    
+    if isinstance(slit, str):
+        _slit = SlitModel(slit)
+        update_slit_metadata(_slit)
+    else:
+        _slit = slit
+        
+    if mask_padded:
+        msg = f'msaexp.utils.update_slit_dq_mask: Mask padded area of'
+        msg += ' slitlet: {mask_padded*1:.1f}'
+        grizli.utils.log_comment(grizli.utils.LOGFILE,
+                                 msg, verbose=verbose, 
+                                 show_date=False)
+        
+        _wcs = _slit.meta.wcs
+        d2s = _wcs.get_transform('detector', 'slit_frame')
+
+        bbox = _wcs.bounding_box
+        grid = wcstools.grid_from_bounding_box(bbox)
+        _, sy, slam = np.array(d2s(*grid))
+        msk = sy < np.nanmin(sy+mask_padded)
+        msk |= sy > np.nanmax(sy-mask_padded)
+        _slit.data[msk] = np.nan
+    
+    if hasattr(_slit, 'barshadow') & (bar_threshold > 0):
+        grizli.utils.log_comment(grizli.utils.LOGFILE,
+                                 msg, verbose=verbose, 
+                                 show_date=False)
+        msk  = _slit.barshadow < bar_threshold
+
+        msg = f'msaexp.utils.update_slit_dq_mask: mask barshadow < '
+        msg += '{bar_threshold:.2f}, N={msk.sum()} pix'
+        grizli.utils.log_comment(grizli.utils.LOGFILE,
+                                 msg, verbose=verbose, 
+                                 show_date=False)
+        
+        _slit.data[msk] = np.nan
+        
+    _slit.dq = (_slit.dq & 1025 > 0)*1
+    _slit.data[_slit.dq > 0] = np.nan
+    
+    return _slit
 
 
 def slit_metadata_to_header(slit, key='', header=None):
@@ -996,6 +1068,10 @@ def drizzle_slits_2d(slits, build_data=None, drizzle_params=DRIZZLE_PARAMS, cent
     slits : list
         List of `jwst.datamodels.SlitModel` objects
     
+    build_data : tuple
+        Data like output from `msaexp.utils.build_regular_wavelength_wcs`, i.e.,
+        ``target_waves, header, data_size, output_wcs``
+    
     drizzle_params : dict
         Drizzle parameters passed on initialization of the 
         `jwst.resample.resample_spec.ResampleSpecData` step
@@ -1414,12 +1490,13 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.15, z=None, ny=None, output_root=None, unit='fnu', recenter=True):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.15, z=None, ny=None, output_root=None, unit='fnu', recenter=True, smooth_sigma=None):
     """
     Figure showing drizzled hdu
     """
     import matplotlib.pyplot as plt
     import grizli.utils
+    import scipy.ndimage as nd
     
     sp = grizli.utils.GTable(hdul['SPEC1D'].data)
     nx = len(sp)
@@ -1441,8 +1518,22 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     yscl = hdul['PROFILE'].data.max()
     if unit == 'flam':
         yscl = yscl*(sp['wave']/2.)**2
+    
+    if smooth_sigma is not None:
+        xp = np.arange(-4*int(smooth_sigma), 5*int(smooth_sigma))
+        xg = np.exp(-xp**2/2/smooth_sigma**2)[None,:]
+        #xg /= xg.sum()
+        num = hdul['SCI'].data*hdul['WHT'].data
+        den = hdul['WHT'].data*1
+        ok = np.isfinite(num+den)
+        num[~ok] = den[~ok] = 0.
         
-    axes[0].imshow(hdul['SCI'].data/yscl, vmin=vmin*ymax, vmax=ymax, 
+        smdata = nd.convolve(num, xg) / nd.convolve(den, xg**2)
+        # smdata = nd.gaussian_filter(hdul['SCI'].data, smooth_sigma)
+    else:
+        smdata = hdul['SCI'].data
+        
+    axes[0].imshow(smdata/yscl, vmin=vmin*ymax, vmax=ymax, 
                    aspect='auto', cmap=cmap, 
                    interpolation='nearest')
                    
@@ -1460,7 +1551,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         if recenter:
             axes[0].set_ylim(y0-2*ny, y0+2*ny)
     else:
-        axes[0].set_yticks([y0-yt, y0+yt])
+        axes[0].set_yticks([y0-yt, y0, y0+yt])
         if recenter:
             axes[0].set_ylim(y0-2*yt, y0+2*yt)
         
