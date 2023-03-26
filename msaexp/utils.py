@@ -308,6 +308,22 @@ def update_slit_dq_mask(slit, mask_padded=False, bar_threshold=-1, verbose=True)
     _slit.dq = (_slit.dq & 1025 > 0)*1
     _slit.data[_slit.dq > 0] = np.nan
     
+    # Does the scale look like MJr/sr?
+    mederr = np.nanmedian(_slit.err)
+    if mederr < 1.e-11:
+        msg = f'msaexp.utils.update_slit_dq_mask: med(err) = {mederr:.2e} ; '
+        msg += f' scale by {1./_slit.meta.photometry.pixelarea_steradians:.2e}'
+        
+        grizli.utils.log_comment(grizli.utils.LOGFILE,
+                                 msg, verbose=verbose, 
+                                 show_date=False)
+
+        _slit.data /= _slit.meta.photometry.pixelarea_steradians
+        _slit.err /= _slit.meta.photometry.pixelarea_steradians
+        _slit.var_flat /= _slit.meta.photometry.pixelarea_steradians**2
+        _slit.var_rnoise /= _slit.meta.photometry.pixelarea_steradians**2
+        _slit.var_poisson /= _slit.meta.photometry.pixelarea_steradians**2
+        
     return _slit
 
 
