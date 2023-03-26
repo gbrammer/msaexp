@@ -147,6 +147,7 @@ def download_msa_meta_files(files=None, do_download=True):
 
     if files is None:
         files = glob.glob('*rate.fits')
+        files += glob.glob('*cal.fits')
         files.sort()
         
     msa = []
@@ -272,15 +273,21 @@ class SlitData():
         if indices is not None:
             self.files = []
             for i in indices:
-                self.files += glob.glob(file.replace('rate.fits',
-                                        f'{step}.{i:03d}.*.fits'))
+                fr = file.replace('rate.fits', f'{step}.{i:03d}.*.fits')
+                fr = fr.replace('cal.fits', f'{step}.{i:03d}.*.fits')
+                
+                self.files += glob.glob(fr)
         elif targets is not None:
             self.files = []
             for target in targets:
-                self.files += glob.glob(file.replace('rate.fits',
-                                        f'{step}.*{target}.fits'))
+                fr = file.replace('rate.fits', f'{step}.*{target}.fits')
+                fr = fr.replace('rate.fits', f'{step}.*{target}.fits')
+                self.files += glob.glob(fr)
         else:
             self.files = glob.glob(file.replace('rate.fits', f'{step}.*.fits'))
+            if len(self.files == 0):
+                self.files = glob.glob(file.replace('cal.fits', 
+                                                    f'{step}.*.fits'))
                 
         self.files.sort()
         
@@ -410,7 +417,7 @@ class NirspecPipeline():
                 msg += f' exp_type={self.exp_type}  msametfl={msametfl}'
                 print(msg)
                 
-                if self.msametfl is not None:
+                if (self.msametfl is not None) & (source_ids is None):
                     self.msa = MSAMetafile(self.msametfl)
                     with open(self.msametfl.replace('.fits','.reg'),'w') as fp:
                         fp.write(self.msa.regions_from_metafile(as_string=True, 
@@ -495,6 +502,21 @@ class NirspecPipeline():
             return self.targets.index(key)
 
 
+    def initialize_from_cals(self, key='phot', verbose=True):
+        """
+        Initialize processing object from cal.fits products
+        """
+        import jwst.datamodels
+        self.pipe[key] = []
+        for file in self.files:
+            msg = f'msaexp.initialize_from_cals : load {file} as MultiSlitModel'
+            utils.log_comment(utils.LOGFILE, msg, verbose=True, 
+                                  show_date=True)
+            self.pipe[key].append(jwst.datamodels.MultiSlitModel(file))
+        
+        self.last_step = key
+    
+    
     def preprocess(self, set_context=True, fix_rows=True, scale_rnoise=True, skip_completed=True, **kwargs):
         """
         Run grizli exposure-level preprocessing
@@ -772,7 +794,10 @@ class NirspecPipeline():
                 
                 slit_file = self.files[j].replace('rate.fits',
                                                 f'{step}.{i:03d}.{_name}.fits')
-                                                  
+                
+                slit_file = slit_file.replace('cal.fits',
+                                                f'{step}.{i:03d}.{_name}.fits')
+                
                 msg = f'msaexp.save_slit_data: {slit_file} '
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
                                   show_date=False)
@@ -1811,10 +1836,13 @@ class NirspecPipeline():
             return True
             
         else:
-            if run_preprocess:
-                self.preprocess(**kwargs)
+            if self.files[0].endswith('_cal.fits'):
+                self.initialize_from_cals()
+            else:
+                if run_preprocess:
+                    self.preprocess(**kwargs)
             
-            self.run_jwst_pipeline(**kwargs)
+                self.run_jwst_pipeline(**kwargs)
         
         self.slitlets = self.initialize_slit_metadata()
         
