@@ -38,7 +38,7 @@ DETECTORS = ['nrs1','nrs2']
 __all__ = ["query_program", "exposure_groups", "NirspecPipeline"]
 
 
-def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d'], extra_filters=[]):
+def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d'], product='rate', extra_filters=[]):
     """
     Query and download MSA exposures for a given program from MAST
     
@@ -105,9 +105,9 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
     unique_indices = []
     
     for i, u in enumerate(res['dataURI']):
-        ui = u.replace('s2d','rate')
+        ui = u.replace('s2d', product)
         for e in extensions:
-            ui = ui.replace(e, 'rate')
+            ui = ui.replace(e, product)
         
         if ui not in rates:
             unique_indices.append(i)
