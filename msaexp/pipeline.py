@@ -291,7 +291,7 @@ class SlitData():
                 self.files = glob.glob(file.replace('cal.fits', 
                                                     f'{step}.*.fits'))
                 
-        # self.files.sort()
+            self.files.sort()
         
         if read:
             self.read_data()
@@ -977,7 +977,9 @@ class NirspecPipeline():
         from jwst.datamodels import SlitModel
         
         # Get from slitlet_ids
-        indices = [self.slitlets[k]['slitlet_id'] for k in self.slitlets]
+        # indices = [self.slitlets[k]['slitlet_id'] for k in self.slitlets]
+        indices = [slit.slitlet_id
+                   for slit in self.pipe[self.last_step][0].slits]
         
         self.pipe['bkg'] = self.load_slit_data(step=self.last_step,
                                                targets=None,
@@ -1215,7 +1217,7 @@ class NirspecPipeline():
         import eazy.utils
         
         if key not in self.slitlets:
-            print(f'{key} not found in slitlets')
+            print(f'{self.mode}: {key} not found in slitlets')
 
             return None
         
@@ -1830,7 +1832,7 @@ class NirspecPipeline():
         return info
 
 
-    def full_pipeline(self, load_saved='phot', run_preprocess=True, run_extractions=True, indices=None, targets=None, initialize_bkg=True, make_regions=True, **kwargs):
+    def full_pipeline(self, load_saved='phot', run_preprocess=True, run_extractions=True, indices=None, targets=None, initialize_bkg=True, make_regions=True, use_yaml_metadata=True, **kwargs):
         """
         Run all steps through extractions
         """
@@ -1862,7 +1864,7 @@ class NirspecPipeline():
             
                 self.run_jwst_pipeline(**kwargs)
         
-        self.slitlets = self.initialize_slit_metadata()
+        self.slitlets = self.initialize_slit_metadata(use_yaml=use_yaml_metadata)
         
         self.get_slit_traces()
         
