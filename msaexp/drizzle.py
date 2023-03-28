@@ -139,7 +139,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             files = glob.glob(f'{wildcard}*_{id}.fits')
     
     files : list
-        Explicit list of slitlet files
+        Explicit list of either slitlet filenames or 
+        `jwst.datamodels.SlitModel` objects.
     
     output : str
         Optional rootname of output figures and FITS data
@@ -255,8 +256,12 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
                              show_date=False)
     
     for file in files:
-        slit = jwst.datamodels.SlitModel(file)
-        utils.update_slit_metadata(slit)
+        if isinstance(file, str):
+            slit = jwst.datamodels.SlitModel(file)
+            utils.update_slit_metadata(slit)
+        else:
+            slit = file
+            reopen = False
         
         grating = slit.meta.instrument.grating.lower()
         filt = slit.meta.instrument.filter.lower()
