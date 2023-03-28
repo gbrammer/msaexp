@@ -407,6 +407,9 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
         spl_fig.savefig(froot+'.spl.png')
     
         sp['spl_model'] = sp2['model']
+    
+    sp['wave'].unit = u.micron
+    sp['flux'].unit = u.microJansky
         
     sp.write(froot+'.spec.zfit.fits', overwrite=True)
     
@@ -750,10 +753,14 @@ def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=3, update=
     else:
         spec, spl = data
         
-    ok = (spec['err'] > 0) & (spec['flux'] != 0) & np.isfinite(spec['err']+spec['flux'])
+    ok = (spec['err'] > 0) & (spec['flux'] != 0)
+    ok &= np.isfinite(spec['err']+spec['flux'])
     
     if init is not None:
         err = init[0]*spec['err']
+        if 'escale' in spec.colnames:
+            err *= spec['escale']
+            
         err = np.sqrt(err**2 + (0.02*spec['flux'])**2)
         _Ax = spl/err
         _yx = spec['flux']/err
@@ -764,6 +771,9 @@ def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=3, update=
     def objfun_scale_uncertainties(c):
     
         err = 10**np.polyval(c, spec['wave'])*spec['err']
+        if 'escale' in spec.colnames:
+            err *= spec['escale']
+
         err = np.sqrt(err**2 + (0.02*spec['flux'])**2)
         
         _Ax = spl/err
@@ -906,7 +916,11 @@ def read_spectrum(file, sys_err=0.02, **kwargs):
     
     flam_unit = 1.e-20*u.erg/u.second/u.cm**2/u.Angstrom
         
-    spec.equiv = u.spectral_density(spec['wave'].data*spec['wave'].unit)
+    um = spec['wave'].unit
+    if um is None:
+        um = u.micron
+    
+    spec.equiv = u.spectral_density(spec['wave'].data*um)
     
     spec['to_flam'] = (1*spec['flux'].unit).to(flam_unit, equivalencies=spec.equiv).value
     spec.meta['flamunit'] = flam_unit.unit
