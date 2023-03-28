@@ -9,7 +9,7 @@ __all__ = ["regions_from_metafile", "regions_from_fits",
            "MSAMetafile"]
 
 
-def pad_msa_metafile(metafile, pad=1, source_ids=None, positive_ids=False, prefix='src_', verbose=True):
+def pad_msa_metafile(metafile, pad=0, source_ids=None, positive_ids=False, prefix='src_', verbose=True, primary_sources=True, **kwargs):
     """
     Pad a MSAMETFL with dummy slits and trim to a subset of source_ids
     
@@ -51,10 +51,14 @@ def pad_msa_metafile(metafile, pad=1, source_ids=None, positive_ids=False, prefi
             source_ids = all_ids[all_ids != 0]
 
     six = np.in1d(msa.shutter_table['source_id'], source_ids)
-
+    if primary_sources:
+        six &= msa.shutter_table['primary_source'] == 'Y'
+    
+    this_source_ids = np.unique(msa.shutter_table['source_id'][six])
+    
     if six.sum() == 0:
-        msg = f'msaexp.utils.pad_msa_metafile: {source_ids} not found in {metafile}.'
-        msg += f'  Available ids are {list(all_ids)}'
+        msg = f'msaexp.utils.pad_msa_metafile: {source_ids} not found in '
+        msg += f'{metafile}.  Available ids are {list(all_ids)}'
         raise ValueError(msg)
     
     slitlets = np.unique(msa.shutter_table['slitlet_id'][six])
@@ -75,16 +79,20 @@ def pad_msa_metafile(metafile, pad=1, source_ids=None, positive_ids=False, prefi
     row['primary_source'] = 'N'
     
     new_rows = []
-
-    for src_id in source_ids:
-        six = shut['source_id'] == src_id
     
+    # Add padding
+    for src_id in this_source_ids:
+        six = shut['source_id'] == src_id
+        
         for mid in np.unique(shut['msa_metadata_id'][six]):
             mix = (shut['msa_metadata_id'] == mid) & (six)
             quad = shut['shutter_quadrant'][mix][0]
             slit_id = shut['slitlet_id'][mix][0]
-            shutters = np.unique(shut['shutter_column'][mix])
-            for eid in np.unique(shut['dither_point_index'][mix]):
+            slix = (shut['msa_metadata_id'] == mid)
+            slix &= (shut['slitlet_id'] == slit_id)
+            
+            shutters = np.unique(shut['shutter_column'][slix])
+            for eid in np.unique(shut['dither_point_index'][slix]):
                 for p in range(pad):
                     for s in [shutters.min()-(p+1), shutters.max()+(p+1)]:
 
@@ -123,7 +131,8 @@ def pad_msa_metafile(metafile, pad=1, source_ids=None, positive_ids=False, prefi
     im.close()
     
     if verbose:
-        msg = f'msaexp.utils.pad_msa_metafile: Trim {metafile} to {list(source_ids)}\n'
+        msg = f'msaexp.utils.pad_msa_metafile: Trim source_id in {metafile} to '
+        msg += f'{list(this_source_ids)}\n'
         msg += f'msaexp.utils.pad_msa_metafile: pad = {pad}'
         grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=True, 
                                  show_date=True)
