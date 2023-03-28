@@ -436,7 +436,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     return fig, sp, data
 
 
-def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, scale_disp=1.0, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII']):
+def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel_width=100, scale_disp=1.0, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII']):
     """
     Generate fitting templates
     
@@ -448,6 +448,9 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
     
     wfull : array
         Full wavelength array of the templates
+    
+    wmask : array-like
+        Boolean mask on `wobs` for valid data
     
     bspl : dict
         Spline templates for dummy continuum
@@ -476,6 +479,12 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
     lw, lr = utils.get_line_wavelengths()
     
     wrest = wobs/(1+z)*1.e4
+    
+    if wmask is None:
+        wmask = np.isfinite(wobs)
+        
+    wmin = wobs[wmask].min()
+    wmax = wobs[wmask].max()
     
     if eazy_templates is None:
         templates = {}
@@ -515,7 +524,8 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
                   *sii,
                   'OII-7325', 'ArIII-7138', 'SIII-9068', 'SIII-9531',
                   'OI-6302', 'PaD', 'PaG', 'PaB', 'PaA', 'HeI-1083',
-                  'BrA','BrB','BrG','BrD','PfB','PfG','PfD','PfE','Pa8','Pa9','Pa10',
+                  'BrA','BrB','BrG','BrD','PfB','PfG','PfD','PfE',
+                  'Pa8','Pa9','Pa10',
                   'HeI-5877', 
                   *fuv,
                   'CIII-1908', 'NIII-1750', 'Lya',
@@ -528,10 +538,10 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
             
             lwi = lw[l][0]*(1+z)
 
-            if lwi < wobs.min()*1.e4:
+            if lwi < wmin*1.e4:
                 continue
 
-            if lwi > wobs.max()*1.e4:
+            if lwi > wmax*1.e4:
                 continue
 
             # print(l, lwi, disp_r)
@@ -540,7 +550,8 @@ def make_templates(wobs, z, wfull, bspl={}, eazy_templates=None, vel_width=100, 
 
             for i, (lwi0, lri) in enumerate(zip(lw[l], lr[l])):
                 lwi = lwi0*(1+z)
-                disp_r = np.interp(lwi/1.e4, disp['WAVELENGTH'], disp['R'])*scale_disp
+                disp_r = np.interp(lwi/1.e4, disp['WAVELENGTH'], 
+                                   disp['R'])*scale_disp
 
                 fwhm_ang = np.sqrt((lwi/disp_r)**2 + (vel_width/3.e5*lwi)**2)
                 
@@ -661,6 +672,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     for iz, z in tqdm(enumerate(zgrid)):
         
         templates, tline, _A = make_templates(spec['wave'], z, w0,
+                            wmask=mask,
                             bspl=bspl,
                             eazy_templates=eazy_templates,
                             vel_width=vel_width,
@@ -965,6 +977,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
                           spec['wave'].max()*1.e4], 1./Rline)
     
     templates, tline, _A = make_templates(spec['wave'], z, w0,
+                        wmask=mask,
                         bspl=bspl,
                         eazy_templates=eazy_templates,
                         vel_width=vel_width,
