@@ -151,7 +151,7 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
     drizzle_params : dict
         Drizzle parameters passed to `msaexp.utils.drizzle_slits_2d`
     
-    master_bkg : array-like
+    master_bkg : array-like, int
         Master background to replace local background derived from the
         drizzled product
     
@@ -594,8 +594,12 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         
         # Use master background if supplied
         if master_bkg is not None:
-            bkg = master_bkg[0]
-            bkg_w = master_bkg[1]
+            if hasattr(master_bkg, '__len__'):
+                bkg = master_bkg[0]
+                bkg_w = master_bkg[1]
+            elif master_bkg in [0, 0.]:
+                bkg = np.zeros_like(bkg)
+                bkg_w = np.zeros_like(bkg)
         
         # Set masked back to nan
         avg[msk] = np.nan
@@ -622,6 +626,10 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         
         h['EXTNAME'] = 'BKG'
         hdul.append(pyfits.ImageHDU(data=bkg, header=h))
+        
+        h['EXTNAME'] = 'WAVE'
+        h['BUNIT'] = 'micron'
+        hdul.append(pyfits.ImageHDU(data=waves, header=h))
         
         if output is not None:
             hdul.writeto(f'{output}-{id}-{gr}.d2d.fits', overwrite=True,
@@ -1085,7 +1093,11 @@ def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, **kw
     
     wht2d = hdul['WHT'].data*1
 
-    waves = utils.get_standard_wavelength_grid(sci.header['GRATING'].lower(),
+    if 'WAVE' in hdul:
+        waves = hdul['WAVE'].data
+    else:
+        _gr = sci.header['GRATING'].lower()
+        waves = utils.get_standard_wavelength_grid(_gr,
                                                sample=sci.header['WSAMPLE'],
                                                log_step=sci.header['LOGWAVE'])
     
