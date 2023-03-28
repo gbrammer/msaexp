@@ -288,7 +288,7 @@ class SlitData():
                 self.files += glob.glob(fr)
         else:
             self.files = glob.glob(file.replace('rate.fits', f'{step}.*.fits'))
-            if len(self.files == 0):
+            if len(self.files) == 0:
                 self.files = glob.glob(file.replace('cal.fits', 
                                                     f'{step}.*.fits'))
                 
@@ -400,6 +400,8 @@ class NirspecPipeline():
         
         self.msametfl = None
         self.msa = None
+        
+        self.init_source_ids = source_ids
         
         if len(self.files) > 0:
             if os.path.exists(self.files[0]) & (~self.is_fixed_slit):
