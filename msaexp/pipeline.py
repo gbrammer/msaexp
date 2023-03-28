@@ -319,7 +319,7 @@ class SlitData():
 
 
 class NirspecPipeline():
-    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0, positive_ids=False):
+    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0, positive_ids=False, primary_sources=True):
         """
         Container class for NIRSpec data, generally in groups split by 
         grating/filter/detector
@@ -344,6 +344,10 @@ class NirspecPipeline():
         
         positive_ids : bool
             If true, ignore background slits with source_id values <= 0
+        
+        primary_sources : bool
+            Only extract sources with ``primary_source='Y'`` in the MSA
+            metadata file.
         
         Attributes
         ----------
@@ -416,9 +420,10 @@ class NirspecPipeline():
                 if (pad > 0) | (source_ids is not None) | positive_ids:
                     if (msametfl is not None) & (os.path.exists(msametfl)):
                         msametfl = pad_msa_metafile(msametfl,
-                                                    pad=pad,
-                                                    positive_ids=positive_ids,
-                                                    source_ids=source_ids)
+                                                pad=pad,
+                                                positive_ids=positive_ids,
+                                                source_ids=source_ids,
+                                                primary_sources=primary_sources)
             
                 self.msametfl = msametfl
                 msg = f'msaexp.NirspecPipeline: mode={mode}'
