@@ -278,7 +278,6 @@ class SlitData():
             for i in indices:
                 fr = file.replace('rate.fits', f'{step}.{i:03d}.*.fits')
                 fr = fr.replace('cal.fits', f'{step}.{i:03d}.*.fits')
-                
                 self.files += glob.glob(fr)
         elif targets is not None:
             self.files = []
@@ -292,7 +291,7 @@ class SlitData():
                 self.files = glob.glob(file.replace('cal.fits', 
                                                     f'{step}.*.fits'))
                 
-        self.files.sort()
+        # self.files.sort()
         
         if read:
             self.read_data()
@@ -320,7 +319,7 @@ class SlitData():
 
 
 class NirspecPipeline():
-    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0):
+    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0, positive_ids=False):
         """
         Container class for NIRSpec data, generally in groups split by 
         grating/filter/detector
@@ -342,6 +341,9 @@ class NirspecPipeline():
         
         pad : int
             Number of dummy slits to pad the open slitlets
+        
+        positive_ids : bool
+            If true, ignore background slits with source_id values <= 0
         
         Attributes
         ----------
@@ -411,10 +413,11 @@ class NirspecPipeline():
                     else:
                         msametfl = im[0].header['MSAMETFL']
                 
-                if (pad > 0) | (source_ids is not None):
+                if (pad > 0) | (source_ids is not None) | positive_ids:
                     if (msametfl is not None) & (os.path.exists(msametfl)):
                         msametfl = pad_msa_metafile(msametfl,
                                                     pad=pad,
+                                                    positive_ids=positive_ids,
                                                     source_ids=source_ids)
             
                 self.msametfl = msametfl
@@ -796,12 +799,13 @@ class NirspecPipeline():
             for _name in self.slitlets:
                 
                 i = self.slitlets[_name]['slit_index']
+                si = self.slitlets[_name]['slitlet_id']
                 
                 slit_file = self.files[j].replace('rate.fits',
-                                                f'{step}.{i:03d}.{_name}.fits')
+                                                f'{step}.{si:03d}.{_name}.fits')
                 
                 slit_file = slit_file.replace('cal.fits',
-                                                f'{step}.{i:03d}.{_name}.fits')
+                                                f'{step}.{si:03d}.{_name}.fits')
                 
                 msg = f'msaexp.save_slit_data: {slit_file} '
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose, 
@@ -967,8 +971,12 @@ class NirspecPipeline():
         from tqdm import tqdm
         from jwst.datamodels import SlitModel
         
+        # Get from slitlet_ids
+        indices = [self.slitlets[k]['slitlet_id'] for k in self.slitlets]
+        
         self.pipe['bkg'] = self.load_slit_data(step=self.last_step,
-                                               targets=self.targets)
+                                               targets=None,
+                                               indices=indices)
         
         for j in range(self.N):
             for s in self.pipe['bkg'][j].slits:
