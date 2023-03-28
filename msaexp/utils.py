@@ -988,10 +988,53 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     return target_waves, header, data_size, output_wcs
 
 
+def get_slit_trace_wavelengths(slit):
+    """
+    Get wavelengths along the trace of a slit where the `slit_frame` coordinate
+    is at a minimum in the cross-dispersion axis
+    
+    Parameters
+    ----------
+    slit : `jwst.datamodels.SlitModel`
+        Slit object
+    
+    Returns
+    -------
+    waves : array-like
+        Wavelength array, microns
+    
+    """
+    from gwcs import wcstools
+    
+    refwcs = slit.meta.wcs
+    d2s = refwcs.get_transform('detector', 'slit_frame')
+
+    bbox = refwcs.bounding_box
+    grid = wcstools.grid_from_bounding_box(bbox)
+    _, s, lam = np.array(d2s(*grid))
+    
+    s[~np.isfinite(s)] = 10000
+    itr = np.nanargmin(np.abs(s), axis=0)
+    waves = np.array([lam[j,i] for i, j in enumerate(itr)])*1.e6
+    waves = waves[np.isfinite(waves)]
+    
+    return waves
+
+
 def build_slit_centered_wcs(slit, waves, pscale_ratio=1, ypad=0, force_nypix=21, slit_center=0., center_on_source=False, get_from_ypos=True, phase=-0.5, fix_slope=None, **kwargs):
     """
-    """
+    Build a 2D WCS centered on the target in a slit
     
+    Parameters
+    ----------
+    slit : `jwst.datamodels.SlitModel`
+    
+    Returns
+    -------
+    _data : tuple
+        See `msaexp.utils.build_regular_wavelength_wcs`
+    
+    """
     from gwcs import wcstools
     
     if get_from_ypos:
@@ -1507,7 +1550,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.15, z=None, ny=None, output_root=None, unit='fnu', recenter=True, smooth_sigma=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', recenter=True, smooth_sigma=None):
     """
     Figure showing drizzled hdu
     """
@@ -1521,12 +1564,16 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     fig, a2d = plt.subplots(2,2, **subplot_args)
     axes = [a2d[0][0], a2d[1][0]]
     
+    if 'full_err' in sp.colnames:
+        err = sp['full_err']*1
+    else:
+        err = sp['err']*1
+        
     if unit == 'fnu':
         flux = sp['flux']*1
-        err = sp['err']*1
     else:
         flux = sp['flux']*(sp['wave']/2.)**-2
-        err = sp['err']*(sp['wave']/2.)**-2
+        err *= (sp['wave']/2.)**-2
         
     if ymax is None:
         ymax = np.nanpercentile(flux[err > 0], 90)*2
