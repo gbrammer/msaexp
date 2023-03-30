@@ -932,7 +932,10 @@ class NirspecPipeline():
                 for k in meta:
                     if k in yaml_data[_name]:
                         meta[k] = yaml_data[_name][k]
-                        
+            
+            # Make sure index is set
+            meta['slit_index'] = i    
+            
             msg = '{slit_index:>4}  {slitlet_id:>4} {source_name:>12} '
             msg += ' {source_ra:.6f} {source_dec:.6f}'
             utils.log_comment(utils.LOGFILE, msg.format(**meta), 
