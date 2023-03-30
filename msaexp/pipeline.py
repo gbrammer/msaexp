@@ -283,14 +283,15 @@ class SlitData():
             self.files = []
             for target in targets:
                 fr = file.replace('rate.fits', f'{step}.*{target}.fits')
-                fr = fr.replace('rate.fits', f'{step}.*{target}.fits')
+                fr = fr.replace('cal.fits', f'{step}.*{target}.fits')
                 self.files += glob.glob(fr)
         else:
-            self.files = glob.glob(file.replace('rate.fits', f'{step}.*.fits'))
-            if len(self.files) == 0:
-                self.files = glob.glob(file.replace('cal.fits', 
-                                                    f'{step}.*.fits'))
-                
+            if file.endswith('_rate.fits'):
+                fr = file.replace('rate.fits', f'{step}.*.fits')
+            else:
+                fr = file.replace('cal.fits', f'{step}.*.fits')
+
+            self.files = glob.glob(fr)
             self.files.sort()
         
         if read:
@@ -1846,6 +1847,7 @@ class NirspecPipeline():
             else:
                 status = self.load_slit_data(step=load_saved, indices=indices,
                                              targets=targets)
+                print('XXX', status)
         else:
             status = None
         
