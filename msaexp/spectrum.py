@@ -947,9 +947,17 @@ def read_spectrum(file, sys_err=0.02, **kwargs):
     return spec
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, halpha_prism=['Ha+NII'], **kwargs):
+def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=True, halpha_prism=['Ha+NII'], **kwargs):
     """
     Make a diagnostic figure
+    
+    Parameters
+    ----------
+    ...
+    return_fit_results : bool
+        Just return the fit results - 
+        ``templates, coeffs, flam, eflam, _model, mask, full_chi2``
+    
     """
     global SCALE_UNCERTAINTY
         
@@ -965,14 +973,10 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     flam[~mask] = np.nan
     eflam[~mask] = np.nan
     
-    # _filter = spec.meta['FILTER'].lower()
-    #
-    # _data_path = os.path.dirname(__file__)
-    # #disp = utils.read_catalog(f'{_data_path}/data/jwst_nirspec_{grating}_disp.fits')
-    #
-    # #templates = utils.cheb_templates(wave=spec['wave']*1.e4, order=33, log=True)
-    
-    bspl = utils.bspline_templates(wave=spec['wave']*1.e4, degree=3, df=nspline) #, log=True)
+    bspl = utils.bspline_templates(wave=spec['wave']*1.e4,
+                                   degree=3,
+                                   df=nspline)
+                                   
     w0 = utils.log_zgrid([spec['wave'].min()*1.e4,
                           spec['wave'].max()*1.e4], 1./Rline)
     
@@ -1015,7 +1019,10 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     
     full_chi2 = ((flam - _model)**2/eflam**2)[mask].sum()
     cont_chi2 = ((flam - _mcont)**2/eflam**2)[mask].sum()
-
+    
+    if return_fit_results:
+        return templates, coeffs, flam, eflam, _model, mask, full_chi2
+    
     try:
         oktemp = okt & (coeffs != 0)
             
