@@ -821,7 +821,42 @@ def show_drizzled_product(hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS):
     return fig
 
 
-def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], verbose=True, **kwargs):
+def get_xlimits_from_lines(hdul, sn_thresh=2, max_dy=4, n_erode=2, n_dilate=4, smooth_sigma=4, pad=10, verbose=True):
+    """
+    Find emission lines in 2D spectrum
+    """
+    import scipy.ndimage as nd
+    
+    sh = hdul['SCI'].data.shape
+    yp, xp = np.indices(sh)
+    
+    if 'SRCYPIX' in hdul['SCI'].header:
+        y0 = hdul['SCI'].header['SRCYPIX']
+    else:
+        y0 = sh[0]/2
+    
+    msk = hdul['SCI'].data*np.sqrt(hdul['WHT'].data) > sn_thresh
+    msk &= np.abs(yp-y0) < max_dy
+    
+    msk_erode = nd.binary_erosion(msk, iterations=n_erode)
+    msk_dilate = nd.binary_dilation(msk_erode, iterations=n_dilate)
+    
+    
+    if msk_dilate.sum() == 0:
+        xlim = (0, sh[1])
+    else:
+        xpx = xp[msk_dilate]
+        xlim = np.clip([xpx.min()-pad, xpx.max()+pad], 0, sh[1]).tolist()
+    
+    msg = f'msaexp.drizzle.get_xlimits_from_lines: {msk_dilate.sum()} pixels, '
+    msg += f'slice: {xlim}'
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
+                             show_date=False)
+    
+    return xlim
+
+
+def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], verbose=True, find_line_kws={}, **kwargs):
     """
     Optimal extraction from 2D arrays
                             
@@ -935,12 +970,14 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         
     if prf_center is None:
         prf_center = np.nanargmax(prof1d) - (sh[0]-1)/2.
+        
         if verbose:
             print(f'Set prf_center: {prf_center} {sh} {ok.sum()}')
     
-    msg = f"msaexp.drizzle.extract_from_hdul: Initial center = {prf_center:6.2f},"
-    msg += f" sigma = {prf_sigma:6.2f}"
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False)
+    msg = f"msaexp.drizzle.extract_from_hdul: Initial center = "
+    msg += f" {prf_center:6.2f}, sigma = {prf_sigma:6.2f}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
+                             show_date=False)
     
     ############# 
     #### Integrated gaussian profile
@@ -1003,7 +1040,8 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         pfit1d = np.nansum((wht2d*profile2d*sci1d)[:,profile_slice], axis=1) 
         pfit1d /= np.nansum(wht2d[:,profile_slice], axis=1)
     else:
-        pfit1d = np.nansum(profile2d*sci1d*wht2d, axis=1) / np.nansum(wht2d, axis=1)
+        pfit1d = np.nansum(profile2d*sci1d*wht2d, axis=1)
+        pfit1d /= np.nansum(wht2d, axis=1)
     
     if trim > 0:
         bad = nd.binary_dilation(wht1d <= 0, iterations=trim)
@@ -1039,7 +1077,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     prof_tab.meta['PROFSTRT'] = slice_limits[0], 'Start of profile slice'
     prof_tab.meta['PROFSTOP'] = slice_limits[1], 'End of profile slice'
     prof_tab.meta['YTRACE'] = ytrace, 'Expected center of trace'
-        
+    
     spec['wave'] = waves
     spec['wave'].unit = u.micron
     spec['flux'] = sci1d*to_ujy
@@ -1054,7 +1092,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     return sci2d*to_ujy, wht2d/to_ujy**2, profile2d, spec, prof_tab
 
 
-def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, **kwargs):
+def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, line_limit_kwargs={}, **kwargs):
     """
     Run 1D extraction on arrays from a combined dataset
     
@@ -1101,8 +1139,12 @@ def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, **kw
                                                sample=sci.header['WSAMPLE'],
                                                log_step=sci.header['LOGWAVE'])
     
+    if line_limit_kwargs:
+        kwargs['profile_slice'] = get_xlimits_from_lines(hdul, 
+                                                         **line_limit_kwargs)
+        
     if prf_center is None:
-        prf_center = sci.header['SRCYPIX'] - (sci.data.shape[0]-1)/2. - 1
+        prf_center = sci.header['SRCYPIX'] - (sci.data.shape[0]-1)/2.
     
     _data = make_optimal_extraction(waves, sci2d, wht2d,
                                     prf_center=prf_center,
