@@ -119,6 +119,32 @@ def update_output_files(mode):
     print(f'Fix {yaml_file}')
 
 
+def update_slitlet_filenames(files):
+    """
+    Update slitlet filenames to reflect new convention with the 
+    correct `slitlet_id`: 
+    
+    `{ROOT}_phot.{SLITLET_ID:03d}.{SOURCE_ID}.fits`
+    
+    Note: the function just prints messages that can be pasted into the shell
+    for renaming the files
+    """
+    
+    import shutil
+    import astropy.io.fits as pyfits
+    
+    for file in files: 
+        with pyfits.open(file) as im:
+            slitlet_id = im[1].header['SLITID']
+        
+        old_key = file.split('phot.')[1].split('.')[0]
+        new_file = file.replace(f'.{old_key}.', f'.{slitlet_id:03d}.')
+        if new_file != file:
+            print(f'mv {file:<58} {new_file}')
+        else:
+            print(f'# {file:<58} - filename OK')
+
+
 def detector_bounding_box(file):
     """
     Region files and metadata for slits
