@@ -1550,7 +1550,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', recenter=True, smooth_sigma=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, ymax_sigma_scale=2, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', recenter=True, smooth_sigma=None):
     """
     Figure showing drizzled hdu
     """
@@ -1576,9 +1576,9 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         err *= (sp['wave']/2.)**-2
         
     if ymax is None:
-        ymax = np.nanpercentile(flux[err > 0], 90)*2
+        ymax = np.nanpercentile(flux[err > 0], 90)*ymax_sigma_scale
         ymax = np.maximum(ymax, 7*np.median(err[err > 0]))
-    
+        
     yscl = hdul['PROFILE'].data.max()
     if unit == 'flam':
         yscl = yscl*(sp['wave']/2.)**2
