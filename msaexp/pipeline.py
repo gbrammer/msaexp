@@ -1847,7 +1847,6 @@ class NirspecPipeline():
             else:
                 status = self.load_slit_data(step=load_saved, indices=indices,
                                              targets=targets)
-                print('XXX', status)
         else:
             status = None
         
