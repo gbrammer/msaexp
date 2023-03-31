@@ -119,7 +119,7 @@ def update_output_files(mode):
     print(f'Fix {yaml_file}')
 
 
-def update_slitlet_filenames(files):
+def update_slitlet_filenames(files, script_only=True, verbose=True):
     """
     Update slitlet filenames to reflect new convention with the 
     correct `slitlet_id`: 
@@ -128,10 +128,26 @@ def update_slitlet_filenames(files):
     
     Note: the function just prints messages that can be pasted into the shell
     for renaming the files
+    
+    Parameters
+    ----------
+    files : str
+        List of slitlet files, `{ROOT}_phot.{SLITLET_ID:03d}.{SOURCE_ID}.fits`
+    
+    script_only : bool
+        If False, rename the files.  Otherwise, just print messages.
+    
+    Returns
+    -------
+    commands : list
+        List of shell commands for renaming files
+    
     """
     
     import shutil
     import astropy.io.fits as pyfits
+    
+    commands = []
     
     for file in files: 
         with pyfits.open(file) as im:
@@ -140,9 +156,18 @@ def update_slitlet_filenames(files):
         old_key = file.split('phot.')[1].split('.')[0]
         new_file = file.replace(f'.{old_key}.', f'.{slitlet_id:03d}.')
         if new_file != file:
-            print(f'mv {file:<58} {new_file}')
+            cmd = 'mv {file:<58} {new_file}'
+            if not script_only:
+                shutil.move(file, new_file)
         else:
-            print(f'# {file:<58} - filename OK')
+            cmd = f'# {file:<58} - filename OK'
+        
+        if verbose:
+            print(cmd)
+        
+        commands.append(cmd)
+    
+    return commands
 
 
 def detector_bounding_box(file):
