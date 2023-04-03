@@ -156,7 +156,7 @@ def update_slitlet_filenames(files, script_only=True, verbose=True):
         old_key = file.split('phot.')[1].split('.')[0]
         new_file = file.replace(f'.{old_key}.', f'.{slitlet_id:03d}.')
         if new_file != file:
-            cmd = 'mv {file:<58} {new_file}'
+            cmd = f'mv {file:<58} {new_file}'
             if not script_only:
                 shutil.move(file, new_file)
         else:
