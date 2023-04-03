@@ -320,7 +320,7 @@ class SlitData():
 
 
 class NirspecPipeline():
-    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, pad=0, positive_ids=False, primary_sources=True):
+    def __init__(self, mode='jw02767005001-02-clear-prism-nrs1', files=None, verbose=True, source_ids=None, slitlet_ids=None, pad=0, positive_ids=False, primary_sources=True):
         """
         Container class for NIRSpec data, generally in groups split by 
         grating/filter/detector
@@ -338,7 +338,10 @@ class NirspecPipeline():
             Print status messages
         
         source_ids : list
-            Specific list of source ids to trim from the MSA metadata file
+            Specific list of source_id to trim from the MSA metadata file
+        
+        slitlet_ids: list
+            Specific list of slitlet_id to trim from the MSA metadata file
         
         pad : int
             Number of dummy slits to pad the open slitlets
@@ -374,7 +377,7 @@ class NirspecPipeline():
         
         msa : `msaexp.msa.MSAMetafile`
             MSA metadata object, perhaps that has been modified by the 
-            parameters ``source_ids`` and ``pad`` above
+            parameters ``source_ids``, ``slitlet_ids`` and ``pad`` above
         
         """
         from .msa import pad_msa_metafile, MSAMetafile
@@ -409,6 +412,7 @@ class NirspecPipeline():
         self.msa = None
         
         self.init_source_ids = source_ids
+        self.init_slitlet_ids = slitlet_ids
         
         if len(self.files) > 0:
             if os.path.exists(self.files[0]) & (~self.is_fixed_slit):
@@ -418,12 +422,18 @@ class NirspecPipeline():
                     else:
                         msametfl = im[0].header['MSAMETFL']
                 
-                if (pad > 0) | (source_ids is not None) | positive_ids:
+                if not os.path.exists(msametfl):
+                    msametfl = None
+                
+                _do_pad = (pad > 0) | (source_ids is not None) | positive_ids
+                _do_pad |= slitlet_ids is not None
+                if _do_pad:
                     if (msametfl is not None) & (os.path.exists(msametfl)):
                         msametfl = pad_msa_metafile(msametfl,
                                                 pad=pad,
                                                 positive_ids=positive_ids,
                                                 source_ids=source_ids,
+                                                slitlet_ids=slitlet_ids,
                                                 primary_sources=primary_sources)
             
                 self.msametfl = msametfl
@@ -431,7 +441,9 @@ class NirspecPipeline():
                 msg += f' exp_type={self.exp_type}  msametfl={msametfl}'
                 print(msg)
                 
-                if (self.msametfl is not None) & (source_ids is None):
+                _do_regions = (self.msametfl is not None) & (source_ids is None)
+                _do_regions &= (slitlet_ids is None)
+                if _do_regions:
                     self.msa = MSAMetafile(self.msametfl)
                     with open(self.msametfl.replace('.fits','.reg'),'w') as fp:
                         fp.write(self.msa.regions_from_metafile(as_string=True, 

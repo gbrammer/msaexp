@@ -9,7 +9,7 @@ __all__ = ["regions_from_metafile", "regions_from_fits",
            "MSAMetafile"]
 
 
-def pad_msa_metafile(metafile, pad=0, source_ids=None, positive_ids=False, prefix='src_', verbose=True, primary_sources=True, **kwargs):
+def pad_msa_metafile(metafile, pad=0, source_ids=None, slitlet_ids=None, positive_ids=False, prefix='src_', verbose=True, primary_sources=True, **kwargs):
     """
     Pad a MSAMETFL with dummy slits and trim to a subset of source_ids
     
@@ -22,7 +22,10 @@ def pad_msa_metafile(metafile, pad=0, source_ids=None, positive_ids=False, prefi
         Padding of dummy slits
     
     source_ids : list, None
-        List of source_id 
+        List of source_id values to keep
+    
+    slitlet_ids : list, None
+        List of slitlet_id values to keep
     
     positive_ids : bool
         If no ``source_ids`` provided, generate sources with `source_id > 0`
@@ -45,22 +48,39 @@ def pad_msa_metafile(metafile, pad=0, source_ids=None, positive_ids=False, prefi
     all_ids = np.unique(msa.shutter_table['source_id'])
     
     if source_ids is None:
-        if positive_ids:
-            source_ids = all_ids[all_ids > 0]
-        else:
-            source_ids = all_ids[all_ids != 0]
+        if slitlet_ids is not None:
+            six = np.in1d(msa.shutter_table['slitlet_id'], slitlet_ids)
+            
+            if six.sum() == 0:
+                msg = f'msaexp.utils.pad_msa_metafile: {slitlet_ids} not found'
+                msg += ' in {metafile} slitlet_id'
+                raise ValueError(msg)
+            
+            source_ids = np.unique(msa.shutter_table['source_id'][six])
 
-    six = np.in1d(msa.shutter_table['source_id'], source_ids)
-    if primary_sources:
-        six &= msa.shutter_table['primary_source'] == 'Y'
-    
+            msg = f'msaexp.utils.pad_msa_metafile: Trim slitlet_ids in '
+            msg += f'{metafile} to '
+            msg += f'{list(slitlet_ids)} (N={len(source_ids)} source_ids)\n'
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=True, 
+                                     show_date=True)
+            
+        else:    
+            if positive_ids:
+                source_ids = all_ids[all_ids > 0]
+            else:
+                source_ids = all_ids[all_ids != 0]
+        
+            six = np.in1d(msa.shutter_table['source_id'], source_ids)
+            if primary_sources:
+                six &= msa.shutter_table['primary_source'] == 'Y'
+            
+            if six.sum() == 0:
+                msg = f'msaexp.utils.pad_msa_metafile: {source_ids} not found'
+                msg += f' in {metafile}.  Available ids are {list(all_ids)}'
+                raise ValueError(msg)
+            
     this_source_ids = np.unique(msa.shutter_table['source_id'][six])
-    
-    if six.sum() == 0:
-        msg = f'msaexp.utils.pad_msa_metafile: {source_ids} not found in '
-        msg += f'{metafile}.  Available ids are {list(all_ids)}'
-        raise ValueError(msg)
-    
+        
     slitlets = np.unique(msa.shutter_table['slitlet_id'][six])
     im = pyfits.open(metafile)
     
@@ -318,7 +338,7 @@ class MSAMetafile():
         self.src_table = src
 
 
-    def get_transforms(self, dither_point_index=None, msa_metadata_id=None, fit_degree=2, verbose=False, **kwargs):
+    def get_transforms(self, dither_point_index=None, msa_metadata_id=None, fit_degree=2, verbose=False, min_source_id=0, **kwargs):
         """
         Fit for `~astropy.modeling.models.Polynomial2D` transforms between slit ``(row, col)``
         and ``(ra, dec)``.
@@ -370,22 +390,28 @@ class MSAMetafile():
 
         p2 = Polynomial2D(degree=fit_degree)
         fitter = LinearLSQFitter()
-            
-        if dither_point_index is None:
-            dither_point_index = self.shutter_table['dither_point_index'].min()
-        if msa_metadata_id is None:
-            msa_metadata_id = self.shutter_table['msa_metadata_id'].min()
         
-        dither_match = (self.shutter_table['dither_point_index'] == dither_point_index) 
-        meta_match = (self.shutter_table['msa_metadata_id'] == msa_metadata_id)
+        _shut = self.shutter_table
+        
+        if dither_point_index is None:
+            dither_point_index = _shut['dither_point_index'].min()
+        if msa_metadata_id is None:
+            msa_metadata_id = _shut['msa_metadata_id'].min()
+        
+        dither_match = (_shut['dither_point_index'] == dither_point_index) 
+        meta_match = (_shut['msa_metadata_id'] == msa_metadata_id)
         exp = dither_match & meta_match
     
-        has_offset = np.isfinite(self.shutter_table['estimated_source_in_shutter_x'])
-        has_offset &= np.isfinite(self.shutter_table['estimated_source_in_shutter_y'])
+        has_offset = np.isfinite(_shut['estimated_source_in_shutter_x'])
+        has_offset &= np.isfinite(_shut['estimated_source_in_shutter_y'])
     
-        is_src = (self.shutter_table['source_id'] > 0) & (has_offset)
-        si = self.shutter_table[exp & is_src]
-    
+        is_src = (_shut['source_id'] > 0) & (has_offset)        
+        si = _shut[exp & is_src]
+        
+        if len(si) == 0:
+            is_src = (has_offset)
+            si = _shut[exp & is_src]
+            
         # Fit for transformations
         coeffs = {}
         inv_coeffs = {}
@@ -481,15 +507,16 @@ class MSAMetafile():
         dith, metid, coeffs, inv_coeffs = self.get_transforms(**kwargs)
         
         exp = dith & metid
+        _shut = self.shutter_table
+        
+        has_offset = np.isfinite(_shut['estimated_source_in_shutter_x'])
+        has_offset &= np.isfinite(_shut['estimated_source_in_shutter_y'])
     
-        has_offset = np.isfinite(self.shutter_table['estimated_source_in_shutter_x'])
-        has_offset &= np.isfinite(self.shutter_table['estimated_source_in_shutter_y'])
-    
-        is_src = (self.shutter_table['source_id'] > 0) & (has_offset)
-        si = self.shutter_table[exp & is_src]
+        is_src = (_shut['source_id'] > 0) & (has_offset)
+        si = _shut[exp & is_src]
     
         # Regions for a particular exposure
-        se = self.shutter_table[exp]
+        se = _shut[exp]
     
         sx = (np.array([-0.5, 0.5, 0.5, -0.5]))*(1-0.07/0.27*with_bars/2) + 0.5
         sy = (np.array([-0.5, -0.5, 0.5, 0.5]))*(1-0.07/0.53*with_bars/2) + 0.5
@@ -528,9 +555,9 @@ class MSAMetafile():
         if as_string:
             output = f'# msametfl = {self.metafile}\n'
             
-            di = self.shutter_table['dither_point_index'][dith][0]
+            di = _shut['dither_point_index'][dith][0]
             output += f'# dither_point_index = {di}\n'
-            mi = self.shutter_table['msa_metadata_id'][metid][0]
+            mi = _shut['msa_metadata_id'][metid][0]
             output += f'# msa_metadata_id = {mi}\n'
             
             for qi in coeffs:
@@ -786,14 +813,15 @@ class MSAMetafile():
             Metadata id in ``shutter_table``
         
         image_path : str
-            Path for slitlet thumbnail images with filename derived from `self.metafile`.
+            Path for slitlet thumbnail images with filename derived from 
+            `self.metafile`.
         
         write_tables : bool
             Write FITS and HTML versions of the summary table
         
         kwargs : dict
-            Arguments passed to `~msaexp.msa.MSAMetafile.plot_slitlet` if ``image_path``
-            specified
+            Arguments passed to `~msaexp.msa.MSAMetafile.plot_slitlet` if 
+            ``image_path`` specified
         
         Returns
         -------
@@ -835,7 +863,8 @@ class MSAMetafile():
         if msa_metadata_id is None:
             msa_metadata_id = self.shutter_table['msa_metadata_id'].min()
         
-        shut = self.shutter_table[self.shutter_table['msa_metadata_id'] == msa_metadata_id]
+        _mset = self.shutter_table['msa_metadata_id'] == msa_metadata_id
+        shut = self.shutter_table[_mset]
         
         sources = grizli.utils.Unique(shut['source_id'], verbose=False)
         
