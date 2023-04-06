@@ -41,7 +41,7 @@ FFTSMOOTH = False
 
 __all__ = ["fit_redshift", "plot_spectrum", "read_spectrum", "calc_uncertainty_scale"]
 
-def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True):
+def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
     """
     Smooth a template with a wavelength-dependent dispersion function
     
@@ -106,7 +106,7 @@ def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_d
     return flux_model
 
 
-def smooth_template_disp_sedpy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.0, flambda=True, with_igm=True):
+def smooth_template_disp_sedpy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
     """
     Smooth a template with a wavelength-dependent dispersion function using 
     the `sedpy`/`prospector` LSF smoothing function
@@ -175,7 +175,7 @@ def smooth_template_disp_sedpy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_
     return tsmooth
 
 
-def smooth_template_disp(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.5, flambda=True, with_igm=True):
+def smooth_template_disp(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
     """
     Smooth a template with a wavelength-dependent dispersion function
     
@@ -231,7 +231,7 @@ def smooth_template_disp(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1
 SMOOTH_TEMPLATE_DISP_FUNC = smooth_template_disp_eazy
 
 
-def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], zstep=None, eazy_templates=None, nspline=None, scale_disp=1.5, vel_width=100, Rline=None, is_prism=False, use_full_dispersion=False, ranges=None, sys_err=0.02, halpha_prism=['Ha+NII']):
+def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z0=[0.2, 10], zstep=None, eazy_templates=None, nspline=None, scale_disp=1.3, vel_width=100, Rline=None, is_prism=False, use_full_dispersion=False, ranges=None, sys_err=0.02, **kwargs):
     """
     Fit spectrum for the redshift
     
@@ -247,15 +247,15 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
         Step sizes in `dz/(1+z)`
     
     eazy_templates : list, None
-        List of `eazy.templates.Template` objects.  If not provided, just use dummy spline
-        continuum and emission line templates
+        List of `eazy.templates.Template` objects.  If not provided, just use 
+        dummy spline continuum and emission line templates
     
     nspline : int
         Number of splines to use for dummy continuum
     
     scale_disp : float
-        Scale factor of nominal dispersion files, i.e., `scale_disp > 1` increases the 
-        spectral resolution
+        Scale factor of nominal dispersion files, i.e., `scale_disp > 1` 
+        *increases* the spectral resolution
     
     vel_width : float
         Velocity width the emission line templates
@@ -267,7 +267,8 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
         Is the spectrum from the prism?
     
     use_full_dispersion : bool
-        Convolve `eazy_templates` with the full wavelength-dependent dispersion function
+        Convolve `eazy_templates` with the full wavelength-dependent
+        dispersion function
     
     ranges : list of tuples
         Wavelength ranges for the subplots
@@ -275,19 +276,14 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     sys_err : float
         Systematic uncertainty added in quadrature with nominal uncertainties
     
-    halpha_prism : list
-        Line template names to use for Halpha and [NII], i.e., `['Ha+NII']` fits with a 
-        fixed line ratio and `['Ha','NII']` fits them separately but with a fixed line 
-        ratio between 6548/6584
-    
     Returns
     -------
     fig : Figure
         Diagnostic figure
     
     sp : `~astropy.table.Table`
-        A copy of the 1D spectrum as fit with additional columns describing the best-fit
-        templates
+        A copy of the 1D spectrum as fit with additional columns describing the 
+        best-fit templates
     
     data : dict
         Fit metadata
@@ -335,13 +331,14 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                                   Rline=Rline,
                                   use_full_dispersion=use_full_dispersion,
                                   sys_err=sys_err,
-                                  halpha_prism=halpha_prism)
+                                  **kwargs)
 
     zbest0 = zg0[np.argmin(chi0)]
     
     # Second pass
     zgrid = utils.log_zgrid(zbest0 + np.array([-0.005, 0.005])*(1+zbest0), 
                             step1)
+    
     zg1, chi1 = fit_redshift_grid(file, zgrid=zgrid,
                                   line_complexes=False, 
                                   vel_width=vel_width,
@@ -350,7 +347,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                                   Rline=Rline,
                                   use_full_dispersion=use_full_dispersion,
                                   sys_err=sys_err,
-                                  halpha_prism=halpha_prism)
+                                  **kwargs)
                                   
     zbest = zg1[np.argmin(chi1)]
     
@@ -387,7 +384,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               eazy_templates=eazy_templates,
                               use_full_dispersion=use_full_dispersion,
                               sys_err=sys_err,
-                              halpha_prism=halpha_prism)
+                              **kwargs)
     
     if eazy_templates is not None:
         spl_fig, sp2, spl_data = plot_spectrum(file, z=zbest, show_cont=True,
@@ -398,7 +395,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               eazy_templates=None,
                               use_full_dispersion=use_full_dispersion,
                               sys_err=sys_err,
-                              halpha_prism=halpha_prism)
+                              **kwargs)
         
         for k in ['coeffs', 'covar', 'model', 'mline', 'fullchi2', 'contchi2']:
             if k in spl_data:
@@ -435,8 +432,11 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     
     return fig, sp, data
 
+H_RECOMBINATION_LINES = ['Ha+NII', 'Ha','Hb','Hg','Hd',
+                         'PaA','PaB','PaG','PaD','Pa8',
+                         'BrA','BrB','BrG','BrD']
 
-def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel_width=100, scale_disp=1.0, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII']):
+def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel_width=100, broad_width=4000, broad_lines=[], scale_disp=1.3, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII'], oiii=['OIII'], o4363=[], sii=['SII'], lorentz=False, **kwargs):
     """
     Generate fitting templates
     
@@ -456,11 +456,30 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
         Spline templates for dummy continuum
     
     eazy_templates : list
-        Optional list of `eazy.templates.Template` template objects to use in place of the 
-        spline + line templates
+        Optional list of `eazy.templates.Template` template objects to use in 
+        place of the spline + line templates
     
     vel_width : float
         Velocity width of the individual emission line templates
+    
+    halpha_prism : ['Ha+NII'], ['Ha','NII']
+        Line template names to use for Halpha and [NII], i.e., ``['Ha+NII']`` 
+        fits with a fixed line ratio and `['Ha','NII']` fits them separately 
+        but with a fixed line ratio 6548:6584 = 1:3
+    
+    oiii : ['OIII'], ['OIII-4959','OIII-5007']
+        Similar for [OIII]4959+5007, ``['OIII']`` fits as a doublet with fixed
+        ratio 4959:5007 = 1:2.98 and ``['OIII-4949', 'OIII-5007']`` fits them
+        independently.
+    
+    o4363 : [] or ['OIII-4363']
+        How to fit [OIII]4363.
+    
+    sii : ['SII'], ['SII-6717','SII-6731']
+        [SII] doublet
+    
+    lorentz : bool
+        Use Lorentzian profile for lines
     
     Returns
     -------
@@ -495,17 +514,19 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
         if grating in ['prism']:
             hlines = ['Hb', 'Hg', 'Hd']
             
-            if z > 5:
+            if z > 4:
                 oiii = ['OIII-4959','OIII-5007']
                 hene = ['HeII-4687', 'NeIII-3867','HeI-3889']
                 o4363 = ['OIII-4363']
                 
             else:
-                oiii = ['OIII']
+                #oiii = ['OIII']
                 hene = ['HeI-3889']
-                o4363 = []
+                #o4363 = []
                 
-            sii = ['SII']
+            #sii = ['SII']
+            #sii = ['SII-6717', 'SII-6731']
+            
             hlines += halpha_prism + ['NeIII-3968']
             fuv = ['OIII-1663']
         else:
@@ -552,8 +573,13 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
                 lwi = lwi0*(1+z)
                 disp_r = np.interp(lwi/1.e4, disp['WAVELENGTH'], 
                                    disp['R'])*scale_disp
-
-                fwhm_ang = np.sqrt((lwi/disp_r)**2 + (vel_width/3.e5*lwi)**2)
+                
+                if l in broad_lines:
+                    vel_i = broad_width
+                else:
+                    vel_i = vel_width
+                    
+                fwhm_ang = np.sqrt((lwi/disp_r)**2 + (vel_i/3.e5*lwi)**2)
                 
                 # print(f'Add component: {l} {lwi0} {lri}')
 
@@ -562,13 +588,16 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
                                                              flux=None,
                                                              central_wave=lwi,
                                                              fwhm=fwhm_ang,
-                                                             name=name)
+                                                             name=name,
+                                                             lorentz=lorentz)
                     templates[name].flux *= lri/np.sum(lr[l])
                 else:
                     templates[name].flux += utils.SpectrumTemplate(wave=wfull,
                                                                    flux=None,
-                                                                   central_wave=lwi,
-                                    fwhm=fwhm_ang, name=name).flux*lri/np.sum(lr[l])
+                                                            central_wave=lwi,
+                                                            fwhm=fwhm_ang,
+                                                            lorentz=lorentz,
+                                            name=name).flux*lri/np.sum(lr[l])
 
         _, _A, tline = utils.array_templates(templates,
                                              max_R=10000,
@@ -615,7 +644,7 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
     return templates, tline, _A
     
     
-def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.0, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, halpha_prism=['Ha+NII']):
+def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, **kwargs):
     """
     Fit redshifts on a grid
     
@@ -680,7 +709,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
                             use_full_dispersion=use_full_dispersion,
                             disp=spec.disp,
                             grating=spec.grating,
-                            halpha_prism=halpha_prism,
+                            **kwargs,
                             )
         
         okt = _A[:,mask].sum(axis=1) > 0
@@ -947,7 +976,7 @@ def read_spectrum(file, sys_err=0.02, **kwargs):
     return spec
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.5, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, halpha_prism=['Ha+NII'], **kwargs):
+def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, **kwargs):
     """
     Make a diagnostic figure
     
@@ -989,7 +1018,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
                         use_full_dispersion=use_full_dispersion,
                         disp=spec.disp,
                         grating=spec.grating,
-                        halpha_prism=halpha_prism,
+                        **kwargs,
                         )
             
     if scale_uncertainty_kwargs is not None:
