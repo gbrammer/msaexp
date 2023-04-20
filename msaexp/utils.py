@@ -1773,7 +1773,8 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
                          1.094e4, 1.282e4, 
                          1.875e4, 1.083e4], 
                     ['purple','olive', 'skyblue', 
-                     cc['purple'], cc['g'], cc['b'], cc['g'], 'darkred', 'darkred', 
+                     cc['purple'], cc['g'], cc['b'], cc['g'], 'darkred', 
+                     'darkred', 
                      cc['pink'], cc['pink'], cc['pink'], cc['orange']]):
             wz = w*(1+z)/1.e4
             # dw = 70*(1+z)/1.e4
@@ -1788,6 +1789,9 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         # Rest ticks on top 
         wrest = np.arange(0.1, 1.91, 0.05)
         wrest = np.append(wrest, np.arange(2.0, 5.33, 0.1))
+        mrest = np.arange(0.1, 1.91, 0.01)
+        mrest = np.append(mrest, np.arange(2.0, 5.33, 0.05))
+
         xtr = wrest*(1+z)
         in_range = (xtr > sp['wave'].min()) & (xtr < sp['wave'].max())
         if in_range.sum() > 9:
@@ -1795,6 +1799,18 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
             wrest = np.append(wrest, np.arange(2.0, 5.33, 0.2))
             xtr = wrest*(1+z)
             in_range = (xtr > sp['wave'].min()) & (xtr < sp['wave'].max())
+
+            mrest = np.arange(0.1, 1.91, 0.05)
+            mrest = np.append(mrest, np.arange(2.0, 5.33, 0.1))
+
+        if in_range.sum() > 12:
+            wrest = np.arange(0.2, 1.81, 0.2)
+            wrest = np.append(wrest, np.arange(2.0, 5.33, 0.2))
+            xtr = wrest*(1+z)
+            in_range = (xtr > sp['wave'].min()) & (xtr < sp['wave'].max())
+
+            mrest = np.arange(0.1, 1.91, 0.05)
+            mrest = np.append(mrest, np.arange(2.0, 5.33, 0.1))
             
         xtr = xtr[in_range]
         xvr = np.interp(xtr, sp['wave'], np.arange(len(sp)))
@@ -1810,8 +1826,6 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
                       )
                       
                      
-        mrest = np.arange(0.1, 1.91, 0.01)
-        mrest = np.append(mrest, np.arange(2.0, 5.33, 0.05))
         xtr = mrest*(1+z)
         xtr = xtr[(xtr > sp['wave'].min()) & (xtr < sp['wave'].max())]
         xvr = np.interp(xtr, sp['wave'], np.arange(len(sp)))

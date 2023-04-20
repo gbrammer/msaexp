@@ -856,7 +856,7 @@ def get_xlimits_from_lines(hdul, sn_thresh=2, max_dy=4, n_erode=2, n_dilate=4, s
     return xlim
 
 
-def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], verbose=True, find_line_kws={}, **kwargs):
+def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], offset_for_chi2=1., verbose=True, find_line_kws={}, **kwargs):
     """
     Optimal extraction from 2D arrays
                             
@@ -872,12 +872,13 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         Inverse variance weight array
     
     profile_slice : tuple, slice
-        Slice along wavelength axis where to determine the cross-dispersion profile.  If a 
-        tuple of floats, interpret as wavelength limits in microns
+        Slice along wavelength axis where to determine the cross-dispersion 
+        profile.  If a tuple of floats, interpret as wavelength limits in 
+        microns
     
     prf_center : float
-        Profile center, relative to the cross-dispersion center of the array.  If `None`, then
-        try to estimate it from the data
+        Profile center, relative to the cross-dispersion center of the array.  
+        If `None`, then try to estimate it from the data
     
     prf_sigma : float
         Width of the extraction profile in pixels
@@ -889,8 +890,8 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         Maximum offset from `prf_center` allowed
     
     fit_prf : bool
-        Fit the profile.  If False, then just use the fixed values of `prf_center` and 
-        `prf_sigma`
+        Fit the profile.  If False, then just use the fixed values of 
+        `prf_center` and `prf_sigma`
     
     fix_center : bool
         Fix the centering in the fit
@@ -902,6 +903,10 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         Parameters for the local background determination (see 
         `~msaexp.drizzle.drizzle_slitlets`).  The profile is "subtracted" in the
         same way as the data.
+    
+    offset_for_chi2 : float
+        If specified, compute chi2 of the profile fit offseting the first
+        parameter by +/- this value
     
     verbose : bool
         Status messages
@@ -945,7 +950,9 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
             else:
                 # Wavelengths interpolated on pixel grid
                 xpix = np.arange(sh[1])
-                xsl = np.cast[int](np.round(np.interp(profile_slice, waves, xpix)))
+                xsl = np.cast[int](np.round(np.interp(profile_slice,
+                                                      waves,
+                                                      xpix)))
                 xsl = np.clip(xsl, 0, sh[1])
                 print(f'Wavelength slice: {profile_slice} > {xsl} pix')
                 profile_slice = slice(*xsl)
@@ -986,6 +993,8 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     wht_mask = wht2d*1
     wht_mask[~ok] = 0.
     
+    p00_name = None
+    
     if fit_type == 0:
         args = (waves, sci2d, wht_mask, prf_center, prf_sigma,
                 bkg_offset, bkg_parity, 3, 1, (verbose > 1))
@@ -1001,12 +1010,15 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     else:
         # Fit it
         if fix_sigma:
+            p00_name = 'center'
             p0 = [prf_center]
             bounds = (-center_limit, center_limit)
         elif fix_center:
+            p00_name = 'sigma'
             p0 = [prf_sigma]
             bounds = sigma_bounds
         else:
+            p00_name = 'center'
             p0 = [prf_center, prf_sigma]
             bounds = ((-center_limit+prf_center, sigma_bounds[0]),
                       (center_limit+prf_center, sigma_bounds[1]))
@@ -1015,10 +1027,31 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
                 bkg_offset, bkg_parity, fit_type, 1, (verbose > 1))
         lmargs = (waves, sci2d, wht_mask, prf_center, prf_sigma,
                   bkg_offset, bkg_parity, fit_type, 2, (verbose > 1))
-
+        
         _res = least_squares(utils.objfun_prf, p0, args=lmargs, method='trf',
                              bounds=bounds, loss='huber')
         
+        # dchi2 / dp0
+        if offset_for_chi2 is not None:
+            chiargs = (waves, sci2d, wht_mask, prf_center, prf_sigma,
+                       bkg_offset, bkg_parity, fit_type, 3, (verbose > 1))
+            delta = _res.x*0.
+            dchi2dp = []
+            for d in [-offset_for_chi2, 0., offset_for_chi2]:
+                delta[0] = d
+                dchi2dp.append(utils.objfun_prf(_res.x+delta, *chiargs))
+            
+            msg = f"msaexp.drizzle.extract_from_hdul: dchi2/d{p00_name} = "
+            dchi = (dchi2dp[0]-dchi2dp[1])
+            dchi += (dchi2dp[2]-dchi2dp[1])
+            msg += f'{dchi/2.:.1f}'
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, 
+                                     verbose=verbose, 
+                                     show_date=False)
+            
+        else:
+            dchi2dp = None
+            
         pnorm, pmodel = utils.objfun_prf(_res.x, *args)
         profile2d = pmodel/pnorm
         pmask = (profile2d > 0) & np.isfinite(profile2d)
@@ -1078,6 +1111,15 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     prof_tab.meta['PROFSTOP'] = slice_limits[1], 'End of profile slice'
     prof_tab.meta['YTRACE'] = ytrace, 'Expected center of trace'
     
+    if (dchi2dp is not None) & (p00_name is not None):
+        prof_tab.meta['DCHI2PAR'] = (p00_name,
+                                     'Parameter for dchi2/dparam')
+        prof_tab.meta['CHI2A'] = (dchi2dp[0],
+                                  'Chi2 with d{p00_name} = -{offset_for_chi2}')
+        prof_tab.meta['CHI2B'] = dchi2dp[1], 'Chi2 with dparam = 0. (best fit)'
+        prof_tab.meta['CHI2C'] = (dchi2dp[2],
+                                  'Chi2 with d{p00_name} = +{offset_for_chi2}')
+        
     spec['wave'] = waves
     spec['wave'].unit = u.micron
     spec['flux'] = sci1d*to_ujy
@@ -1162,9 +1204,10 @@ def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, line
     for k in spec.meta:
         header[k] = spec.meta[k]
     
-    msg = f"msaexp.drizzle.extract_from_hdul:  Output center = {header['PROFCEN']:6.2f}"
-    msg += f", sigma = {header['PROFSIG']:6.2f}"
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False)
+    msg = f"msaexp.drizzle.extract_from_hdul:  Output center = "
+    msg += f" {header['PROFCEN']:6.2f}, sigma = {header['PROFSIG']:6.2f}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
+                             show_date=False)
 
     hdul.append(pyfits.ImageHDU(data=sci2d, header=header, name='SCI'))
     hdul.append(pyfits.ImageHDU(data=wht2d, header=header, name='WHT'))
