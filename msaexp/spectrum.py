@@ -45,6 +45,9 @@ def test():
     
     from importlib import reload
     import msaexp.spectrum
+
+    from tqdm import tqdm
+
     import msaexp.resample_numba
     from grizli import utils
     
@@ -67,38 +70,14 @@ def test():
     
     k = 'highO32'
     
-    line = self.spec_wobs * 0.
-    for w, r in zip(lw[k], lr[k]):
-        line += self.emission_line(w*(1+z)/1.e4,
-                                   line_flux=r,
-                                   scale_disp=1.0,
-                                   velocity_sigma=100.,
-                                   nsig=4)
-    
-    scale_disp = 1.3
-    velocity_sigma = 100
-    
-    lines = [self.emission_line(w*(1+z)/1.e4,
-                                   line_flux=r,
-                                   scale_disp=scale_disp,
-                                   velocity_sigma=velocity_sigma,
-                                   nsig=4)[None,:]
-             for w, r in zip(lw[k], lr[k])]
-    
-    A = np.vstack(lines + [bspl])
-    
-    Ax = (A / self.spec['full_err'])
-    yx = self.spec['flux'] / self.spec['full_err']
-    
-    x = np.linalg.lstsq(Ax[:,self.valid].T, yx[self.valid].data, rcond=None)
-    
-    model = A.T.dot(x[0])
-    
     zg = np.linspace(z-0.1, z+0.1, 256)
     chi2 = zg*0.
     
     bspl = self.bspline_array(nspline=13, log=True)
     bspl2 = self.bspline_array(nspline=3, log=True)
+
+    scale_disp = 1.2
+    velocity_sigma = 100
     
     for i, zi in tqdm(enumerate(zg)):
         lines = [self.emission_line(w*(1+zi)/1.e4,
