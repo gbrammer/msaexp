@@ -25,6 +25,7 @@ from grizli import utils, prep, jwst_utils
 utils.set_warnings()
 
 from . import utils as msautils
+from . import msa
 
 FLAM_UNIT = 1.e-19*u.erg/u.second/u.cm**2/u.Angstrom
 FNU_UNIT = u.microJansky
@@ -169,7 +170,7 @@ def download_msa_meta_files(files=None, do_download=True):
     return msa
 
 
-def exposure_groups(path='./', files=None, verbose=True):
+def exposure_groups(path='./', files=None, split_groups=True, verbose=True):
     """
     Group files by MSAMETFL, grating, filter, detector
     
@@ -181,6 +182,10 @@ def exposure_groups(path='./', files=None, verbose=True):
     files : list, None
         Explicit list of ``rate.fits`` files to consider.  Otherwise, `glob` in 
         working directory
+    
+    split_groups : bool
+        Split MSA exposures by both ``MSAMETFL`` and ``ACT_ID``, where the latter helps
+        to group exposures in sets of 3 nodded files.
     
     verbose : bool
         Status messages
@@ -197,7 +202,7 @@ def exposure_groups(path='./', files=None, verbose=True):
         files.sort()
         
     hkeys = ['filter','grating','effexptm','detector',
-            'msametfl', 'targprop', 'exp_type']
+            'msametfl', 'targprop', 'exp_type', 'act_id']
     rows = []
     
     for file in files:
@@ -216,6 +221,9 @@ def exposure_groups(path='./', files=None, verbose=True):
     for row in tab:
         if row['exp_type'] == 'NRS_MSASPEC':
             keystr = "{msametfl}-{filter}-{grating}-{detector}"
+            if split_groups:
+                keystr = "{msametfl}-{act_id}-{filter}-{grating}-{detector}"
+                
         else:
             keystr = "{targprop}-{filter}-{grating}-{detector}"
         
@@ -232,6 +240,42 @@ def exposure_groups(path='./', files=None, verbose=True):
         groups[v] = [f for f in tab['file'][un[v]]]
     
     return groups
+
+
+def primary_sources_by_group(groups):
+    """
+    Get list of sources from the MSA metadata files where ``primary_source == 'Y'`` and
+    the source is listed in all exposures of the group
+    
+    Parameters
+    ----------
+    groups : dict
+        Exposure grouping as returned by `msaexp.pipeline.exposure_groups`
+    
+    Returns
+    -------
+    src_list : dict
+        List of ``source_id`` values by from ``groups``
+    
+    """
+    src_list = {}
+    for mode in groups:
+        with pyfits.open(groups[mode][0]) as im:
+            msa = msaexp.msa.MSAMetafile(im[0].header['MSAMETFL'])
+            sub = msa.shutter_table['primary_source'] == 'Y'
+            sub &= msa.shutter_table['msa_metadata_id'] == im[0].header['MSAMETID']
+            
+            all_src = msa.shutter_table['source_id'][sub]
+            
+            un = utils.Unique(all_src, verbose=False)
+            
+            source_ids = np.array(un.values)[np.array(un.counts) == len(groups[mode])]
+            
+            print(f'{mode} N={len(source_ids)} primary sources')
+            
+            src_list[mode] = source_ids
+        
+    return src_list
 
 
 class SlitData():
@@ -985,7 +1029,7 @@ class NirspecPipeline():
         return regfile
 
 
-    def set_background_slits(self):
+    def set_background_slits(self, find_by_id=False):
         """
         Initialize elements in ``self.pipe['bkg']`` for background-subtracted slitlets
         """
@@ -994,12 +1038,31 @@ class NirspecPipeline():
         
         # Get from slitlet_ids
         # indices = [self.slitlets[k]['slitlet_id'] for k in self.slitlets]
-        indices = [slit.slitlet_id
+        if find_by_id:
+            targets = [slit.source_id
+                       for slit in self.pipe[self.last_step][0].slits]
+        
+            _data = self.load_slit_data(step=self.last_step,
+                                                   targets=targets,
+                                                   indices=None)
+        else:
+            indices = [slit.slitlet_id
                    for slit in self.pipe[self.last_step][0].slits]
         
-        self.pipe['bkg'] = self.load_slit_data(step=self.last_step,
-                                               targets=None,
-                                               indices=indices)
+            _data = self.load_slit_data(step=self.last_step,
+                                                   targets=None,
+                                                   indices=indices)
+        
+        if _data is None:
+            targets = [slit.source_id
+                       for slit in self.pipe[self.last_step][0].slits]
+        
+            _data = self.load_slit_data(step=self.last_step,
+                                                   targets=targets,
+                                                   indices=None)
+        
+            
+        self.pipe['bkg'] = _data
         
         for j in range(self.N):
             for s in self.pipe['bkg'][j].slits:
