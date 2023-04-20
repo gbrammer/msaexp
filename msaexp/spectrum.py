@@ -41,6 +41,190 @@ FFTSMOOTH = False
 
 __all__ = ["fit_redshift", "plot_spectrum", "read_spectrum", "calc_uncertainty_scale"]
 
+def test():
+    
+    from importlib import reload
+    import msaexp.spectrum
+    import msaexp.resample_numba
+    from grizli import utils
+    
+    reload(msaexp.resample_numba); reload(msaexp.spectrum)
+    reload(msaexp.resample_numba); reload(msaexp.spectrum)
+    
+    from msaexp.spectrum import SpectrumSampler
+    import eazy.templates
+    
+    self = SpectrumSampler('macsj0647_1169.v1.spec.fits')
+    
+    t = eazy.templates.Template('templates/sfhz/fsps_4590.fits')
+    z = 4.2418
+    
+    res = self.resample_eazy_template(t, z=z)
+    
+    line = self.resample_eazy_template(t, z=z)
+    
+    lw, lr = utils.get_line_wavelengths()
+    
+    k = 'highO32'
+    
+    line = self.spec_wobs * 0.
+    for w, r in zip(lw[k], lr[k]):
+        line += self.emission_line(w*(1+z)/1.e4,
+                                   line_flux=r,
+                                   scale_disp=1.0,
+                                   velocity_sigma=100.,
+                                   nsig=4)
+    
+    scale_disp = 1.3
+    velocity_sigma = 100
+    
+    lines = [self.emission_line(w*(1+z)/1.e4,
+                                   line_flux=r,
+                                   scale_disp=scale_disp,
+                                   velocity_sigma=velocity_sigma,
+                                   nsig=4)[None,:]
+             for w, r in zip(lw[k], lr[k])]
+    
+    A = np.vstack(lines + [bspl])
+    
+    Ax = (A / self.spec['full_err'])
+    yx = self.spec['flux'] / self.spec['full_err']
+    
+    x = np.linalg.lstsq(Ax[:,self.valid].T, yx[self.valid].data, rcond=None)
+    
+    model = A.T.dot(x[0])
+    
+    zg = np.linspace(z-0.1, z+0.1, 256)
+    chi2 = zg*0.
+    
+    bspl = self.bspline_array(nspline=13, log=True)
+    bspl2 = self.bspline_array(nspline=3, log=True)
+    
+    for i, zi in tqdm(enumerate(zg)):
+        lines = [self.emission_line(w*(1+zi)/1.e4,
+                                       line_flux=r,
+                                       scale_disp=scale_disp,
+                                       velocity_sigma=velocity_sigma,
+                                       nsig=4)
+                 for w, r in zip(lw[k], lr[k])]
+    
+        A = np.vstack([np.array(lines).sum(axis=0)*bspl2] + [bspl])
+    
+        Ax = (A / self.spec['full_err'])
+        yx = self.spec['flux'] / self.spec['full_err']
+    
+        x = np.linalg.lstsq(Ax[:,self.valid].T, yx[self.valid].data, rcond=None)
+    
+        model = A.T.dot(x[0])
+        resid = (self.spec['flux'] - model)/self.spec['full_err']
+        chi2[i] = (resid[self.valid]**2).sum()
+    
+    zi = zg[np.argmin(chi2)]
+    
+    lines = [self.emission_line(w*(1+zi)/1.e4,
+                                   line_flux=r,
+                                   scale_disp=scale_disp,
+                                   velocity_sigma=velocity_sigma,
+                                   nsig=4)
+             for w, r in zip(lw[k], lr[k])]
+
+    A = np.vstack([np.array(lines).sum(axis=0)*bspl2] + [bspl])
+
+    Ax = (A / self.spec['full_err'])
+    yx = self.spec['flux'] / self.spec['full_err']
+
+    x = np.linalg.lstsq(Ax[:,self.valid].T, yx[self.valid].data, rcond=None)
+
+    model = A.T.dot(x[0])
+
+    
+    
+    
+class SpectrumSampler(object):
+    """
+    """
+    def __init__(self, file, sys_err=0.02, **kwargs):
+        """
+        Helper functions for sampling templates onto the wavelength grid
+        of an observed spectrum
+        """
+        
+        try:
+            from .resample_numba import resample_template_numba as resample_func
+        except ImportError:
+            from .resample import resample_template as resample_func
+            
+        self.resample_func = resample_func
+
+        self.initialize_spec(file)
+
+        self.initialize_emission_line()
+
+
+    def initialize_emission_line(self, nsamp=64):
+        """
+        Initialize emission line
+        """
+        self.xline = np.linspace(-nsamp, nsamp, 2*nsamp+1)/nsamp*0.1+1
+        self.yline = self.xline*0.
+        self.yline[nsamp] = 1
+        self.yline /= np.trapz(self.yline, self.xline)
+
+
+    def initialize_spec(self, file):
+        """
+        """
+        self.file = file
+        self.spec = read_spectrum(file)
+        self.spec_wobs = self.spec['wave'].astype(np.float32)
+        self.spec_R_fwhm = self.spec['R'].astype(np.float32)
+        
+        self.valid = np.isfinite(self.spec['flux']/self.spec['full_err'])
+
+    @property
+    def meta(self):
+        return self.spec.meta
+
+
+    def resample_eazy_template(self, template, z=0, scale_disp=1.0, velocity_sigma=100., nsig=4):
+        """
+        """
+        templ_wobs = template.wave.astype(np.float32)*(1+z)/1.e4
+        templ_flux = template.flux_fnu(z=z).astype(np.float32)
+        
+        res = self.resample_func(self.spec_wobs,
+                                 self.spec_R_fwhm*scale_disp,
+                                 templ_wobs,
+                                 templ_flux,
+                                 velocity_sigma=velocity_sigma,
+                                 nsig=nsig)
+        return res
+    
+    
+    def emission_line(self, line_um, line_flux=1, scale_disp=1.0, velocity_sigma=100., nsig=4):
+        """
+        """
+        res = self.resample_func(self.spec_wobs,
+                                 self.spec_R_fwhm*scale_disp, 
+                                 self.xline*line_um,
+                                 self.yline,
+                                 velocity_sigma=velocity_sigma,
+                                 nsig=nsig)
+        return res*line_flux/line_um
+
+
+    def bspline_array(self, nspline=13, log=False):
+        """
+        """
+        bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
+                                       degree=3,
+                                       df=nspline,
+                                       log=log,
+                                       get_matrix=True
+                                       )
+        return bspl.T
+
+
 def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
     """
     Smooth a template with a wavelength-dependent dispersion function
@@ -529,6 +713,9 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
             
             hlines += halpha_prism + ['NeIII-3968']
             fuv = ['OIII-1663']
+            oii_7320 = ['OII-7325']
+            extra = []
+            
         else:
             hlines = ['Hb', 'Hg', 'Hd','H8','H9', 'H10', 'H11', 'H12']
             
@@ -536,14 +723,18 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
             o4363 = ['OIII-4363']
             oiii = ['OIII-4959','OIII-5007']
             sii = ['SII-6717', 'SII-6731']
-            hlines += ['Ha','NII']
+            hlines += ['Ha', 'NII-6549', 'NII-6584']
             hlines += ['H7', 'NeIII-3968']
             fuv = ['OIII-1663', 'HeII-1640', 'CIV-1549']
+            oii_7320 = ['OII-7323', 'OII-7332']
+            
+            extra = ['HeI-6680', 'SIII-6314']
             
         for l in [*hlines, *oiii, *o4363, 'OII',
                   *hene, 
                   *sii,
-                  'OII-7325', 'ArIII-7138', 'SIII-9068', 'SIII-9531',
+                  *oii_7320,
+                  'ArIII-7138', 'ArIII-7753', 'SIII-9068', 'SIII-9531',
                   'OI-6302', 'PaD', 'PaG', 'PaB', 'PaA', 'HeI-1083',
                   'BrA','BrB','BrG','BrD','PfB','PfG','PfD','PfE',
                   'Pa8','Pa9','Pa10',
@@ -552,6 +743,7 @@ def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel
                   'CIII-1908', 'NIII-1750', 'Lya',
                   'MgII', 'NeV-3346', 'NeVI-3426',
                   'HeI-7065', 'HeI-8446',
+                  *extra
                    ]:
 
             if l not in lw:
