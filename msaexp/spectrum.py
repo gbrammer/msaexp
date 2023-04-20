@@ -45,7 +45,9 @@ def test():
     
     from importlib import reload
     import msaexp.spectrum
+
     from tqdm import tqdm
+
     import msaexp.resample_numba
     from grizli import utils
     
@@ -73,6 +75,7 @@ def test():
     
     bspl = self.bspline_array(nspline=13, log=True)
     bspl2 = self.bspline_array(nspline=3, log=True)
+
     scale_disp = 1.2
     velocity_sigma = 100
     
