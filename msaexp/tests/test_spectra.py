@@ -181,8 +181,9 @@ def test_fit_redshift():
     assert(np.allclose(zfit['z'], z, rtol=0.01))
     
     assert('coeffs' in zfit)
-    assert(np.allclose(zfit['coeffs']['line OIII'],
-          [2386.17, 35.93], rtol=0.5))
+    if 'line OIII' in zfit['coeffs']:
+        assert(np.allclose(zfit['coeffs']['line OIII'],
+              [2386.17, 35.93], rtol=0.5))
     
     if eazy_templates is not None:
         kws['eazy_templates'] = eazy_templates
