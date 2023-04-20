@@ -261,11 +261,11 @@ def primary_sources_by_group(groups):
     src_list = {}
     for mode in groups:
         with pyfits.open(groups[mode][0]) as im:
-            msa = msaexp.msa.MSAMetafile(im[0].header['MSAMETFL'])
-            sub = msa.shutter_table['primary_source'] == 'Y'
-            sub &= msa.shutter_table['msa_metadata_id'] == im[0].header['MSAMETID']
+            metf = msa.MSAMetafile(im[0].header['MSAMETFL'])
+            sub = metf.shutter_table['primary_source'] == 'Y'
+            sub &= metf.shutter_table['msa_metadata_id'] == im[0].header['MSAMETID']
             
-            all_src = msa.shutter_table['source_id'][sub]
+            all_src = metf.shutter_table['source_id'][sub]
             
             un = utils.Unique(all_src, verbose=False)
             
