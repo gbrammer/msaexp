@@ -78,7 +78,13 @@ def pad_msa_metafile(metafile, pad=0, source_ids=None, slitlet_ids=None, positiv
                 msg = f'msaexp.utils.pad_msa_metafile: {source_ids} not found'
                 msg += f' in {metafile}.  Available ids are {list(all_ids)}'
                 raise ValueError(msg)
-            
+    else:
+        six = np.in1d(msa.shutter_table['source_id'], source_ids)
+        if six.sum() == 0:
+            msg = f'msaexp.utils.pad_msa_metafile: {source_ids} not found'
+            msg += f' in {metafile}.  Available ids are {list(all_ids)}'
+            raise ValueError(msg)
+        
     this_source_ids = np.unique(msa.shutter_table['source_id'][six])
         
     slitlets = np.unique(msa.shutter_table['slitlet_id'][six])
