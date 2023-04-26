@@ -1288,23 +1288,43 @@ def longslit_header_from_wcs(wcs):
 
 def fixed_rectified_slit_header(slit_wcs, rectified_wcs):
     """
+    Merge 2D WCS header from a slit WCS to a rectified WCS, e.g., from 
+    `build_slit_centered_wcs`.
+    
+    Something gets lost in the transformation of the latter, so assume the ``slit_wcs`` 
+    is correct, derive the cross-dispersion WCS based on the `slit_frame` coordinate 
+    frame there and then propagate to the ``rectified_wcs``.
+    
+    Parameters
+    ----------
+    slit_wcs : `gwcs.wcs.WCS`
+        WCS object of a slitlet
+    
+    rectified_wcs : `gwcs.wcs.WCS`
+        Rectified WCS
+    
+    Returns
+    -------
+    header : `~astropy.io.fits.Header`
+        Fits header with spectral WCS.
+    
     """
-    href = longslit_header_from_wcs(rectified_wcs)
+    header = longslit_header_from_wcs(rectified_wcs)
     
     hslit = longslit_header_from_wcs(slit_wcs)
     
-    yscl = href['SLIT_DY'] / hslit['SLIT_DY']
-    dy = href['SLIT_Y0'] - hslit['SLIT_Y0']
+    yscl = header['SLIT_DY'] / hslit['SLIT_DY']
+    dy = header['SLIT_Y0'] - hslit['SLIT_Y0']
     
     cosd = np.cos(hslit['CRVAL3']/180*np.pi)
     
-    href['CRVAL2'] = hslit['CRVAL2'] + hslit['CD2_2']*dy/hslit['SLIT_DY']/cosd
-    href['CRVAL3'] = hslit['CRVAL3'] + hslit['CD3_2']*dy/hslit['SLIT_DY']
-    href['CD2_2'] = hslit['CD2_2']*yscl
-    href['CD3_2'] = hslit['CD3_2']*yscl
-    href['SLIT_PA'] = hslit['SLIT_PA']
+    header['CRVAL2'] = hslit['CRVAL2'] + hslit['CD2_2']*dy/hslit['SLIT_DY']/cosd
+    header['CRVAL3'] = hslit['CRVAL3'] + hslit['CD3_2']*dy/hslit['SLIT_DY']
+    header['CD2_2'] = hslit['CD2_2']*yscl
+    header['CD3_2'] = hslit['CD3_2']*yscl
+    header['SLIT_PA'] = hslit['SLIT_PA']
     
-    return href
+    return header
 
 
 DRIZZLE_PARAMS = dict(output=None,
