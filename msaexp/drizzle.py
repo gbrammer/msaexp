@@ -407,6 +407,11 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
 
         # FITS header metadata
         h = pyfits.Header()
+        
+        wcs_header = wcs_data[1]
+        for k in wcs_header:
+            h[k] = wcs_header[k], wcs_header.comments[k]
+        
         h['BKGOFF'] = bkg_offset, 'Background offset'
         h['OTHRESH'] = outlier_threshold, 'Outlier mask threshold, sigma'
         h['WSAMPLE'] = wave_sample, 'Wavelength sampling factor'

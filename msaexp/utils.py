@@ -1013,28 +1013,34 @@ def build_regular_wavelength_wcs(slits, pscale_ratio=1, keep_wave=False, wave_sc
     output_wcs.bounding_box = bounding_box
     output_wcs.array_shape = data_size
     
-    header = pyfits.Header()
-    header['NAXIS'] = 2
-    header['NAXIS1'] = data_size[1]
-    header['NAXIS2'] = data_size[0]
-    
-    if log_wave:
-        header['CTYPE1'] = 'WAVE-LOG'
-    else:
-        header['CTYPE1'] = 'WAVE'
-    
-    header['CRPIX1'] = 1
-    header['CRVAL1'] = lmin
-    header['CDELT1'] = lam_step
-    header['CUNIT1'] = 'um'
-
-    header['CRPIX2'] = data_size[0]//2+1
-    header['CRVAL2'] = 0.
-    header['CDELT2'] = pscale / pscale_ratio
-    header['CUNIT2'] = 'arcsec'
-    header['DLAM'] = dlam, 'Wavelength step'
-    header['LMIN'] = lmin, 'Min wavelength'
-    header['LMAX'] = lmax, 'Max wavelength'
+    if 1:
+        #header = longslit_header_from_wcs(output_wcs)
+        header = fixed_rectified_slit_header(slits[0].meta.wcs, output_wcs)
+        
+    # except:
+    #
+    #     header = pyfits.Header()
+    #     header['NAXIS'] = 2
+    #     header['NAXIS1'] = data_size[1]
+    #     header['NAXIS2'] = data_size[0]
+    #
+    #     if log_wave:
+    #         header['CTYPE1'] = 'WAVE-LOG'
+    #     else:
+    #         header['CTYPE1'] = 'WAVE'
+    #
+    #     header['CRPIX1'] = 1
+    #     header['CRVAL1'] = lmin
+    #     header['CDELT1'] = lam_step
+    #     header['CUNIT1'] = 'um'
+    #
+    #     header['CRPIX2'] = data_size[0]//2+1
+    #     header['CRVAL2'] = 0.
+    #     header['CDELT2'] = pscale / pscale_ratio
+    #     header['CUNIT2'] = 'arcsec'
+    #     header['DLAM'] = dlam, 'Wavelength step'
+    #     header['LMIN'] = lmin, 'Min wavelength'
+    #     header['LMAX'] = lmax, 'Max wavelength'
     
     return target_waves, header, data_size, output_wcs
 
@@ -1156,6 +1162,169 @@ def build_slit_centered_wcs(slit, waves, pscale_ratio=1, ypad=0, force_nypix=21,
                                           ) 
     
     return _xdata
+
+
+def longslit_header_from_wcs(wcs):
+    """
+    Generate a FITS-compliant long-slit header from a NIRSpec spectral WCS
+    
+    Parameters
+    ----------
+    wcs : `gwcs.wcs.WCS`
+        Spectral WCS, with minimal transforms ``detector`` and ``world``
+    
+    Returns
+    -------
+    header : `~astropy.io.fits.Header`
+        WCS header following the FITS WCS
+        `Paper II <https://fits.gsfc.nasa.gov/fits_wcs.html>`_
+        standard.
+    
+    """
+    import gwcs
+    
+    if not isinstance(wcs, gwcs.wcs.WCS):
+        raise ValueError('`wcs` is not a gwcs.wcs.WCS object')
+    
+    for frame in ['detector','world','slit_frame']:
+        if frame not in wcs.available_frames:
+            raise ValueError(f'Frame \'{frame}\' not in wcs.available_frames')
+            
+    bounds = wcs.pixel_bounds
+    shape = (int(bounds[1][1]+0.5), int(bounds[0][1]+0.5))
+    
+    # Transformations
+    d2w = wcs.get_transform('detector','world')
+    s2d = wcs.get_transform('slit_frame','detector')
+    d2s = wcs.get_transform('detector', 'slit_frame')
+    s2w = wcs.get_transform('slit_frame','world')
+    
+    # Wavelength bounds at x edges
+    w0 = d2w(0, shape[0]//2)
+    w1 = d2w(shape[1]-1, shape[0]//2)
+    
+    # Pixel offsets
+    crpix00 = (shape[1]//2, shape[0]//2)
+    crpix01 = (shape[1]//2, shape[0]//2+1)
+    crpix10 = (shape[1]//2+1, shape[0]//2)
+    
+    # Sky from detector
+    rd00 =  d2w(*crpix00)
+    rd01 =  d2w(*crpix01)
+    rd10 =  d2w(*crpix10)
+    
+    cosd = np.cos(rd00[1]/180*np.pi)
+    
+    # Slit from detector
+    s00 = d2s(*crpix00)
+    s01 = d2s(*crpix01)
+    s10 = d2s(*crpix10)
+    
+    # dy_slit_frame / dy_detector
+    dy0 = 0.1
+    d00 = s2d(s00[0], s00[1]+dy0, s00[2])
+    dslit_dy = dy0 / np.sqrt(np.sum((np.array(d00)-np.array(crpix00))**2))
+    
+    if d00[1] < crpix00[1]:
+        dslit_dy *= -1
+    
+    # sky pixel scale and slit position angle towards +slit_frame_y
+    sd00 = s2w(s00[0], s00[1], s00[2])
+    sd01 = s2w(s00[0], s00[1]+dslit_dy, s00[2])
+    cd1 = (sd01[0] - sd00[0])*cosd
+    cd2 = (sd01[1] - sd00[1])
+    
+    pscale = np.sqrt(cd1**2 + cd2**2)
+    posang = np.arctan2(cd1, cd2)/np.pi*180
+        
+    # Build the header
+    h = pyfits.Header()
+    h['NAXIS'] = 3
+    
+    h['NAXIS1'] = shape[1]
+    h['NAXIS2'] = shape[0]
+    h['NAXIS3'] = 1
+    
+    h['CRPIX1'] = shape[1]//2+1
+    h['CRPIX2'] = shape[0]//2+1
+    h['CRPIX3'] = 1
+
+    h['CRVAL1'] = rd00[2]*1.e4
+    h['CRVAL2'] = rd00[0]
+    h['CRVAL3'] = rd00[1]
+    
+    h['CD1_1'] = (rd10[2]-rd00[2])*1.e4, 'dlam/dpix at the reference pixel'
+    h['CD2_2'] = np.cos((90+posang)/180*np.pi) * pscale
+    h['CD3_2'] = -np.sin((90+posang)/180*np.pi) * pscale
+    h['CD2_3'] = 1.
+    h['CD3_3'] = 1.
+    
+    h['CTYPE1'] = 'WAVELEN'
+    h['CTYPE2'] = 'RA---TAN'
+    h['CTYPE3'] = 'DEC--TAN'
+    
+    h['CUNIT1'] = 'Angstrom'
+    h['CUNIT2'] = 'deg'
+    h['CUNIT3'] = 'deg'
+    
+    h['RADESYS'] = 'ICRS'
+    # h['EPOCH'] = 2000.
+    h['WCSNAME'] = 'SLITWCS'
+    
+    h['SLIT_PA'] = posang, 'Position angle of the slit, degrees'
+    h['PSCALE'] = pscale*3600, 'Pixel scale, arcsec/pix'
+    
+    h['SLIT_Y0'] = s00[1], 'y_slit_frame at reference pixel'
+    h['SLIT_DY'] = dslit_dy, 'd(slit_frame)/dy  at reference pixel'
+    
+    h['LMIN'] = w0[2], 'Minimum wavelength, micron'
+    h['LMAX'] = w1[2], 'Maximum wavelength, micron'
+    h['DLAM'] = h['CD1_1']/1.e4, 'Wavelength step at reference pixel'
+    
+    # h['LONPOLE'] = 90 + posang
+    
+    return h
+
+
+def fixed_rectified_slit_header(slit_wcs, rectified_wcs):
+    """
+    Merge 2D WCS header from a slit WCS to a rectified WCS, e.g., from 
+    `build_slit_centered_wcs`.
+    
+    Something gets lost in the transformation of the latter, so assume the ``slit_wcs`` 
+    is correct, derive the cross-dispersion WCS based on the `slit_frame` coordinate 
+    frame there and then propagate to the ``rectified_wcs``.
+    
+    Parameters
+    ----------
+    slit_wcs : `gwcs.wcs.WCS`
+        WCS object of a slitlet
+    
+    rectified_wcs : `gwcs.wcs.WCS`
+        Rectified WCS
+    
+    Returns
+    -------
+    header : `~astropy.io.fits.Header`
+        Fits header with spectral WCS.
+    
+    """
+    header = longslit_header_from_wcs(rectified_wcs)
+    
+    hslit = longslit_header_from_wcs(slit_wcs)
+    
+    yscl = header['SLIT_DY'] / hslit['SLIT_DY']
+    dy = header['SLIT_Y0'] - hslit['SLIT_Y0']
+    
+    cosd = np.cos(hslit['CRVAL3']/180*np.pi)
+    
+    header['CRVAL2'] = hslit['CRVAL2'] + hslit['CD2_2']*dy/hslit['SLIT_DY']/cosd
+    header['CRVAL3'] = hslit['CRVAL3'] + hslit['CD3_2']*dy/hslit['SLIT_DY']
+    header['CD2_2'] = hslit['CD2_2']*yscl
+    header['CD3_2'] = hslit['CD3_2']*yscl
+    header['SLIT_PA'] = hslit['SLIT_PA']
+    
+    return header
 
 
 DRIZZLE_PARAMS = dict(output=None,
