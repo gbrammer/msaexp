@@ -165,11 +165,15 @@ class SpectrumSampler(object):
         return self.spec.meta
 
 
-    def resample_eazy_template(self, template, z=0, scale_disp=1.0, velocity_sigma=100., nsig=4):
+    def resample_eazy_template(self, template, z=0, scale_disp=1.0, velocity_sigma=100., fnu=True, nsig=4):
         """
         """
         templ_wobs = template.wave.astype(np.float32)*(1+z)/1.e4
-        templ_flux = template.flux_fnu(z=z).astype(np.float32)
+        if fnu:
+            templ_flux = template.flux_fnu(z=z).astype(np.float32)
+        else:
+            templ_flux = template.flux_flam(z=z).astype(np.float32)
+            
         
         res = self.resample_func(self.spec_wobs,
                                  self.spec_R_fwhm*scale_disp,
@@ -784,12 +788,13 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
         
         _A = []
         for i, t in enumerate(eazy_templates):
-            tfnu = sampler.resample_eazy_template(t,
+            tflam = sampler.resample_eazy_template(t,
                                     z=z,
                                     velocity_sigma=vel_width,
-                                    scale_disp=scale_disp)
+                                    scale_disp=scale_disp,
+                                    fnu=False)
             
-            _A.append(tfnu*sampler.spec['to_flam'])
+            _A.append(tflam)
             
             templates.append(t.name)
             tline.append(False)
