@@ -165,11 +165,15 @@ class SpectrumSampler(object):
         return self.spec.meta
 
 
-    def resample_eazy_template(self, template, z=0, scale_disp=1.0, velocity_sigma=100., nsig=4):
+    def resample_eazy_template(self, template, z=0, scale_disp=1.0, velocity_sigma=100., fnu=True, nsig=4):
         """
         """
         templ_wobs = template.wave.astype(np.float32)*(1+z)/1.e4
-        templ_flux = template.flux_fnu(z=z).astype(np.float32)
+        if fnu:
+            templ_flux = template.flux_fnu(z=z).astype(np.float32)
+        else:
+            templ_flux = template.flux_flam(z=z).astype(np.float32)
+            
         
         res = self.resample_func(self.spec_wobs,
                                  self.spec_R_fwhm*scale_disp,
@@ -192,16 +196,26 @@ class SpectrumSampler(object):
         return res*line_flux/line_um
 
 
-    def bspline_array(self, nspline=13, log=False):
+    def bspline_array(self, nspline=13, log=False, get_matrix=True):
         """
         """
-        bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
+        if get_matrix:
+            bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
                                        degree=3,
                                        df=nspline,
                                        log=log,
-                                       get_matrix=True
+                                       get_matrix=get_matrix
                                        )
-        return bspl.T
+            bspl = bspl.T
+        else:
+            bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
+                                       degree=3,
+                                       df=nspline,
+                                       log=log,
+                                       get_matrix=get_matrix
+                                       )
+            
+        return bspl
 
 
 def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
@@ -599,7 +613,198 @@ H_RECOMBINATION_LINES = ['Ha+NII', 'Ha','Hb','Hg','Hd',
                          'PaA','PaB','PaG','PaD','Pa8',
                          'BrA','BrB','BrG','BrD']
 
-def make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel_width=100, broad_width=4000, broad_lines=[], scale_disp=1.3, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII'], oiii=['OIII'], o4363=[], sii=['SII'], lorentz=False, **kwargs):
+def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broad_width=4000, broad_lines=[], scale_disp=1.3, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII'], oiii=['OIII'], o4363=[], sii=['SII'], lorentz=False, **kwargs):
+    """
+    Generate fitting templates
+    
+    wobs : array
+        Observed-frame wavelengths of the spectrum to fit, microns
+    
+    z : float
+        Redshift
+    
+    bspl : dict
+        Spline templates for dummy continuum
+    
+    eazy_templates : list
+        Optional list of `eazy.templates.Template` template objects to use in 
+        place of the spline + line templates
+    
+    vel_width : float
+        Velocity width of the individual emission line templates
+    
+    halpha_prism : ['Ha+NII'], ['Ha','NII']
+        Line template names to use for Halpha and [NII], i.e., ``['Ha+NII']`` 
+        fits with a fixed line ratio and `['Ha','NII']` fits them separately 
+        but with a fixed line ratio 6548:6584 = 1:3
+    
+    oiii : ['OIII'], ['OIII-4959','OIII-5007']
+        Similar for [OIII]4959+5007, ``['OIII']`` fits as a doublet with fixed
+        ratio 4959:5007 = 1:2.98 and ``['OIII-4949', 'OIII-5007']`` fits them
+        independently.
+    
+    o4363 : [] or ['OIII-4363']
+        How to fit [OIII]4363.
+    
+    sii : ['SII'], ['SII-6717','SII-6731']
+        [SII] doublet
+    
+    lorentz : bool
+        Use Lorentzian profile for lines
+    
+    Returns
+    -------
+    templates : list
+        List of the computed template objects
+    
+    tline : array
+        Boolean list of which templates are line components
+    
+    _A : (NT, NWAVE) array
+        Design matrix of templates interpolated at `wobs`
+    
+    """
+    from grizli import utils
+    
+    lw, lr = utils.get_line_wavelengths()
+
+    wobs = sampler.spec_wobs
+    wrest = wobs/(1+z)*1.e4
+    
+    wmask = sampler.valid
+    
+    wmin = wobs[wmask].min()
+    wmax = wobs[wmask].max()
+    
+    templates = []
+    tline = []
+    
+    if eazy_templates is None:
+        _A = [bspl*1]
+        for i in range(bspl.shape[0]):
+            templates.append(f'spl {i}')
+            tline.append(False)
+            
+        #templates = {}
+        #for k in bspl:
+        #    templates[k] = bspl[k]
+
+        # templates = {}
+        if grating in ['prism']:
+            hlines = ['Hb', 'Hg', 'Hd']
+            
+            if z > 4:
+                oiii = ['OIII-4959','OIII-5007']
+                hene = ['HeII-4687', 'NeIII-3867','HeI-3889']
+                o4363 = ['OIII-4363']
+                
+            else:
+                #oiii = ['OIII']
+                hene = ['HeI-3889']
+                #o4363 = []
+                
+            #sii = ['SII']
+            #sii = ['SII-6717', 'SII-6731']
+            
+            hlines += halpha_prism + ['NeIII-3968']
+            fuv = ['OIII-1663']
+            oii_7320 = ['OII-7325']
+            extra = []
+            
+        else:
+            hlines = ['Hb', 'Hg', 'Hd','H8','H9', 'H10', 'H11', 'H12']
+            
+            hene = ['HeII-4687', 'NeIII-3867']
+            o4363 = ['OIII-4363']
+            oiii = ['OIII-4959','OIII-5007']
+            sii = ['SII-6717', 'SII-6731']
+            hlines += ['Ha', 'NII-6549', 'NII-6584']
+            hlines += ['H7', 'NeIII-3968']
+            fuv = ['OIII-1663', 'HeII-1640', 'CIV-1549']
+            oii_7320 = ['OII-7323', 'OII-7332']
+            
+            extra = ['HeI-6680', 'SIII-6314']
+            
+        for l in [*hlines, *oiii, *o4363, 'OII',
+                  *hene, 
+                  *sii,
+                  *oii_7320,
+                  'ArIII-7138', 'ArIII-7753', 'SIII-9068', 'SIII-9531',
+                  'OI-6302', 'PaD', 'PaG', 'PaB', 'PaA', 'HeI-1083',
+                  'BrA','BrB','BrG','BrD','PfB','PfG','PfD','PfE',
+                  'Pa8','Pa9','Pa10',
+                  'HeI-5877', 
+                  *fuv,
+                  'CIII-1908', 'NIII-1750', 'Lya',
+                  'MgII', 'NeV-3346', 'NeVI-3426',
+                  'HeI-7065', 'HeI-8446',
+                  *extra
+                   ]:
+
+            if l not in lw:
+                continue
+            
+            lwi = lw[l][0]*(1+z)
+
+            if lwi < wmin*1.e4:
+                continue
+
+            if lwi > wmax*1.e4:
+                continue
+
+            # print(l, lwi, disp_r)
+
+            name = f'line {l}'
+
+            for i, (lwi0, lri) in enumerate(zip(lw[l], lr[l])):
+                lwi = lwi0*(1+z)/1.e4
+                if l in broad_lines:
+                    vel_i = broad_width
+                else:
+                    vel_i = vel_width
+                    
+                line_i = sampler.emission_line(lwi,
+                                    line_flux=lri/np.sum(lr[l]),
+                                    scale_disp=scale_disp,
+                                    velocity_sigma=vel_i,)
+                if i == 0:
+                    line_0 = line_i
+                else:
+                    line_0 += line_i
+                
+            _A.append(line_0/1.e4)
+            templates.append(name)
+            tline.append(True)
+
+        _A = np.vstack(_A)
+        
+        ll = wobs.value*1.e4/(1+z) < 1215.6
+
+        igmz = igm.full_IGM(z, wobs.value*1.e4)
+        _A *= np.maximum(igmz, 0.01)
+    else:
+        templates = []
+        tline = []
+        
+        _A = []
+        for i, t in enumerate(eazy_templates):
+            tflam = sampler.resample_eazy_template(t,
+                                    z=z,
+                                    velocity_sigma=vel_width,
+                                    scale_disp=scale_disp,
+                                    fnu=False)
+            
+            _A.append(tflam)
+            
+            templates.append(t.name)
+            tline.append(False)
+            
+        _A = np.vstack(_A)
+            
+    return templates, np.array(tline), _A
+
+
+def old_make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None, vel_width=100, broad_width=4000, broad_lines=[], scale_disp=1.3, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII'], oiii=['OIII'], o4363=[], sii=['SII'], lorentz=False, **kwargs):
     """
     Generate fitting templates
     
@@ -850,8 +1055,10 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     
     import matplotlib.pyplot as plt
     
-    spec = read_spectrum(file, sys_err=sys_err)
-            
+    #spec = read_spectrum(file, sys_err=sys_err)
+    sampler = SpectrumSampler(file, **kwargs)
+    spec = sampler.spec
+    
     flam = spec['flux']*spec['to_flam']
     eflam = spec['full_err']*spec['to_flam']
     
@@ -861,18 +1068,18 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     flam[~mask] = np.nan
     eflam[~mask] = np.nan
     
-    spline = utils.bspline_templates(wave=spec['wave']*1.e4, degree=3, df=nspline)
+    #spline = utils.bspline_templates(wave=spec['wave']*1.e4, degree=3, df=nspline)
+    bspl = sampler.bspline_array(nspline=nspline, get_matrix=True)
     
     chi2 = zgrid*0.
     
-    bspl = utils.bspline_templates(wave=spec['wave']*1.e4, degree=3, df=nspline) #, log=True)
-    w0 = utils.log_zgrid([spec['wave'].min()*1.e4,
-                          spec['wave'].max()*1.e4], 1./Rline)
+    #bspl = utils.bspline_templates(wave=spec['wave']*1.e4, degree=3, df=nspline) #, log=True)
+    # w0 = utils.log_zgrid([spec['wave'].min()*1.e4,
+    #                       spec['wave'].max()*1.e4], 1./Rline)
                                                   
     for iz, z in tqdm(enumerate(zgrid)):
         
-        templates, tline, _A = make_templates(spec['wave'], z, w0,
-                            wmask=mask,
+        templates, tline, _A = make_templates(sampler, z,
                             bspl=bspl,
                             eazy_templates=eazy_templates,
                             vel_width=vel_width,
@@ -1173,16 +1380,19 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     flam[~mask] = np.nan
     eflam[~mask] = np.nan
     
-    bspl = utils.bspline_templates(wave=spec['wave']*1.e4,
-                                   degree=3,
-                                   df=nspline)
+    sampler = SpectrumSampler(file, **kwargs)
+    spec = sampler.spec
+    bspl = sampler.bspline_array(nspline=nspline, get_matrix=True)
+
+    # bspl = utils.bspline_templates(wave=spec['wave']*1.e4,
+    #                                degree=3,
+    #                                df=nspline)
                                    
     w0 = utils.log_zgrid([spec['wave'].min()*1.e4,
                           spec['wave'].max()*1.e4], 1./Rline)
     
-    templates, tline, _A = make_templates(spec['wave'], z, w0,
-                        wmask=mask,
-                        bspl=bspl,
+    templates, tline, _A = make_templates(sampler, z,
+                            bspl=bspl,
                         eazy_templates=eazy_templates,
                         vel_width=vel_width,
                         scale_disp=scale_disp,
