@@ -200,24 +200,27 @@ def test_fit_redshift():
     
         assert('coeffs' in zfit)
         assert(np.allclose(zfit['coeffs']['4590.fits'],
-                           [127.2, 3.418],
+                           #[127.2, 3.418],
+                           [120.2, 2.5], # With SpectrumSampler fits
                            rtol=0.5))
         
-        # With dispersion
-        kws['use_full_dispersion'] = True
-        fig, spec, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
-                              z0=z0,
-                              is_prism=True,
-                              **kws)
+        #### use_full_dispersion is deprecated now using SpectrumSampler
         
-        plt.close('all')
-        assert('z' in zfit)
-    
-        assert(np.allclose(zfit['z'], z, rtol=0.01))
-    
-        assert('coeffs' in zfit)
-        assert(np.allclose(zfit['coeffs']['4590.fits'],
-                           [75.95547, 3.7042],
-                           rtol=0.5))
+        # # With dispersion
+        # kws['use_full_dispersion'] = True
+        # fig, spec, zfit = spectrum.fit_redshift(f'ceers-prism.1345_933.v0.spec.fits',
+        #                       z0=z0,
+        #                       is_prism=True,
+        #                       **kws)
+        #
+        # plt.close('all')
+        # assert('z' in zfit)
+        #
+        # assert(np.allclose(zfit['z'], z, rtol=0.01))
+        #
+        # assert('coeffs' in zfit)
+        # assert(np.allclose(zfit['coeffs']['4590.fits'],
+        #                    [75.95547, 3.7042],
+        #                    rtol=0.5))
 
 
