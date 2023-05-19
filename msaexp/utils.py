@@ -1279,8 +1279,8 @@ def longslit_header_from_wcs(wcs):
     h['SLIT_Y0'] = s00[1], 'y_slit_frame at reference pixel'
     h['SLIT_DY'] = dslit_dy, 'd(slit_frame)/dy  at reference pixel'
     
-    wmin = np.nanmedian(w0[:,0])
-    wmax = np.nanmedian(w0[:,-1])
+    wmin = np.nanmedian(w0[2][:,0])
+    wmax = np.nanmedian(w0[2][:,-1])
     if ~np.isfinite(wmin):
         wmin = -1
     if ~np.isfinite(wmax):
