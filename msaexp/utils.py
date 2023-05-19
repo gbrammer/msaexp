@@ -454,7 +454,7 @@ def slit_metadata_to_header(slit, key='', header=None):
     h[f'DETECT{key}'] = (meta['instrument']['detector'],
                          'Instrument detector name')
     
-    h[f'XSTART{key}'] = slit.ystart, 'Left detector pixel of 2D cutout'
+    h[f'XSTART{key}'] = slit.xstart, 'Left detector pixel of 2D cutout'
     h[f'XSIZE{key}']  = slit.xsize, 'X size of 2D cutout'
     h[f'YSTART{key}'] = slit.ystart, 'Lower detector pixel of 2D cutout'
     h[f'YSIZE{key}']  = slit.ysize, 'Y size of 2D cutout'
@@ -1200,8 +1200,10 @@ def longslit_header_from_wcs(wcs):
     s2w = wcs.get_transform('slit_frame','world')
     
     # Wavelength bounds at x edges
-    w0 = d2w(0, shape[0]//2)
-    w1 = d2w(shape[1]-1, shape[0]//2)
+    #w0 = d2w(0, shape[0]//2)
+    #w1 = d2w(shape[1]-1, shape[0]//2)
+    ypi, xpi = np.indices(shape)
+    w0 = d2w(xpi, ypi)
     
     # Pixel offsets
     crpix00 = (shape[1]//2, shape[0]//2)
@@ -1277,8 +1279,18 @@ def longslit_header_from_wcs(wcs):
     h['SLIT_Y0'] = s00[1], 'y_slit_frame at reference pixel'
     h['SLIT_DY'] = dslit_dy, 'd(slit_frame)/dy  at reference pixel'
     
-    h['LMIN'] = w0[2], 'Minimum wavelength, micron'
-    h['LMAX'] = w1[2], 'Maximum wavelength, micron'
+    wmin = np.nanmedian(w0[:,0])
+    wmax = np.nanmedian(w0[:,-1])
+    if ~np.isfinite(wmin):
+        wmin = -1
+    if ~np.isfinite(wmax):
+        wmax = -1
+        
+    h['LMIN'] = wmin, 'Minimum wavelength, micron'
+    h['LMIN'] = wmax, 'Minimum wavelength, micron'
+    
+    # h['LMIN'] = w0[2], 'Minimum wavelength, micron'
+    # h['LMAX'] = w1[2], 'Maximum wavelength, micron'
     h['DLAM'] = h['CD1_1']/1.e4, 'Wavelength step at reference pixel'
     
     # h['LONPOLE'] = 90 + posang
