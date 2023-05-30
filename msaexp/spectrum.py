@@ -785,23 +785,63 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
         igmz = igm.full_IGM(z, wobs.value*1.e4)
         _A *= np.maximum(igmz, 0.01)
     else:
-        templates = []
-        tline = []
+        if isinstance(eazy_templates[0], dict) & (len(eazy_templates) == 2):
+            # lw, lr dicts
+            lw, lr = eazy_templates
+            
+            _A = [bspl*1]
+            for i in range(bspl.shape[0]):
+                templates.append(f'spl {i}')
+                tline.append(False)
+            
+            for l in lw:
+                name = f'line {l}'
+
+                for i, (lwi0, lri) in enumerate(zip(lw[l], lr[l])):
+                    lwi = lwi0*(1+z)/1.e4
+                    if l in broad_lines:
+                        vel_i = broad_width
+                    else:
+                        vel_i = vel_width
+                    
+                    line_i = sampler.emission_line(lwi,
+                                        line_flux=lri/np.sum(lr[l]),
+                                        scale_disp=scale_disp,
+                                        velocity_sigma=vel_i,)
+                    if i == 0:
+                        line_0 = line_i
+                    else:
+                        line_0 += line_i
+                
+                _A.append(line_0/1.e4)
+                templates.append(name)
+                tline.append(True)
+            
+            _A = np.vstack(_A)
         
-        _A = []
-        for i, t in enumerate(eazy_templates):
-            tflam = sampler.resample_eazy_template(t,
-                                    z=z,
-                                    velocity_sigma=vel_width,
-                                    scale_disp=scale_disp,
-                                    fnu=False)
+            ll = wobs.value*1.e4/(1+z) < 1215.6
+
+            igmz = igm.full_IGM(z, wobs.value*1.e4)
+            _A *= np.maximum(igmz, 0.01)
             
-            _A.append(tflam)
+        else:
+            templates = []
+            tline = []
+        
+            _A = []
+            for i, t in enumerate(eazy_templates):
+                tflam = sampler.resample_eazy_template(t,
+                                        z=z,
+                                        velocity_sigma=vel_width,
+                                        scale_disp=scale_disp,
+                                        fnu=False)
             
-            templates.append(t.name)
-            tline.append(False)
+                _A.append(tflam)
             
-        _A = np.vstack(_A)
+                templates.append(t.name)
+                tline.append(False)
+            
+            _A = np.vstack(_A)
             
     return templates, np.array(tline), _A
 
