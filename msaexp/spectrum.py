@@ -1316,7 +1316,7 @@ def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), **kwargs):
     valid &= spec['flux'] != 0 
     
     if (valid.sum() > 0) & (err_mask is not None):
-        valid &= np.nanpercentile(spec['err'][valid], err_mask[0])*err_mask[1]
+        valid &= err > np.nanpercentile(spec['err'][valid], err_mask[0])*err_mask[1]
     
     spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
                                (sys_err*spec['flux'])**2)
