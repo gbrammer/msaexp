@@ -150,11 +150,11 @@ class SpectrumSampler(object):
         self.yline /= np.trapz(self.yline, self.xline)
 
 
-    def initialize_spec(self, file):
+    def initialize_spec(self, file, **kwargs):
         """
         """
         self.file = file
-        self.spec = read_spectrum(file)
+        self.spec = read_spectrum(file, **kwargs)
         self.spec_wobs = self.spec['wave'].astype(np.float32)
         self.spec_R_fwhm = self.spec['R'].astype(np.float32)
         
@@ -476,7 +476,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     yaml.add_representer(float, float_representer)
     
     #is_prism |= ('clear' in file)
-    spec = read_spectrum(file, sys_err=sys_err)
+    spec = read_spectrum(file, sys_err=sys_err, **kwargs)
     is_prism |= spec.grating in ['prism']
     
     if 'spec.fits' in file:
@@ -1430,7 +1430,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     """
     global SCALE_UNCERTAINTY
         
-    spec = read_spectrum(file, sys_err=sys_err)
+    spec = read_spectrum(file, sys_err=sys_err, **kwargs)
             
     flam = spec['flux']*spec['to_flam']
     eflam = spec['full_err']*spec['to_flam']
