@@ -796,7 +796,8 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
             
             for l in lw:
                 name = f'line {l}'
-                line0 = None
+                
+                line_0 = None
                 
                 for i, (lwi0, lri) in enumerate(zip(lw[l], lr[l])):
                     lwi = lwi0*(1+z)/1.e4
@@ -821,7 +822,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                     else:
                         line_0 += line_i
                 
-                if line0 is not None:
+                if line_0 is not None:
                     _A.append(line_0/1.e4)
                     templates.append(name)
                     tline.append(True)
