@@ -1284,7 +1284,7 @@ def setup_spectrum(file, **kwargs):
     return read_spectrum(file, **kwargs)
 
 
-def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), **kwargs):
+def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), err_median_filter=[11, 0.8], **kwargs):
     """
     Read a spectrum and apply flux and/or uncertainty scaling
     
@@ -1329,6 +1329,8 @@ def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), **kwargs):
     """
     global SCALE_UNCERTAINTY
     
+    import scipy.ndimage as nd
+    
     with pyfits.open(file) as im:
         if 'SPEC1D' in im:
             spec = utils.read_catalog(im['SPEC1D'])
@@ -1369,7 +1371,12 @@ def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), **kwargs):
     if (valid.sum() > 0) & (err_mask is not None):
         _min_err = np.nanpercentile(spec['err'][valid], err_mask[0])*err_mask[1]
         valid &= spec['err'] > _min_err
-    
+        
+    if err_median_filter is not None:
+        med = nd.median_filter(spec['err'][valid], err_median_filter[0])
+        medi = np.interp(spec['wave'], spec['wave'][valid], med, left=0, right=0)
+        valid &= spec['err'] > err_median_filter[1]*medi
+        
     spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
                                (sys_err*spec['flux'])**2)
     
