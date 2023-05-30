@@ -784,6 +784,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
 
         igmz = igm.full_IGM(z, wobs.value*1.e4)
         _A *= np.maximum(igmz, 0.01)
+        
     else:
         if isinstance(eazy_templates[0], dict) & (len(eazy_templates) == 2):
             # lw, lr dicts
@@ -802,10 +803,10 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                 for i, (lwi0, lri) in enumerate(zip(lw[l], lr[l])):
                     lwi = lwi0*(1+z)/1.e4
                     
-                    if lwi < wmin*1.e4:
+                    if lwi < wmin:
                         continue
 
-                    elif lwi > wmax*1.e4:
+                    elif lwi > wmax:
                         continue
                     
                     if l in broad_lines:
