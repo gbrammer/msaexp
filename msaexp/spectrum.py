@@ -186,6 +186,7 @@ class SpectrumSampler(object):
     
     def emission_line(self, line_um, line_flux=1, scale_disp=1.0, velocity_sigma=100., nsig=4):
         """
+        Make an emission line template
         """
         res = self.resample_func(self.spec_wobs,
                                  self.spec_R_fwhm*scale_disp, 
@@ -193,6 +194,7 @@ class SpectrumSampler(object):
                                  self.yline,
                                  velocity_sigma=velocity_sigma,
                                  nsig=nsig)
+        
         return res*line_flux/line_um
 
 
@@ -1231,7 +1233,7 @@ def setup_spectrum(file, **kwargs):
     return read_spectrum(file, **kwargs)
 
 
-def read_spectrum(file, sys_err=0.02, **kwargs):
+def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), **kwargs):
     """
     Read a spectrum and apply flux and/or uncertainty scaling
     
@@ -1252,6 +1254,9 @@ def read_spectrum(file, sys_err=0.02, **kwargs):
     
     sys_err : float
         Systematic uncertainty added in quadrature with `err` array
+    
+    err_mask : float, float or None
+        Mask pixels where ``err > np.percentile(err[err > 0], err_mask[0])*err_mask[1]``
     
     Returns
     -------
@@ -1310,7 +1315,12 @@ def read_spectrum(file, sys_err=0.02, **kwargs):
     valid &= spec['err'] > 0
     valid &= spec['flux'] != 0 
     
-    spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 + (sys_err*spec['flux'])**2)
+    if (valid.sum() > 0) & (err_mask is not None):
+        valid &= np.nanpercentile(spec['err'][valid], err_mask[0])*err_mask[1]
+    
+    spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
+                               (sys_err*spec['flux'])**2)
+    
     spec.meta['sys_err'] = sys_err
     
     spec['full_err'][~valid] = 0
