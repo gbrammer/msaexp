@@ -802,11 +802,11 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                 for i, (lwi0, lri) in enumerate(zip(lw[l], lr[l])):
                     lwi = lwi0*(1+z)/1.e4
                     
-                    # if lwi < wmin*1.e4:
-                    #     continue
-                    #
-                    # elif lwi > wmax*1.e4:
-                    #     continue
+                    if lwi < wmin*1.e4:
+                        continue
+
+                    elif lwi > wmax*1.e4:
+                        continue
                     
                     if l in broad_lines:
                         vel_i = broad_width
@@ -817,7 +817,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                                         line_flux=lri/np.sum(lr[l]),
                                         scale_disp=scale_disp,
                                         velocity_sigma=vel_i,)
-                    if i == 0:
+                    if line_0 is None:
                         line_0 = line_i
                     else:
                         line_0 += line_i
