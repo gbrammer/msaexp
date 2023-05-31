@@ -849,7 +849,12 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                                     scale_disp=scale_disp,
                                     fnu=False)
             
-            _A = [bspl*tflam]
+            _A = np.vstack([bspl*tflam])
+        
+            ll = wobs.value*1.e4/(1+z) < 1215.6
+
+            igmz = igm.full_IGM(z, wobs.value*1.e4)
+            _A *= np.maximum(igmz, 0.01)
             
         else:
             templates = []
