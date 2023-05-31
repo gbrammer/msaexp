@@ -587,7 +587,7 @@ class NirspecPipeline():
         self.last_step = key
     
     
-    def preprocess(self, set_context=True, fix_rows=True, scale_rnoise=True, skip_completed=True, **kwargs):
+    def preprocess(self, set_context=True, fix_rows=False, scale_rnoise=True, skip_completed=True, **kwargs):
         """
         Run grizli exposure-level preprocessing
         
