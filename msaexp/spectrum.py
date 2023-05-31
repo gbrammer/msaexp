@@ -834,6 +834,22 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
 
             igmz = igm.full_IGM(z, wobs.value*1.e4)
             _A *= np.maximum(igmz, 0.01)
+        
+        elif len(eazy_templates) == 1:
+            # Scale single template by spline
+            t = eazy_templates[0]
+            
+            for i in range(bspl.shape[0]):
+                templates.append(f'{t.name} spl {i}')
+                tline.append(False)
+            
+            tflam = sampler.resample_eazy_template(t,
+                                    z=z,
+                                    velocity_sigma=vel_width,
+                                    scale_disp=scale_disp,
+                                    fnu=False)
+            
+            _A = [bspl*tflam]
             
         else:
             templates = []
