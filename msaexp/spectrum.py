@@ -1305,12 +1305,12 @@ def setup_spectrum(file, **kwargs):
     return read_spectrum(file, **kwargs)
 
 
-def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), err_median_filter=[11, 0.8], **kwargs):
+def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 0.8], **kwargs):
     """
     Read a spectrum and apply flux and/or uncertainty scaling
     
-    Flux scaling `corr` is applied if there are `POLY[i]` keywords in the spectrum metadata, 
-    with
+    Flux scaling `corr` is applied if there are `POLY[i]` keywords in the spectrum 
+    metadata, with
     
     .. code-block:: python
         :dedent:
@@ -1321,14 +1321,18 @@ def read_spectrum(file, sys_err=0.02, err_mask=(50,0.5), err_median_filter=[11, 
     Parameters
     ----------
     file : str
-        Fits filename of a file that includes a `~astropy.io.fits.BinTableHDU` table of an
-        extracted spectrum
+        Fits filename of a file that includes a `~astropy.io.fits.BinTableHDU` table of 
+        an extracted spectrum
     
     sys_err : float
         Systematic uncertainty added in quadrature with `err` array
     
     err_mask : float, float or None
-        Mask pixels where ``err > np.percentile(err[err > 0], err_mask[0])*err_mask[1]``
+        Mask pixels where ``err < np.percentile(err[err > 0], err_mask[0])*err_mask[1]``
+    
+    err_median_filter : int, float or None
+        Mask pixels where
+        ``err < nd.median_filter(err, err_median_filter[0])*err_median_filter[1]``
     
     Returns
     -------
