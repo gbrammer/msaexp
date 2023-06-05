@@ -861,7 +861,7 @@ def get_xlimits_from_lines(hdul, sn_thresh=2, max_dy=4, n_erode=2, n_dilate=4, s
     return xlim
 
 
-def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], offset_for_chi2=1., verbose=True, find_line_kws={}, **kwargs):
+def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], offset_for_chi2=1., max_wht_percentile=98, verbose=True, find_line_kws={}, **kwargs):
     """
     Optimal extraction from 2D arrays
                             
@@ -913,6 +913,9 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         If specified, compute chi2 of the profile fit offseting the first
         parameter by +/- this value
     
+    max_wht_percentile : float
+        Maximum percentile of WHT to consider valid
+    
     verbose : bool
         Status messages
     
@@ -946,7 +949,11 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     yp, xp = np.indices(sh)
     
     ok = np.isfinite(sci2d*wht2d) & (wht2d > 0)
-    
+    if max_wht_percentile is not None:
+        wperc = np.percentile(wht2d[ok], max_wht_percentile)
+        print('xxx max_wht_percentile', max_wht_percentile, ok.sum(), (ok & (wht2d < wperc)).sum(), wperc)
+        ok &= wht2d < wperc
+        
     if profile_slice is not None:
         if not isinstance(profile_slice, slice):
             if isinstance(profile_slice[0], int):
