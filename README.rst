@@ -45,7 +45,7 @@ Try running the RXJ2129 demo notebook directly on GitHub in a Codespace:
 Extracted spectra from public datasets
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Browseable table: https://s3.amazonaws.com/msaexp-nirspec/extractions/nirspec_graded.html 
+Browsable table: https://s3.amazonaws.com/msaexp-nirspec/extractions/nirspec_graded.html 
 
 Full catalog: https://s3.amazonaws.com/msaexp-nirspec/extractions/nirspec_graded_v0.ecsv
 
