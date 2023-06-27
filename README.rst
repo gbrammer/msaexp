@@ -40,3 +40,9 @@ Try running the RXJ2129 demo notebook directly on GitHub in a Codespace:
   5. Open "process-rxj2129.ipynb" and run it
   6. Commit to your forked repository any changes to the notebook itself or files created that you want to save outside the codespace
   7. Profit!
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Extracted spectra from public datasets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+See https://s3.amazonaws.com/msaexp-nirspec/extractions/nirspec_graded.html.
