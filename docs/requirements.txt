@@ -1,0 +1,9 @@
+numpy
+matplotlib
+scikit-image
+scipy
+astropy
+sphinx_astropy
+pyyaml
+docutils<0.18
+sregion
