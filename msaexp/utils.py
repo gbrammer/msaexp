@@ -1796,7 +1796,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     fig, a2d = plt.subplots(2,2, **subplot_args)
     axes = [a2d[0][0], a2d[1][0]]
     
-    if (use_aper_columns) & ('aper_flux' in sp.colnames):
+    if (use_aper_columns > 0) & ('aper_flux' in sp.colnames):
         if ('aper_corr' in sp.colnames) & (use_aper_columns > 1):
             ap_corr = sp['aper_corr']*1
         else:
@@ -1864,7 +1864,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         if recenter:
             axes[0].set_ylim(y0-2*yt, y0+2*yt)
     
-    if (use_aper_columns) & ('APER_Y0' in sp.meta):
+    if (use_aper_columns > 0) & ('APER_Y0' in sp.meta):
         y0 = sp.meta['APER_Y0']
         yt = sp.meta['APER_DY']
         axes[0].set_yticks([y0-yt, y0+yt+1])
