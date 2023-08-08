@@ -1797,8 +1797,8 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     axes = [a2d[0][0], a2d[1][0]]
     
     if use_aper_columns & ('aper_flux' in sp.colnames):
-        if ('aper_corr' in spec.colnames) & (use_aper_columns > 1):
-            ap_corr = spec['aper_corr']*1
+        if ('aper_corr' in sp.colnames) & (use_aper_columns > 1):
+            ap_corr = sp['aper_corr']*1
         else:
             ap_corr = 1
 
