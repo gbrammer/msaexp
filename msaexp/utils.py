@@ -1891,7 +1891,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
                 where='pre', alpha=0.8, lw=2)
         ap.step(ptab['pfit']/pmax, xpr, color='r',
                 where='pre', alpha=0.5, lw=1)
-        ap.fill_betweenx(xpr, xpr*0., ptab['pfit']/pmax,
+        ap.fill_betweenx(xpr+0.5, xpr*0., ptab['pfit']/pmax,
                 color='r', alpha=0.2)
         
         ap.text(0.99, 0.0, f"{hdul['SPEC1D'].header['PROFCEN']:5.2f} ± {hdul['SPEC1D'].header['PROFSIG']:4.2f}", 
