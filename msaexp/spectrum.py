@@ -1134,7 +1134,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     spec = sampler.spec
         
     if (use_aper_columns > 0) & ('aper_flux' in spec.colnames):
-        if 'aper_corr' in spec.colnames:
+        if ('aper_corr' in spec.colnames) & (use_aper_columns > 1):
             ap_corr = spec['aper_corr']*1
         else:
             ap_corr = 1
