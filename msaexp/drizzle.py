@@ -1151,7 +1151,8 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     
     # Aperture extraction
     if ap_center is None:
-        # ap_center = int(np.round(ytrace + fit_center))
+        ap_center = int(np.round(ytrace + fit_center))
+    elif ap_center < 0:
         ap_center = np.nanargmax(prof1d)
         
     if ap_radius is None:
