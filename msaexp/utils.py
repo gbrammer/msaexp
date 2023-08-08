@@ -1833,7 +1833,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     yscl = hdul['PROFILE'].data.max()
     if unit == 'flam':
-        yscl = yscl*to_flam/apcorr #(sp['wave']/2.)**2
+        yscl = yscl*to_flam/ap_corr #(sp['wave']/2.)**2
     
     if smooth_sigma is not None:
         xp = np.arange(-4*int(smooth_sigma), 5*int(smooth_sigma))
