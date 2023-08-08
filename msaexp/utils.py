@@ -1831,7 +1831,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     yscl = hdul['PROFILE'].data.max()
     if unit == 'flam':
-        yscl = yscl*(sp['wave']/2.)**2
+        yscl = yscl*to_flam #(sp['wave']/2.)**2
     
     if smooth_sigma is not None:
         xp = np.arange(-4*int(smooth_sigma), 5*int(smooth_sigma))
@@ -1933,7 +1933,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     if unit == 'fnu':
         axes[1].set_ylabel(r'$f_\nu\ [\mu\mathrm{Jy}]$')
     else:
-        _ylabel = r'$f_\lambda\ [10^{xxx} \mathrm{cgs}]$'
+        _ylabel = r'$f_\lambda\ [10^{xxx}\ \mathrm{erg} \mathrm{s}^{-1} \mathrm{cm}^{-2} \mathrm{\AA}^{-1}]$'
         axes[1].set_ylabel(_ylabel.replace('xxx',f'{flam_scale:.0f}'))
     
     if tick_steps is None:
