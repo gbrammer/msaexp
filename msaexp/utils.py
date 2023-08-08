@@ -1867,7 +1867,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     if use_aper_columns & ('APER_Y0' in sp.meta):
         y0 = sp.meta['APER_Y0']
         yt = sp.meta['APER_DY']
-        axes[0].set_yticks([y0-yt-0.5, y0, y0+yt+0.5+1])
+        axes[0].set_yticks([y0-yt-0.5, y0+0.5, y0+yt+0.5+1])
     
     # Extraction profile
     ap = a2d[0][1]
