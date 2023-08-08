@@ -1782,7 +1782,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, ymax_sigma_scale=2, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', recenter=True, use_aper_columns=False, smooth_sigma=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, ymax_sigma_scale=2, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', flam_scale=-20, recenter=True, use_aper_columns=False, smooth_sigma=None):
     """
     Figure showing drizzled hdu
     """
@@ -1818,7 +1818,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         flux = sp['flux']*1
     
     equiv = u.spectral_density(sp['wave'].data*u.micron)
-    flam_unit = 1.e-19*u.erg/u.second/u.cm**2/u.Angstrom
+    flam_unit = 10**flam_scale*u.erg/u.second/u.cm**2/u.Angstrom
     to_flam = (1*u.microJansky).to(flam_unit, equivalencies=equiv).value
     
     if unit != 'fnu':
@@ -1831,7 +1831,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     yscl = hdul['PROFILE'].data.max()
     if unit == 'flam':
-        yscl = yscl*to_flam #(sp['wave']/2.)**2
+        yscl = yscl*(sp['wave']/2.)**2
     
     if smooth_sigma is not None:
         xp = np.arange(-4*int(smooth_sigma), 5*int(smooth_sigma))
@@ -1929,11 +1929,13 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     axes[1].set_ylim(-0.1*ymax, ymax)
     axes[1].set_xlabel(r'$\lambda_\mathrm{obs}$ [$\mu$m]')
+    
     if unit == 'fnu':
         axes[1].set_ylabel(r'$f_\nu$ [$\mu$Jy]')
     else:
-        axes[1].set_ylabel(r'$f_\lambda$')
-        
+        _ylabel = r'$f_\lambda [10^{xxx} cgs]$'.replace('xxx',f'{flam_scale:0f}')
+        axes[1].set_ylabel(_ylabel)
+    
     if tick_steps is None:
         if hdul[1].header['GRATING'] == 'PRISM':
             minor = 0.1
