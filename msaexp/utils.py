@@ -1817,6 +1817,8 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
         flux = sp['flux']*1
     
+        ap_corr = 1
+        
     equiv = u.spectral_density(sp['wave'].data*u.micron)
     flam_unit = 10**flam_scale*u.erg/u.second/u.cm**2/u.Angstrom
     to_flam = (1*u.microJansky).to(flam_unit, equivalencies=equiv).value
@@ -1831,7 +1833,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     yscl = hdul['PROFILE'].data.max()
     if unit == 'flam':
-        yscl = yscl*to_flam #(sp['wave']/2.)**2
+        yscl = yscl*to_flam/apcorr #(sp['wave']/2.)**2
     
     if smooth_sigma is not None:
         xp = np.arange(-4*int(smooth_sigma), 5*int(smooth_sigma))
