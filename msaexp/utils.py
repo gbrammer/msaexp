@@ -1819,7 +1819,7 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     equiv = u.spectral_density(sp['wave'].data*u.micron)
     flam_unit = 1.e-19*u.erg/u.second/u.cm**2/u.Angstrom
-    to_flam = (1*u.microJy).to(flam_unit, equivalencies=equiv).value
+    to_flam = (1*u.microJansky).to(flam_unit, equivalencies=equiv).value
     
     if unit != 'fnu':
         flux *= to_flam #(sp['wave']/2.)**-2
