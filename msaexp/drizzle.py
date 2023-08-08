@@ -961,7 +961,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     ok = np.isfinite(sci2d*wht2d) & (wht2d > 0)
     if max_wht_percentile is not None:
         wperc = np.percentile(wht2d[ok], max_wht_percentile)
-        print('xxx max_wht_percentile', max_wht_percentile, ok.sum(), (ok & (wht2d < wperc)).sum(), wperc)
+        # print('xxx max_wht_percentile', max_wht_percentile, ok.sum(), (ok & (wht2d < wperc)).sum(), wperc)
         ok &= wht2d < wperc
         
     if profile_slice is not None:
@@ -1174,6 +1174,11 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
                                     
     spec.meta['APER_Y0'] = (ap_center, 'Fixed aperture center')
     spec.meta['APER_DY'] = (ap_radius, 'Fixed aperture radius, pix')
+    
+    msg = f"msaexp.drizzle.extract_from_hdul: aperture extraction = "
+    msg += f"({ap_center}, {ap_radius})"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
+                             show_date=False)
     
     msk = np.isfinite(sci2d + wht2d)
     sci2d[~msk] = 0
