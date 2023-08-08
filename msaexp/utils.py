@@ -1931,10 +1931,10 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     axes[1].set_xlabel(r'$\lambda_\mathrm{obs}$ [$\mu$m]')
     
     if unit == 'fnu':
-        axes[1].set_ylabel(r'$f_\nu$ [$\mu$Jy]')
+        axes[1].set_ylabel(r'$f_\nu\ [\mu\mathrm{Jy}]$')
     else:
-        _ylabel = r'$f_\lambda [10^{xxx} cgs]$'.replace('xxx',f'{flam_scale:0f}')
-        axes[1].set_ylabel(_ylabel)
+        _ylabel = r'$f_\lambda\ [10^{xxx} \mathrm{cgs}]$'
+        axes[1].set_ylabel(_ylabel.replace('xxx',f'{flam_scale:.0f}'))
     
     if tick_steps is None:
         if hdul[1].header['GRATING'] == 'PRISM':
