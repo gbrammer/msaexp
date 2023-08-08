@@ -1787,8 +1787,9 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     Figure showing drizzled hdu
     """
     import matplotlib.pyplot as plt
-    import grizli.utils
+    import astropy.units as u
     import scipy.ndimage as nd
+    import grizli.utils
     
     sp = grizli.utils.read_catalog(hdul['SPEC1D'])
     nx = len(sp)
@@ -1816,17 +1817,21 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
         flux = sp['flux']*1
     
+    equiv = u.spectral_density(sp['wave'].data*u.micron)
+    flam_unit = 1.e-19*u.erg/u.second/u.cm**2/u.Angstrom
+    to_flam = (1*u.microJy).to(flam_unit, equivalencies=equiv).value
+    
     if unit != 'fnu':
-        flux *= (sp['wave']/2.)**-2
-        err *= (sp['wave']/2.)**-2
-        
+        flux *= to_flam #(sp['wave']/2.)**-2
+        err *= to_flam #(sp['wave']/2.)**-2
+    
     if ymax is None:
         ymax = np.nanpercentile(flux[err > 0], 90)*ymax_sigma_scale
         ymax = np.maximum(ymax, 7*np.median(err[err > 0]))
-        
+    
     yscl = hdul['PROFILE'].data.max()
     if unit == 'flam':
-        yscl = yscl*(sp['wave']/2.)**2
+        yscl = yscl*to_flam #(sp['wave']/2.)**2
     
     if smooth_sigma is not None:
         xp = np.arange(-4*int(smooth_sigma), 5*int(smooth_sigma))
