@@ -1782,7 +1782,7 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, ymax_sigma_scale=2, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', recenter=True, smooth_sigma=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, ymax_sigma_scale=2, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', recenter=True, use_aper_columns=False, smooth_sigma=None):
     """
     Figure showing drizzled hdu
     """
@@ -1790,21 +1790,34 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     import grizli.utils
     import scipy.ndimage as nd
     
-    sp = grizli.utils.GTable(hdul['SPEC1D'].data)
+    sp = grizli.utils.read_catalog(hdul['SPEC1D'])
     nx = len(sp)
 
     fig, a2d = plt.subplots(2,2, **subplot_args)
     axes = [a2d[0][0], a2d[1][0]]
     
-    if 'full_err' in sp.colnames:
-        err = sp['full_err']*1
+    if use_aper_columns & ('aper_flux' in sp.colnames):
+        if 'aper_corr' in spec.colnames:
+            ap_corr = spec['aper_corr']*1
+        else:
+            ap_corr = 1
+
+        if 'aper_full_err' in sp.colnames:
+            err = sp['aper_full_err']*ap_corr
+        else:
+            err = sp['aper_err']*ap_corr
+    
+        flux = sp['aper_flux']*ap_corr
     else:
-        err = sp['err']*1
-        
-    if unit == 'fnu':
+        if 'full_err' in sp.colnames:
+            err = sp['full_err']*1
+        else:
+            err = sp['err']*1
+    
         flux = sp['flux']*1
-    else:
-        flux = sp['flux']*(sp['wave']/2.)**-2
+    
+    if unit != 'fnu':
+        flux *= (sp['wave']/2.)**-2
         err *= (sp['wave']/2.)**-2
         
     if ymax is None:
@@ -1850,7 +1863,12 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         axes[0].set_yticks([y0-yt, y0, y0+yt])
         if recenter:
             axes[0].set_ylim(y0-2*yt, y0+2*yt)
-        
+    
+    if use_aper_columns & ('APER_Y0' in sp.meta):
+        y0 = sp.meta['APER_Y0']
+        yt = sp.meta['APER_DY']
+        axes[0].set_yticks([y0-yt-0.5, y0, y0+yt+0.5])
+    
     # Extraction profile
     ap = a2d[0][1]
     ptab = grizli.utils.GTable(hdul['PROF1D'].data)

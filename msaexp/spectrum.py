@@ -1094,7 +1094,7 @@ def old_make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None,
     return templates, tline, _A
     
     
-def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, **kwargs):
+def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, use_aper_columns=False, **kwargs):
     """
     Fit redshifts on a grid
     
@@ -1132,10 +1132,19 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     #spec = read_spectrum(file, sys_err=sys_err)
     sampler = SpectrumSampler(file, **kwargs)
     spec = sampler.spec
-    
-    flam = spec['flux']*spec['to_flam']
-    eflam = spec['full_err']*spec['to_flam']
-    
+        
+    if use_aper_columns & ('aper_flux' in spec.colnames):
+        if 'aper_corr' in spec.colnames:
+            ap_corr = spec['aper_corr']*1
+        else:
+            ap_corr = 1
+        
+        flam = spec['aper_flux']*spec['to_flam']*ap_corr
+        eflam = spec['aper_full_err']*spec['to_flam']*ap_corr
+    else:
+        flam = spec['flux']*spec['to_flam']
+        eflam = spec['full_err']*spec['to_flam']
+        
     wobs = spec['wave']
     mask = spec['valid']
     
@@ -1405,6 +1414,10 @@ def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 
     spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
                                (sys_err*spec['flux'])**2)
     
+    if 'aper_err' in spec.colnames:
+        spec['aper_full_err'] = np.sqrt((spec['aper_err']*spec['escale'])**2 +
+                                   (sys_err*spec['aper_flux'])**2)
+        
     spec.meta['sys_err'] = sys_err
     
     spec['full_err'][~valid] = 0
@@ -1448,7 +1461,7 @@ def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 
     return spec
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, **kwargs):
+def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, use_aper_columns=False, **kwargs):
     """
     Make a diagnostic figure
     
@@ -1463,9 +1476,18 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     global SCALE_UNCERTAINTY
         
     spec = read_spectrum(file, sys_err=sys_err, **kwargs)
-            
-    flam = spec['flux']*spec['to_flam']
-    eflam = spec['full_err']*spec['to_flam']
+    
+    if use_aper_columns & ('aper_flux' in spec.colnames):
+        if 'aper_corr' in spec.colnames:
+            ap_corr = spec['aper_corr']*1
+        else:
+            ap_corr = 1
+        
+        flam = spec['aper_flux']*spec['to_flam']*ap_corr
+        eflam = spec['aper_full_err']*spec['to_flam']*ap_corr
+    else:
+        flam = spec['flux']*spec['to_flam']
+        eflam = spec['full_err']*spec['to_flam']
     
     wrest = spec['wave']/(1+z)*1.e4
     wobs = spec['wave']
