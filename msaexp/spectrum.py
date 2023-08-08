@@ -737,7 +737,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                   'Pa8','Pa9','Pa10',
                   'HeI-5877', 
                   *fuv,
-                  'CIII-1908', 'NIII-1750', 'Lya',
+                  'CIII-1906', 'NIII-1750', 'Lya',
                   'MgII', 'NeV-3346', 'NeVI-3426',
                   'HeI-7065', 'HeI-8446',
                   *extra
@@ -998,7 +998,7 @@ def old_make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None,
                   'Pa8','Pa9','Pa10',
                   'HeI-5877', 
                   *fuv,
-                  'CIII-1908', 'NIII-1750', 'Lya',
+                  'CIII-1906', 'NIII-1750', 'Lya',
                   'MgII', 'NeV-3346', 'NeVI-3426',
                   'HeI-7065', 'HeI-8446',
                   *extra
