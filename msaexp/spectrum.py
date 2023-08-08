@@ -1478,7 +1478,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     spec = read_spectrum(file, sys_err=sys_err, **kwargs)
     
     if use_aper_columns & ('aper_flux' in spec.colnames):
-        if 'aper_corr' in spec.colnames:
+        if ('aper_corr' in spec.colnames) & (use_aper_columns > 1):
             ap_corr = spec['aper_corr']*1
         else:
             ap_corr = 1
