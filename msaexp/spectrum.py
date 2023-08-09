@@ -20,6 +20,21 @@ import astropy.io.fits as pyfits
 from grizli import utils
 utils.set_warnings()
 
+try:
+    import eazy
+    wave = np.exp(np.arange(np.log(2.4), np.log(4.5), 1./4000))*1.e4
+    _temp = utils.pah33(wave)
+    PAH_TEMPLATES = {}
+    for t in _temp:
+        if '3.47' in t:
+            continue
+            
+        _tp = _temp[t]
+        PAH_TEMPLATES[t] = eazy.templates.Template(name=t, arrays=(_tp.wave, _tp.flux))
+except:
+    print('Failed to initialize PAH_TEMPLATES')
+    PAH_TEMPLATES = {}
+
 import grizli.utils_c
 import astropy.units as u
 
@@ -615,7 +630,7 @@ H_RECOMBINATION_LINES = ['Ha+NII', 'Ha','Hb','Hg','Hd',
                          'PaA','PaB','PaG','PaD','Pa8',
                          'BrA','BrB','BrG','BrD']
 
-def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broad_width=4000, broad_lines=[], scale_disp=1.3, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII'], oiii=['OIII'], o4363=[], sii=['SII'], lorentz=False, **kwargs):
+def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broad_width=4000, broad_lines=[], scale_disp=1.3, use_full_dispersion=False, disp=None, grating='prism', halpha_prism=['Ha+NII'], oiii=['OIII'], o4363=[], sii=['SII'], lorentz=False, with_pah=True, **kwargs):
     """
     Generate fitting templates
     
@@ -727,6 +742,9 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
             
             extra = ['HeI-6680', 'SIII-6314']
             
+        line_names = []
+        line_waves = []
+        
         for l in [*hlines, *oiii, *o4363, 'OII',
                   *hene, 
                   *sii,
@@ -737,7 +755,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                   'Pa8','Pa9','Pa10',
                   'HeI-5877', 
                   *fuv,
-                  'CIII-1908', 'NIII-1750', 'Lya',
+                  'CIII-1906', 'NIII-1750', 'Lya',
                   'MgII', 'NeV-3346', 'NeVI-3426',
                   'HeI-7065', 'HeI-8446',
                   *extra
@@ -753,7 +771,22 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
 
             if lwi > wmax*1.e4:
                 continue
+            
+            line_names.append(l)
+            line_waves.append(lwi)
+        
+        so = np.argsort(line_waves)
+        
+        for iline in so:
+            l = line_names[iline]
+            lwi = lw[l][0]*(1+z)
 
+            if lwi < wmin*1.e4:
+                continue
+
+            if lwi > wmax*1.e4:
+                continue
+            
             # print(l, lwi, disp_r)
 
             name = f'line {l}'
@@ -777,7 +810,24 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
             _A.append(line_0/1.e4)
             templates.append(name)
             tline.append(True)
-
+        
+        if with_pah:
+            xpah = 3.3*(1+z)
+            if ((xpah > wmin) & (xpah < wmax)) | (0):
+                for t in PAH_TEMPLATES:
+                    tp = PAH_TEMPLATES[t]
+                    tflam = sampler.resample_eazy_template(tp,
+                                            z=z,
+                                            velocity_sigma=vel_width,
+                                            scale_disp=scale_disp,
+                                            fnu=False)
+            
+                    _A.append(tflam)
+            
+                    templates.append(t)
+                    tline.append(True)
+                    
+                
         _A = np.vstack(_A)
         
         ll = wobs.value*1.e4/(1+z) < 1215.6
@@ -998,7 +1048,7 @@ def old_make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None,
                   'Pa8','Pa9','Pa10',
                   'HeI-5877', 
                   *fuv,
-                  'CIII-1908', 'NIII-1750', 'Lya',
+                  'CIII-1906', 'NIII-1750', 'Lya',
                   'MgII', 'NeV-3346', 'NeVI-3426',
                   'HeI-7065', 'HeI-8446',
                   *extra
@@ -1094,7 +1144,7 @@ def old_make_templates(wobs, z, wfull, wmask=None, bspl={}, eazy_templates=None,
     return templates, tline, _A
     
     
-def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, **kwargs):
+def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', zgrid=None, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, line_complexes=True, Rline=1000, eazy_templates=None, use_full_dispersion=True, sys_err=0.02, use_aper_columns=False, **kwargs):
     """
     Fit redshifts on a grid
     
@@ -1132,10 +1182,19 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     #spec = read_spectrum(file, sys_err=sys_err)
     sampler = SpectrumSampler(file, **kwargs)
     spec = sampler.spec
-    
-    flam = spec['flux']*spec['to_flam']
-    eflam = spec['full_err']*spec['to_flam']
-    
+        
+    if (use_aper_columns > 0) & ('aper_flux' in spec.colnames):
+        if ('aper_corr' in spec.colnames) & (use_aper_columns > 1):
+            ap_corr = spec['aper_corr']*1
+        else:
+            ap_corr = 1
+        
+        flam = spec['aper_flux']*spec['to_flam']*ap_corr
+        eflam = spec['aper_full_err']*spec['to_flam']*ap_corr
+    else:
+        flam = spec['flux']*spec['to_flam']
+        eflam = spec['full_err']*spec['to_flam']
+        
     wobs = spec['wave']
     mask = spec['valid']
     
@@ -1405,6 +1464,10 @@ def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 
     spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
                                (sys_err*spec['flux'])**2)
     
+    if 'aper_err' in spec.colnames:
+        spec['aper_full_err'] = np.sqrt((spec['aper_err']*spec['escale'])**2 +
+                                   (sys_err*spec['aper_flux'])**2)
+        
     spec.meta['sys_err'] = sys_err
     
     spec['full_err'][~valid] = 0
@@ -1448,7 +1511,7 @@ def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 
     return spec
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, **kwargs):
+def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, use_aper_columns=False, **kwargs):
     """
     Make a diagnostic figure
     
@@ -1463,9 +1526,18 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     global SCALE_UNCERTAINTY
         
     spec = read_spectrum(file, sys_err=sys_err, **kwargs)
-            
-    flam = spec['flux']*spec['to_flam']
-    eflam = spec['full_err']*spec['to_flam']
+    
+    if (use_aper_columns > 0) & ('aper_flux' in spec.colnames):
+        if ('aper_corr' in spec.colnames) & (use_aper_columns > 1):
+            ap_corr = spec['aper_corr']*1
+        else:
+            ap_corr = 1
+        
+        flam = spec['aper_flux']*spec['to_flam']*ap_corr
+        eflam = spec['aper_full_err']*spec['to_flam']*ap_corr
+    else:
+        flam = spec['flux']*spec['to_flam']
+        eflam = spec['full_err']*spec['to_flam']
     
     wrest = spec['wave']/(1+z)*1.e4
     wobs = spec['wave']

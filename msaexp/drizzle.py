@@ -861,7 +861,7 @@ def get_xlimits_from_lines(hdul, sn_thresh=2, max_dy=4, n_erode=2, n_dilate=4, s
     return xlim
 
 
-def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], offset_for_chi2=1., max_wht_percentile=98, verbose=True, find_line_kws={}, **kwargs):
+def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], offset_for_chi2=1., max_wht_percentile=98, verbose=True, find_line_kws={}, ap_radius=None, ap_center=None, **kwargs):
     """
     Optimal extraction from 2D arrays
                             
@@ -916,6 +916,16 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     max_wht_percentile : float
         Maximum percentile of WHT to consider valid
     
+    ap_center, ap_radius : int, int
+        Center and radius of fixed-width aperture extraction, in pixels.  If not
+        specified, then
+        
+        .. code-block:: python
+            :dedent:
+        
+            >>> ap_center = int(np.round(ytrace + fit_center))
+            >>> ap_radius = np.clip(int(np.round(prof_sigma*2.35/2)), 1, 3)
+
     verbose : bool
         Status messages
     
@@ -951,7 +961,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     ok = np.isfinite(sci2d*wht2d) & (wht2d > 0)
     if max_wht_percentile is not None:
         wperc = np.percentile(wht2d[ok], max_wht_percentile)
-        print('xxx max_wht_percentile', max_wht_percentile, ok.sum(), (ok & (wht2d < wperc)).sum(), wperc)
+        # print('xxx max_wht_percentile', max_wht_percentile, ok.sum(), (ok & (wht2d < wperc)).sum(), wperc)
         ok &= wht2d < wperc
         
     if profile_slice is not None:
@@ -1138,6 +1148,39 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     spec['err'] = err1d*to_ujy
     spec['flux'].unit = u.microJansky
     spec['err'].unit = u.microJansky
+    
+    # Aperture extraction
+    if ap_center is None:
+        ap_center = int(np.round(ytrace + fit_center))
+    elif ap_center < 0:
+        ap_center = np.nanargmax(prof1d)
+        
+    if ap_radius is None:
+        ap_radius = np.clip(int(np.round(fit_sigma*2.35/2)), 1, 3)
+    
+    sly = slice(ap_center - ap_radius,
+                ap_center + ap_radius+1)
+                
+    aper_sci = np.nansum(sci2d[sly,:], axis=0)
+    aper_var = np.nansum(1./wht2d[sly,:], axis=0)
+    aper_corr = np.nansum(profile2d, axis=0) / np.nansum(profile2d[sly,:], axis=0)
+    spec['aper_flux'] = aper_sci*to_ujy
+    spec['aper_err'] = np.sqrt(aper_var)*to_ujy
+    spec['aper_corr'] = aper_corr
+    spec['aper_flux'].unit = u.microJansky
+    spec['aper_err'].unit = u.microJansky
+    
+    spec['aper_flux'].description = f'Flux in trace aperture ({ap_center}, {ap_radius})'
+    spec['aper_err'].description = ('Flux uncertainty in trace aperture '
+                                    f'({ap_center}, {ap_radius})')
+                                    
+    spec.meta['APER_Y0'] = (ap_center, 'Fixed aperture center')
+    spec.meta['APER_DY'] = (ap_radius, 'Fixed aperture radius, pix')
+    
+    msg = f"msaexp.drizzle.extract_from_hdul: aperture extraction = "
+    msg += f"({ap_center}, {ap_radius})"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
+                             show_date=False)
     
     msk = np.isfinite(sci2d + wht2d)
     sci2d[~msk] = 0

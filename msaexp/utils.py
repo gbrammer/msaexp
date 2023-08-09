@@ -1782,38 +1782,58 @@ def drizzle_2d_pipeline(slits, output_root=None, standard_waves=True, drizzle_pa
     return hdul
 
 
-def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, ymax_sigma_scale=2, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', recenter=True, smooth_sigma=None):
+def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]), cmap='plasma_r', ymax=None, ymax_sigma_scale=2, vmin=-0.2, z=None, ny=None, output_root=None, unit='fnu', flam_scale=-20, recenter=True, use_aper_columns=False, smooth_sigma=None):
     """
     Figure showing drizzled hdu
     """
     import matplotlib.pyplot as plt
-    import grizli.utils
+    import astropy.units as u
     import scipy.ndimage as nd
+    import grizli.utils
     
-    sp = grizli.utils.GTable(hdul['SPEC1D'].data)
+    sp = grizli.utils.read_catalog(hdul['SPEC1D'])
     nx = len(sp)
 
     fig, a2d = plt.subplots(2,2, **subplot_args)
     axes = [a2d[0][0], a2d[1][0]]
     
-    if 'full_err' in sp.colnames:
-        err = sp['full_err']*1
+    if (use_aper_columns > 0) & ('aper_flux' in sp.colnames):
+        if ('aper_corr' in sp.colnames) & (use_aper_columns > 1):
+            ap_corr = sp['aper_corr']*1
+        else:
+            ap_corr = 1
+
+        if 'aper_full_err' in sp.colnames:
+            err = sp['aper_full_err']*ap_corr
+        else:
+            err = sp['aper_err']*ap_corr
+    
+        flux = sp['aper_flux']*ap_corr
     else:
-        err = sp['err']*1
-        
-    if unit == 'fnu':
+        if 'full_err' in sp.colnames:
+            err = sp['full_err']*1
+        else:
+            err = sp['err']*1
+    
         flux = sp['flux']*1
-    else:
-        flux = sp['flux']*(sp['wave']/2.)**-2
-        err *= (sp['wave']/2.)**-2
+    
+        ap_corr = 1
         
+    equiv = u.spectral_density(sp['wave'].data*u.micron)
+    flam_unit = 10**flam_scale*u.erg/u.second/u.cm**2/u.Angstrom
+    to_flam = (1*u.microJansky).to(flam_unit, equivalencies=equiv).value
+    
+    if unit != 'fnu':
+        flux *= to_flam #(sp['wave']/2.)**-2
+        err *= to_flam #(sp['wave']/2.)**-2
+    
     if ymax is None:
         ymax = np.nanpercentile(flux[err > 0], 90)*ymax_sigma_scale
         ymax = np.maximum(ymax, 7*np.median(err[err > 0]))
-        
-    yscl = hdul['PROFILE'].data.max()
+    
+    yscl = hdul['PROFILE'].data.max()*ap_corr
     if unit == 'flam':
-        yscl = yscl*(sp['wave']/2.)**2
+        yscl = yscl/to_flam #(sp['wave']/2.)**2
     
     if smooth_sigma is not None:
         xp = np.arange(-4*int(smooth_sigma), 5*int(smooth_sigma))
@@ -1850,7 +1870,12 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
         axes[0].set_yticks([y0-yt, y0, y0+yt])
         if recenter:
             axes[0].set_ylim(y0-2*yt, y0+2*yt)
-        
+    
+    if (use_aper_columns > 0) & ('APER_Y0' in sp.meta):
+        y0 = sp.meta['APER_Y0']
+        yt = sp.meta['APER_DY']
+        axes[0].set_yticks([y0-yt, y0+yt+1])
+    
     # Extraction profile
     ap = a2d[0][1]
     ptab = grizli.utils.GTable(hdul['PROF1D'].data)
@@ -1870,10 +1895,10 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     if pmax > 0:
         xpr = np.arange(len(ptab))
         ap.step(ptab['profile']/pmax, xpr, color='k',
-                where='mid', alpha=0.8, lw=2)
+                where='pre', alpha=0.8, lw=2)
         ap.step(ptab['pfit']/pmax, xpr, color='r',
-                where='mid', alpha=0.5, lw=1)
-        ap.fill_betweenx(xpr, xpr*0., ptab['pfit']/pmax,
+                where='pre', alpha=0.5, lw=1)
+        ap.fill_betweenx(xpr+0.5, xpr*0., ptab['pfit']/pmax,
                 color='r', alpha=0.2)
         
         ap.text(0.99, 0.0, f"{hdul['SPEC1D'].header['PROFCEN']:5.2f} ± {hdul['SPEC1D'].header['PROFSIG']:4.2f}", 
@@ -1885,10 +1910,10 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     ap.spines.top.set_visible(False)
     
     ap.set_ylim(axes[0].get_ylim())
-    ap.set_yticks([y0-yt, y0+yt])
+    ap.set_yticks(axes[0].get_yticks())
     
-    if recenter:
-        ap.set_ylim(y0-2*yt, y0+2*yt)
+    # if recenter:
+    #     ap.set_ylim(y0-2*yt, y0+2*yt)
         
     ap.grid()
     ap.set_xlim(-0.5, 1.3)
@@ -1906,11 +1931,13 @@ def drizzled_hdu_figure(hdul, tick_steps=None, xlim=None, subplot_args=dict(figs
     
     axes[1].set_ylim(-0.1*ymax, ymax)
     axes[1].set_xlabel(r'$\lambda_\mathrm{obs}$ [$\mu$m]')
+    
     if unit == 'fnu':
-        axes[1].set_ylabel(r'$f_\nu$ [$\mu$Jy]')
+        axes[1].set_ylabel(r'$f_\nu\ [\mu\mathrm{Jy}]$')
     else:
-        axes[1].set_ylabel(r'$f_\lambda$')
-        
+        _ylabel = r'$f_\lambda\ [10^{xxx}\ \mathrm{erg} \mathrm{s}^{-1} \mathrm{cm}^{-2} \mathrm{\AA}^{-1}]$'
+        axes[1].set_ylabel(_ylabel.replace('xxx',f'{flam_scale:.0f}'))
+    
     if tick_steps is None:
         if hdul[1].header['GRATING'] == 'PRISM':
             minor = 0.1
