@@ -742,6 +742,9 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
             
             extra = ['HeI-6680', 'SIII-6314']
             
+        line_names = []
+        line_waves = []
+        
         for l in [*hlines, *oiii, *o4363, 'OII',
                   *hene, 
                   *sii,
@@ -768,7 +771,22 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
 
             if lwi > wmax*1.e4:
                 continue
+            
+            line_names.append(l)
+            line_waves.append(lwi)
+        
+        so = np.argsort(line_waves)
+        
+        for iline in so:
+            l = line_names[iline]
+            lwi = lw[l][0]*(1+z)
 
+            if lwi < wmin*1.e4:
+                continue
+
+            if lwi > wmax*1.e4:
+                continue
+            
             # print(l, lwi, disp_r)
 
             name = f'line {l}'
