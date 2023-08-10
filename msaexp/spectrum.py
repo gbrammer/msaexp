@@ -776,6 +776,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
             line_waves.append(lwi)
         
         so = np.argsort(line_waves)
+        line_waves = np.array(line_waves)[so]
         
         for iline in so:
             l = line_names[iline]
@@ -1524,7 +1525,9 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     
     """
     global SCALE_UNCERTAINTY
-        
+    
+    lw, lr = utils.get_line_wavelengths()
+    
     spec = read_spectrum(file, sys_err=sys_err, **kwargs)
     
     if (use_aper_columns > 0) & ('aper_flux' in spec.colnames):
@@ -1619,11 +1622,31 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     print(f'# {file}\n# z = {z:.5f}\n# {time.ctime()}')
     
     cdict = {}
+    eqwidth = {}
+    
     for i, t in enumerate(templates):
         cdict[t] = [float(coeffs[i]), float(covard[i])]
         if t.startswith('line '):
-            print(f'{t:>20}   {coeffs[i]:8.1f} ± {covard[i]:8.1f}')
-    
+            lk = t.split()[-1]
+            
+            # Equivalent width:
+            # coeffs, line fluxes are in units of 1e-20 erg/s/cm2
+            # _mcont, continuum model is in units of 1-e20 erg/s/cm2/A
+            # so observed-frame equivalent width is roughly
+            # eqwi = coeffs[i] / _mcont[ wave_obs[i] ]
+            
+            if lk in lw:
+                lwi = lw[lk][0]*(1+z)/1.e4
+                continuum_i = np.interp(lwi, spec['wave'], _mcont)
+                eqwi = coeffs[i]/continuum_i
+            else:
+                eqwi = np.nan
+            
+            eqwidth[t] = eqwi
+            
+            print(f'{t:>20}   {coeffs[i]:8.1f} ± {covard[i]:8.1f} (EW={eqwi:9.1f})')
+            
+            
     if 'srcra' not in spec.meta:
         spec.meta['srcra'] = 0.0
         spec.meta['srcdec'] = 0.0
@@ -1651,6 +1674,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
             'dof': int(mask.sum()), 
             'fullchi2': float(full_chi2), 
             'contchi2': float(cont_chi2),
+            'eqwidth': eqwidth,
            }
             
     for k in ['z','wmin','wmax','dof','fullchi2','contchi2']:
