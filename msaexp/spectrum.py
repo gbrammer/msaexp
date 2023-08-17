@@ -95,7 +95,7 @@ def test():
     velocity_sigma = 100
     
     for i, zi in tqdm(enumerate(zg)):
-        lines = [self.emission_line(w*(1+zi)/1.e4,
+        lines = [self.fast_emission_line(w*(1+zi)/1.e4,
                                        line_flux=r,
                                        scale_disp=scale_disp,
                                        velocity_sigma=velocity_sigma,
@@ -115,7 +115,7 @@ def test():
     
     zi = zg[np.argmin(chi2)]
     
-    lines = [self.emission_line(w*(1+zi)/1.e4,
+    lines = [self.fast_emission_line(w*(1+zi)/1.e4,
                                    line_flux=r,
                                    scale_disp=scale_disp,
                                    velocity_sigma=velocity_sigma,
@@ -131,9 +131,7 @@ def test():
 
     model = A.T.dot(x[0])
 
-    
-    
-    
+
 class SpectrumSampler(object):
     """
     """
@@ -145,16 +143,27 @@ class SpectrumSampler(object):
         
         try:
             from .resample_numba import resample_template_numba as resample_func
+            from .resample_numba import sample_gaussian_line_numba as sample_line_func
         except ImportError:
             from .resample import resample_template as resample_func
+            from .resample import sample_gaussian_line as sample_line_func
             
         self.resample_func = resample_func
+        self.sample_line_func = sample_line_func
 
         self.initialize_spec(file)
 
         self.initialize_emission_line()
 
 
+    @property
+    def meta(self):
+        """
+        Metadata of `spec` table
+        """
+        return self.spec.meta
+    
+    
     def initialize_emission_line(self, nsamp=64):
         """
         Initialize emission line
@@ -174,6 +183,7 @@ class SpectrumSampler(object):
         self.spec_R_fwhm = self.spec['R'].astype(np.float32)
         
         self.valid = np.isfinite(self.spec['flux']/self.spec['full_err'])
+
 
     @property
     def meta(self):
@@ -202,6 +212,28 @@ class SpectrumSampler(object):
     def emission_line(self, line_um, line_flux=1, scale_disp=1.0, velocity_sigma=100., nsig=4):
         """
         Make an emission line template
+        
+        Parameters
+        ----------
+        line_um : float
+            Line center, microns
+        
+        line_flux : float
+            Line normalization
+        
+        scale_disp : float
+            Factor by which to scale the tabulated resolution FWHM curve
+        
+        velocity_sigma : float
+            Velocity sigma width in km/s
+        
+        nsig : int
+            Number of sigmas of the convolution kernel to sample
+        
+        Returns
+        -------
+        res : array-like
+            Gaussian emission line sampled at the spectrum wavelengths
         """
         res = self.resample_func(self.spec_wobs,
                                  self.spec_R_fwhm*scale_disp, 
@@ -211,6 +243,39 @@ class SpectrumSampler(object):
                                  nsig=nsig)
         
         return res*line_flux/line_um
+
+
+    def fast_emission_line(self, line_um, line_flux=1, scale_disp=1.0, velocity_sigma=100.):
+        """
+        Make an emission line template with numerically correct pixel integration
+        function
+        
+        Parameters
+        ----------
+        line_um : float
+            Line center, microns
+        
+        line_flux : float
+            Line normalization
+        
+        scale_disp : float
+            Factor by which to scale the tabulated resolution FWHM curve
+        
+        velocity_sigma : float
+            Velocity sigma width in km/s
+        
+        Returns
+        -------
+        res : array-like
+            Gaussian emission line sampled at the spectrum wavelengths
+        """
+        res = self.sample_line_func(self.spec_wobs,
+                                    self.spec_R_fwhm*scale_disp, 
+                                    line_um,
+                                    line_flux=line_flux,
+                                    velocity_sigma=velocity_sigma, 
+                                    )
+        return res
 
 
     def bspline_array(self, nspline=13, log=False, get_matrix=True):
@@ -233,8 +298,15 @@ class SpectrumSampler(object):
                                        )
             
         return bspl
-
-
+    
+    
+    def __getitem__(self, key):
+        """
+        Return column of the `spec` table
+        """
+        return self.spec[key]
+    
+    
 def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
     """
     Smooth a template with a wavelength-dependent dispersion function
@@ -799,7 +871,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                 else:
                     vel_i = vel_width
                     
-                line_i = sampler.emission_line(lwi,
+                line_i = sampler.fast_emission_line(lwi,
                                     line_flux=lri/np.sum(lr[l]),
                                     scale_disp=scale_disp,
                                     velocity_sigma=vel_i,)
@@ -865,7 +937,7 @@ def make_templates(sampler, z, bspl={}, eazy_templates=None, vel_width=100, broa
                     else:
                         vel_i = vel_width
                     
-                    line_i = sampler.emission_line(lwi,
+                    line_i = sampler.fast_emission_line(lwi,
                                         line_flux=lri/np.sum(lr[l]),
                                         scale_disp=scale_disp,
                                         velocity_sigma=vel_i,)

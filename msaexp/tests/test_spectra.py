@@ -18,7 +18,8 @@ eazy_templates = None
 
 def data_path():
     return os.path.join(os.path.dirname(__file__), 'data')
-    
+
+
 def test_init():
     """
     Initialize pipeline object with previously-extracted slitlets
@@ -223,4 +224,30 @@ def test_fit_redshift():
         #                    [75.95547, 3.7042],
         #                    rtol=0.5))
 
+
+def test_sampler_object():
+    """
+    Test the spectrum.SpectrumSampler methods
+    """
+    
+    os.chdir(data_path())
+    
+    spec = spectrum.SpectrumSampler('ceers-prism.1345_933.v0.spec.fits')
+    
+    assert(spec.valid.sum() == 364)
+    
+    # emission line
+    z = 4.2341
+    line_um = 3727.*(1+z)/1.e4
+    
+    
+    for s in [1, 1.3, 1.8, 2.]:
+        for v in [50, 100, 300, 500, 1000]:
+            kws = dict(scale_disp=s, velocity_sigma=v)
+
+            gau = spec.emission_line(line_um, line_flux=1, **kws)
+            assert(np.allclose(np.trapz(gau, spec.spec_wobs), 1., rtol=1.e-3))
+
+            gau2 = spec.fast_emission_line(line_um, line_flux=1, **kws)
+            assert(np.allclose(np.trapz(gau2, spec.spec_wobs), 1., rtol=1.e-3))
 
