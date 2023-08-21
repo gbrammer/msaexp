@@ -2269,6 +2269,10 @@ def make_nirspec_gaussian_profile(waves, sigma=0.5, ycenter=0., ny=31, weight=1,
     
     prf = np.diff(cdf, axis=0)
     
+    ## Don't use weights
+    #weight = np.ones_like(prf)
+    weight = (weight > 0)
+    
     if bkg_offset is not None:
         if bkg_offset > 0:
             bkgn = prf*0.
@@ -2306,7 +2310,11 @@ def objfun_prf(params, waves, sci2d, wht2d, ycenter, sigma, bkg_offset, bkg_pari
     prf *= prf > 0
     
     ok = np.isfinite(sci2d*prf*wht2d) & (wht2d > 0) & (sci2d != 0) #& (prf != 0)
-    norm = (sci2d*prf*wht2d)[ok].sum() / (prf**2*wht2d)[ok].sum()
+    # ok &= sci2d*np.sqrt(wht2d) > -5
+    
+    okp = np.isfinite(prf)
+    
+    norm = (sci2d*prf*wht2d)[ok & okp].sum() / (prf**2*wht2d)[ok & okp].sum()
     model = norm*prf
         
     if 0:
