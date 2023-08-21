@@ -41,6 +41,8 @@ import astropy.units as u
 import eazy.igm
 igm = eazy.igm.Inoue14()
 
+from . import drizzle
+
 SCALE_UNCERTAINTY = 1.0
 
 # try:
@@ -54,7 +56,9 @@ SCALE_UNCERTAINTY = 1.0
 
 FFTSMOOTH = False
 
-__all__ = ["fit_redshift", "plot_spectrum", "read_spectrum", "calc_uncertainty_scale"]
+__all__ = ["fit_redshift", "fit_redshift_grid", "plot_spectrum", 
+           "read_spectrum", "calc_uncertainty_scale",
+           "SpectrumSampler"]
 
 def test():
     
@@ -133,27 +137,69 @@ def test():
 
 
 class SpectrumSampler(object):
-    """
-    """
-    def __init__(self, file, sys_err=0.02, **kwargs):
+        
+    spec = {}
+    spec_wobs = None
+    spec_R_fwhm = None
+    valid = None
+    
+    def __init__(self, spec_input, **kwargs):
         """
         Helper functions for sampling templates onto the wavelength grid
         of an observed spectrum
-        """
         
+        Parameters
+        ----------
+        spec_input : str, `~astropy.io.fits.HDUList`
+            - `str` : spectrum filename, usually `[root].spec.fits`
+            - `~astropy.io.fits.HDUList` : FITS data
+        
+        Attributes
+        ----------
+        resample_func : func
+            Template resampling function, from 
+            `msaexp.resample_template_numba.msaexp.resample_numba` if possible and 
+            `msaexp.resample.resample_template` otherwise
+        
+        sample_line_func : func
+            Emission line function, from 
+            `msaexp.resample_template_numba.msaexp.sample_gaussian_line_numba` if 
+             possible and `msaexp.resample.sample_line_func` otherwise
+        
+        spec : `~astropy.table.Table`
+            1D spectrum table from the `SPEC1D HDU of ``file``
+        
+        spec_wobs : array-like
+            Observed wavelengths, microns
+        
+        spec_R_fwhm : array-like
+            Tabulated spectral resolution `R = lambda / dlambda`, assumed to be
+            defined as FWHM
+        
+        valid : array-like
+            Boolean array of valid 1D data
+        
+        """
         try:
             from .resample_numba import resample_template_numba as resample_func
             from .resample_numba import sample_gaussian_line_numba as sample_line_func
         except ImportError:
             from .resample import resample_template as resample_func
             from .resample import sample_gaussian_line as sample_line_func
-            
+        
         self.resample_func = resample_func
         self.sample_line_func = sample_line_func
-
-        self.initialize_spec(file)
+                
+        self.initialize_spec(spec_input)
 
         self.initialize_emission_line()
+
+
+    def __getitem__(self, key):
+        """
+        Return column of the `spec` table
+        """
+        return self.spec[key]
 
 
     @property
@@ -174,11 +220,26 @@ class SpectrumSampler(object):
         self.yline /= np.trapz(self.yline, self.xline)
 
 
-    def initialize_spec(self, file, **kwargs):
+    def initialize_spec(self, spec_input, **kwargs):
         """
+        Read spectrum data from file and initialize attributes
+        
+        Parameters
+        ----------
+        spec_input : str
+            Filename, usually `[root].spec.fits`
+        
+        kwargs : dict
+            Keyword arguments passed to `msaexp.spectrum.read_spectrum`
+        
         """
-        self.file = file
-        self.spec = read_spectrum(file, **kwargs)
+        self.spec_input = spec_input
+        if isinstance(spec_input, str):
+            self.file = spec_input
+        else:
+            self.file = None
+            
+        self.spec = read_spectrum(spec_input, **kwargs)
         self.spec_wobs = self.spec['wave'].astype(np.float32)
         self.spec_R_fwhm = self.spec['R'].astype(np.float32)
         
@@ -192,6 +253,34 @@ class SpectrumSampler(object):
 
     def resample_eazy_template(self, template, z=0, scale_disp=1.0, velocity_sigma=100., fnu=True, nsig=4):
         """
+        Smooth and resample an `eazy.templates.Template` object onto the observed
+        wavelength grid of a spectrum
+        
+        Parameters
+        ----------
+        template : `eazy.templates.Template`
+            Template object
+        
+        z : float
+            Redshift
+        
+        scale_disp : float
+            Factor multiplied to the tabulated spectral resolution before sampling
+        
+        velocity_sigma : float
+            Gaussian velocity broadening factor, km/s
+        
+        fnu : bool
+            Return resampled template in f-nu flux densities
+        
+        nsig : int
+            Number of standard deviations to sample for the convolution
+        
+        Returns
+        -------
+        res : array-like
+            Template flux density smoothed and resampled at the spectrum wavelengths
+        
         """
         templ_wobs = template.wave.astype(np.float32)*(1+z)/1.e4
         if fnu:
@@ -211,7 +300,7 @@ class SpectrumSampler(object):
     
     def emission_line(self, line_um, line_flux=1, scale_disp=1.0, velocity_sigma=100., nsig=4):
         """
-        Make an emission line template
+        Make an emission line template - **deprecated in favor of fast_emission_line**
         
         Parameters
         ----------
@@ -280,6 +369,24 @@ class SpectrumSampler(object):
 
     def bspline_array(self, nspline=13, log=False, get_matrix=True):
         """
+        Initialize bspline templates for continuum fits
+        
+        Parameters
+        ----------
+        nspline : int
+            Number of spline functions to sample across the wavelength range
+        
+        log : bool
+            Sample in log(wavelength)
+        
+        get_matrix : bool
+            If true, return array data.  Otherwise, return template objects
+        
+        Returns
+        -------
+        bspl : array-like
+            bspline data, depending on ``get_matrix``
+        
         """
         if get_matrix:
             bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
@@ -298,18 +405,41 @@ class SpectrumSampler(object):
                                        )
             
         return bspl
-    
-    
-    def __getitem__(self, key):
+
+
+    def redo_1d_extraction(self, **kwargs):
         """
-        Return column of the `spec` table
+        Redo 1D extraction from 2D arrays with `msaexp.drizzle.make_optimal_extraction`
+        
+        Parameters
+        ----------
+        kwargs : dict
+            Keyword arguments passed to `msaexp.drizzle.make_optimal_extraction`
+        
+        Returns
+        -------
+        output : `~msaexp.spectrum.SpectrumSampler`
+            A new `~msaexp.spectrum.SpectrumSampler` object
+        
         """
-        return self.spec[key]
-    
-    
+        
+        if isinstance(self.spec_input, pyfits.HDUList):
+            out_hdul = drizzle.extract_from_hdul(self.spec_input, **kwargs)
+        else:
+            with pyfits.open(self.file) as hdul:
+                out_hdul = drizzle.extract_from_hdul(hdul, **kwargs)
+        
+        output = SpectrumSampler(out_hdul)
+        
+        return output
+
+
 def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
     """
-    Smooth a template with a wavelength-dependent dispersion function
+    Smooth a template with a wavelength-dependent dispersion function.
+    
+    *NB:* Not identical to the preferred
+    `~msaexp.spectrum.SpectrumSampler.resample_eazy_template`
     
     Parameters
     ----------
@@ -1437,7 +1567,7 @@ def setup_spectrum(file, **kwargs):
     return read_spectrum(file, **kwargs)
 
 
-def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 0.8], **kwargs):
+def read_spectrum(inp, spectrum_extension='SPEC1D', sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 0.8], **kwargs):
     """
     Read a spectrum and apply flux and/or uncertainty scaling
     
@@ -1452,9 +1582,13 @@ def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 
     
     Parameters
     ----------
-    file : str
+    inp : str or `~astropy.io.fits.HDUList`
         Fits filename of a file that includes a `~astropy.io.fits.BinTableHDU` table of 
-        an extracted spectrum
+        an extracted spectrum.  Alternatively, can be an `~astropy.io.fits.HDUList`
+        itself
+    
+    spectrum_extension : str
+        Extension name of 1D spectrum in file or HDUList input
     
     sys_err : float
         Systematic uncertainty added in quadrature with `err` array
@@ -1488,25 +1622,38 @@ def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 
     
     import scipy.ndimage as nd
     
-    with pyfits.open(file) as im:
-        if 'SPEC1D' in im:
-            spec = utils.read_catalog(im['SPEC1D'])
-            if 'POLY0' in spec.meta:
-                pc = []
-                for pi in range(10):
-                    if f'POLY{pi}' in spec.meta:
-                        pc.append(spec.meta[f'POLY{pi}'])
-                
-                corr = np.polyval(pc, np.log(spec['wave']*1.e4))
-                spec['flux'] *= corr
-                spec['err'] *= corr
-                spec['corr'] = corr
-            else:
-                spec['corr'] = 1.
+    if isinstance(inp, str):
+        if 'fits' in inp:
+            with pyfits.open(inp) as hdul:
+                if spectrum_extension in hdul:
+                    spec = utils.read_catalog(hdul[spectrum_extension])
+                else:
+                    spec = utils.read_catalog(inp)
         else:
-            spec = utils.read_catalog(file)    
-            spec['corr'] = 1.
-      
+            spec = utils.read_catalog(inp)
+            
+    elif isinstance(inp, pyfits.HDUList):
+        if spectrum_extension in inp:
+            spec = utils.read_catalog(inp[spectrum_extension])
+        else:
+            msg = f'{spectrum_extension} extension not found in HDUList input'
+            raise ValueError(msg)
+    else:
+        spec = utils.read_catalog(inp)
+
+    if 'POLY0' in spec.meta:
+        pc = []
+        for pi in range(10):
+            if f'POLY{pi}' in spec.meta:
+                pc.append(spec.meta[f'POLY{pi}'])
+        
+        corr = np.polyval(pc, np.log(spec['wave']*1.e4))
+        spec['flux'] *= corr
+        spec['err'] *= corr
+        spec['corr'] = corr
+    else:
+        spec['corr'] = 1.
+
     if 'escale' not in spec.colnames:  
         if hasattr(SCALE_UNCERTAINTY,'__len__'):
             if len(SCALE_UNCERTAINTY) < 6:
@@ -1584,7 +1731,7 @@ def read_spectrum(file, sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 
     return spec
 
 
-def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, use_aper_columns=False, **kwargs):
+def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, use_aper_columns=False, label=None, **kwargs):
     """
     Make a diagnostic figure
     
@@ -1599,9 +1746,22 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     global SCALE_UNCERTAINTY
     
     lw, lr = utils.get_line_wavelengths()
+        
+    if isinstance(inp, str):
+        sampler = SpectrumSampler(inp, **kwargs)
+        file = inp
+    elif isinstance(inp, pyfits.HDUList):
+        sampler = SpectrumSampler(inp, **kwargs)
+        file = None
+    else:
+        file = None
+        sampler = inp
     
-    spec = read_spectrum(file, sys_err=sys_err, **kwargs)
+    if (label is None) & (file is not None):
+        label = os.path.basename(file)
     
+    spec = sampler.spec
+        
     if (use_aper_columns > 0) & ('aper_flux' in spec.colnames):
         if ('aper_corr' in spec.colnames) & (use_aper_columns > 1):
             ap_corr = spec['aper_corr']*1
@@ -1621,8 +1781,6 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     flam[~mask] = np.nan
     eflam[~mask] = np.nan
     
-    sampler = SpectrumSampler(file, **kwargs)
-    spec = sampler.spec
     bspl = sampler.bspline_array(nspline=nspline, get_matrix=True)
 
     # bspl = utils.bspline_templates(wave=spec['wave']*1.e4,
@@ -1691,7 +1849,10 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
         covar = np.eye(N, N)
     
     print(f'\n# line flux err\n# flux x 10^-20 erg/s/cm2')
-    print(f'# {file}\n# z = {z:.5f}\n# {time.ctime()}')
+    if label is not None:
+        print(f'# {label}')
+    
+    print(f'# z = {z:.5f}\n# {time.ctime()}')
     
     cdict = {}
     eqwidth = {}
@@ -1729,6 +1890,7 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     
     data = {'z': float(z),
             'file':file,
+            'label':label,
             'ra': float(spec.meta['srcra']),
             'dec': float(spec.meta['srcdec']),
             'name': str(spec.meta['srcname']),
@@ -1885,7 +2047,8 @@ def plot_spectrum(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits',
     else:
         fig.tight_layout(pad=0.8)
     
-    fig.text(0.015*12./12, 0.005, f'{os.path.basename(file)}',
+    if label is not None:
+        fig.text(0.015*12./12, 0.005, f'{label}',
              ha='left', va='bottom',
              transform=fig.transFigure, fontsize=8)
     
