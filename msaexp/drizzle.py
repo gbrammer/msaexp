@@ -866,7 +866,7 @@ def get_xlimits_from_lines(hdul, sn_thresh=2, max_dy=4, n_erode=2, n_dilate=4, s
     return xlim
 
 
-def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], offset_for_chi2=1., max_wht_percentile=98, verbose=True, find_line_kws={}, ap_radius=None, ap_center=None, **kwargs):
+def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=None, prf_sigma=1.0, sigma_bounds=(0.5, 2.5), center_limit=4, fit_prf=True, fix_center=False, fix_sigma=False, trim=0, bkg_offset=6, bkg_parity=[-1,1], offset_for_chi2=1., max_wht_percentile=None, max_med_wht_factor=10, verbose=True, find_line_kws={}, ap_radius=None, ap_center=None, **kwargs):
     """
     Optimal extraction from 2D arrays
                             
@@ -921,6 +921,9 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     max_wht_percentile : float
         Maximum percentile of WHT to consider valid
     
+    max_med_wht_factor : float
+        Maximum weight value relative to the median nonzero weight to consider valid
+    
     ap_center, ap_radius : int, int
         Center and radius of fixed-width aperture extraction, in pixels.  If not
         specified, then
@@ -968,7 +971,14 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         wperc = np.percentile(wht2d[ok], max_wht_percentile)
         # print('xxx max_wht_percentile', max_wht_percentile, ok.sum(), (ok & (wht2d < wperc)).sum(), wperc)
         ok &= wht2d < wperc
+    
+    if max_med_wht_factor is not None:
+        med_wht = np.nanmedian(wht2d[ok])
+        ok &= wht2d < max_med_wht_factor*med_wht
         
+    wht_mask = wht2d*1
+    wht_mask[~ok] = 0.
+    
     if profile_slice is not None:
         if not isinstance(profile_slice, slice):
             if isinstance(profile_slice[0], int):
@@ -984,8 +994,8 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
                 print(f'Wavelength slice: {profile_slice} > {xsl} pix')
                 profile_slice = slice(*xsl)
             
-        prof1d = np.nansum((sci2d * wht2d)[:,profile_slice], axis=1) 
-        prof1d /= np.nansum(wht2d[:,profile_slice], axis=1)
+        prof1d = np.nansum((sci2d * wht_mask)[:,profile_slice], axis=1) 
+        prof1d /= np.nansum(wht_mask[:,profile_slice], axis=1)
             
         slice_limits = profile_slice.start, profile_slice.stop
         
@@ -994,7 +1004,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         ok &= pmask
         
     else:
-        prof1d = np.nansum(sci2d * wht2d, axis=1) / np.nansum(wht2d, axis=1)
+        prof1d = np.nansum(sci2d * wht_mask, axis=1) / np.nansum(wht_mask, axis=1)
         slice_limits = 0, sh[1]
     
     xpix = np.arange(sh[0])
@@ -1017,7 +1027,6 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     #### Integrated gaussian profile
     fit_type = 3 - 2*fix_center - 1*fix_sigma
     
-    wht_mask = wht2d*1
     wht_mask[~ok] = 0.
     
     p00_name = None
@@ -1093,15 +1102,15 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
         else:
             fit_center, fit_sigma = _res.x
     
-    wht1d = np.nansum(wht2d*profile2d**2, axis=0)
-    sci1d = np.nansum(sci2d*wht2d*profile2d, axis=0) / wht1d
+    wht1d = np.nansum(wht_mask*profile2d**2, axis=0)
+    sci1d = np.nansum(sci2d*wht_mask*profile2d, axis=0) / wht1d
     
     if profile_slice is not None:
-        pfit1d = np.nansum((wht2d*profile2d*sci1d)[:,profile_slice], axis=1) 
-        pfit1d /= np.nansum(wht2d[:,profile_slice], axis=1)
+        pfit1d = np.nansum((wht_mask*profile2d*sci1d)[:,profile_slice], axis=1) 
+        pfit1d /= np.nansum((wht_mask)[:,profile_slice], axis=1)
     else:
-        pfit1d = np.nansum(profile2d*sci1d*wht2d, axis=1)
-        pfit1d /= np.nansum(wht2d, axis=1)
+        pfit1d = np.nansum(profile2d*sci1d*wht_mask, axis=1)
+        pfit1d /= np.nansum(wht_mask, axis=1)
     
     if trim > 0:
         bad = nd.binary_dilation(wht1d <= 0, iterations=trim)
@@ -1125,6 +1134,9 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     spec.meta['PROFSTRT'] = slice_limits[0], 'Start of profile slice'
     spec.meta['PROFSTOP'] = slice_limits[1], 'End of profile slice'
     spec.meta['YTRACE'] = ytrace, 'Expected center of trace'
+    
+    spec.meta['MAXWPERC'] = max_wht_percentile, 'Maximum weight percentile'
+    spec.meta['MAXWFACT'] = max_med_wht_factor, 'Maximum weight percentile'
     
     prof_tab = grizli.utils.GTable()
     prof_tab.meta['VERSION'] = msaexp_version, 'msaexp software version'
@@ -1167,7 +1179,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
                 ap_center + ap_radius+1)
                 
     aper_sci = np.nansum(sci2d[sly,:], axis=0)
-    aper_var = np.nansum(1./wht2d[sly,:], axis=0)
+    aper_var = np.nansum(1./wht_mask[sly,:], axis=0)
     aper_corr = np.nansum(profile2d, axis=0) / np.nansum(profile2d[sly,:], axis=0)
     spec['aper_flux'] = aper_sci*to_ujy
     spec['aper_err'] = np.sqrt(aper_var)*to_ujy
@@ -1187,11 +1199,11 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
                              show_date=False)
     
-    msk = np.isfinite(sci2d + wht2d)
+    msk = np.isfinite(sci2d + wht_mask)
     sci2d[~msk] = 0
-    wht2d[~msk] = 0
+    wht_mask[~msk] = 0
     
-    return sci2d*to_ujy, wht2d/to_ujy**2, profile2d, spec, prof_tab
+    return sci2d*to_ujy, wht_mask/to_ujy**2, profile2d, spec, prof_tab
 
 
 def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, line_limit_kwargs={}, **kwargs):
