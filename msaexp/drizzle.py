@@ -188,6 +188,8 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         `bkg_offset*bkg_parity` pixels.  The standard three-shutter nod pattern 
         corresponds to about 5 pixels.  An optimal combination seems
         to be ``fix_slope=0.2``, ``bkg_offset=6``.
+        
+        If ``bkg_offset < 0``, then don't do shifted offset.
     
     mask_padded : bool
         Mask pixels of slitlets that had been padded around the nominal MSA 
@@ -585,17 +587,6 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             msk = ~np.isfinite(avg + avg_w)
             avg[msk] = 0
             avg_w[msk] = 0
-            
-        # Background by rolling full drizzled array
-        bkg_num = avg*0.
-        bkg_w = avg*0
-        for s in bkg_parity:
-            bkg_num += np.roll(avg*avg_w, s*bkg_offset, axis=0)
-            bkg_w += np.roll(avg_w, s*bkg_offset, axis=0)
-
-        bkg_w[:bkg_offset] = 0
-        bkg_w[-bkg_offset:] = 0
-        bkg = bkg_num/bkg_w
         
         # Use master background if supplied
         if master_bkg is not None:
@@ -605,7 +596,21 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
             elif master_bkg in [0, 0.]:
                 bkg = np.zeros_like(bkg)
                 bkg_w = np.zeros_like(bkg)
-        
+        elif bkg_offset < 0:
+            bkg = np.zeros_like(avg)
+            bkg_w = np.zeros_like(avg)
+        else:
+            # Background by rolling full drizzled array
+            bkg_num = avg*0.
+            bkg_w = avg*0
+            for s in bkg_parity:
+                bkg_num += np.roll(avg*avg_w, s*bkg_offset, axis=0)
+                bkg_w += np.roll(avg_w, s*bkg_offset, axis=0)
+
+            bkg_w[:bkg_offset] = 0
+            bkg_w[-bkg_offset:] = 0
+            bkg = bkg_num/bkg_w
+             
         # Set masked back to nan
         avg[msk] = np.nan
         avg_w[msk] = np.nan
@@ -718,7 +723,7 @@ def show_drizzled_slits(slits, sci, ivar, hdul, figsize=FIGSIZE, variable_size=T
     bkg = hdul['BKG'].data
     
     h = hdul['SCI'].header
-    bkg_offset = h['BKGOFF']
+    bkg_offset = np.abs(h['BKGOFF'])
     x0 = h['SRCYPIX']    
     y0 = (avg.shape[0]-1)//2
     
@@ -792,7 +797,7 @@ def show_drizzled_product(hdul, figsize=FIGSIZE, imshow_kws=IMSHOW_KWS):
     bkg = hdul['BKG'].data
     
     h = hdul['SCI'].header
-    bkg_offset = h['BKGOFF']
+    bkg_offset = np.abs(h['BKGOFF'])
     
     x0 = h['SRCYPIX']    
     y0 = (avg.shape[0]-1)//2
@@ -1217,19 +1222,27 @@ def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, line
         Modified HDU including 1D extraction
     
     """
-        
+    
     if master_bkg is None:
-        bkg_i = hdul['BKG'].data
+        if 'BKG' in hdul:
+            bkg_i = hdul['BKG'].data
+        else:
+            bkg_i = None
     else:
         bkg_i = master_bkg
     
     sci = hdul['SCI']
-    sci2d = sci.data - bkg_i
+    sci2d = sci.data*1
+    if bkg_i is not None:
+        sci2d -= bkg_i
     
     wht2d = hdul['WHT'].data*1
 
     if 'WAVE' in hdul:
         waves = hdul['WAVE'].data
+    elif 'SPEC1D' in hdul:
+        tab = grizli.utils.read_catalog(hdul['SPEC1D'])
+        waves = tab['wave'].data
     else:
         _gr = sci.header['GRATING'].lower()
         waves = utils.get_standard_wavelength_grid(_gr,
