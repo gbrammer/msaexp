@@ -4,6 +4,9 @@ from grizli import utils
 from numba import jit, njit
 from math import erf
 
+__all__ = ["resample_template_numba", "sample_gaussian_line_numba",
+           "pixel_integrated_gaussian_numba"]
+
 @jit(nopython=True, fastmath=True, error_model='numpy')
 def resample_template_numba(spec_wobs, spec_R_fwhm, templ_wobs, templ_flux, velocity_sigma=100, nsig=5, fill_value=0.):
     """

@@ -15,4 +15,9 @@ Additional API
 .. automodapi:: msaexp.msa
     :no-inheritance-diagram:
 
+.. automodapi:: msaexp.resample
+    :no-inheritance-diagram:
+
+.. automodapi:: msaexp.resample_numba
+    :no-inheritance-diagram:
 

@@ -2,6 +2,9 @@ import numpy as np
 import os
 from grizli import utils
 
+__all__ = ["resample_template", "sample_gaussian_line",
+           "pixel_integrated_gaussian"]
+           
 def resample_template(spec_wobs, spec_R_fwhm, templ_wobs, templ_flux, velocity_sigma=100, nsig=5):
     """
     Resample a high resolution template/model on the wavelength grid of a

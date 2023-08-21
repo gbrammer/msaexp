@@ -300,7 +300,8 @@ class SpectrumSampler(object):
     
     def emission_line(self, line_um, line_flux=1, scale_disp=1.0, velocity_sigma=100., nsig=4):
         """
-        Make an emission line template - **deprecated in favor of fast_emission_line**
+        Make an emission line template - *deprecated in favor of*
+        `~msaexp.spectrum.SpectrumSampler.fast_emission_line`
         
         Parameters
         ----------
@@ -421,6 +422,47 @@ class SpectrumSampler(object):
         output : `~msaexp.spectrum.SpectrumSampler`
             A new `~msaexp.spectrum.SpectrumSampler` object
         
+        Examples
+        --------
+        
+        .. plot::
+            :include-source:
+        
+            # Compare 1D extractions
+            from msaexp import spectrum
+            import matplotlib.pyplot as plt
+
+            sp = spectrum.SpectrumSampler('https://s3.amazonaws.com/msaexp-nirspec/extractions/ceers-ddt-v1/ceers-ddt-v1_prism-clear_2750_1598.spec.fits')
+
+            fig, axes = plt.subplots(2,1,figsize=(8,5), sharex=True, sharey=True)
+
+            # Boxcar extraction, center pixel +/- 2 pix
+            ax = axes[0]
+            new = sp.redo_1d_extraction(ap_radius=2, bkg_offset=-6)
+
+            ax.plot(sp['wave'], sp['flux'], alpha=0.5, label='Original optimal extraction')
+            ax.plot(new['wave'], new['aper_flux'], alpha=0.5, label='Boxcar, y = 23 ± 2')
+
+            ax.grid()
+            ax.legend()
+
+            # Extractions above and below the center
+            ax = axes[1]
+            low = sp.redo_1d_extraction(ap_center=21, ap_radius=1)
+            hi = sp.redo_1d_extraction(ap_center=25, ap_radius=1)
+
+            ax.plot(low['wave'], low['aper_flux']*1.5, alpha=0.5, label='Below, y = 21 ± 1', color='b')
+            ax.plot(hi['wave'], hi['aper_flux']*3, alpha=0.5, label='Above, y = 25 ± 1', color='r')
+
+            ax.set_xlim(0.9, 5.3)
+            ax.grid()
+            ax.legend()
+
+            ax.set_xlabel(r'$\lambda$')
+            for ax in axes:
+                ax.set_ylabel(r'$\mu\mathrm{Jy}$')
+
+            fig.tight_layout(pad=1)
         """
         
         if isinstance(self.spec_input, pyfits.HDUList):
