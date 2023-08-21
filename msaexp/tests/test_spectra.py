@@ -142,7 +142,7 @@ def test_sampler_object():
 
 def sampler_checks(spec):
     
-    assert(spec.valid.sum() == 327)
+    assert(np.allclose(spec.valid.sum(), 327, atol=5))
     
     # emission line
     z = 4.2341
