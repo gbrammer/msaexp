@@ -42,6 +42,7 @@ import eazy.igm
 igm = eazy.igm.Inoue14()
 
 from . import drizzle
+from . import utils as msautils
 
 SCALE_UNCERTAINTY = 1.0
 
@@ -474,6 +475,30 @@ class SpectrumSampler(object):
         output = SpectrumSampler(out_hdul)
         
         return output
+
+
+    def drizzled_hdu_figure(self, **kwargs):
+        """
+        Run `msaexp.utils.drizzled_hdu_figure` on array data
+        
+        Parameters
+        ----------
+        kwargs : dict
+            Keyword arguments passed to `msaexp.utils.drizzled_hdu_figure`
+        
+        Returns
+        -------
+        fig : `~matplotlib.figure.Figure`
+            Spectrum figure
+        
+        """
+        if isinstance(self.spec_input, pyfits.HDUList):
+            fig = msautils.drizzled_hdu_figure(self.spec_input, **kwargs)
+        else:
+            with pyfits.open(self.file) as hdul:
+                fig = msautils.drizzled_hdu_figure(hdul, **kwargs)
+        
+        return fig
 
 
 def smooth_template_disp_eazy(templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True, with_igm=True):
