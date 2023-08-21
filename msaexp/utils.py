@@ -2270,14 +2270,15 @@ def make_nirspec_gaussian_profile(waves, sigma=0.5, ycenter=0., ny=31, weight=1,
     prf = np.diff(cdf, axis=0)
     
     if bkg_offset is not None:
-        bkgn = prf*0.
-        bkgd = bkgn*0
+        if bkg_offset > 0:
+            bkgn = prf*0.
+            bkgd = bkgn*0
         
-        for p in bkg_parity:
-            bkgn += np.roll(prf*weight, p*bkg_offset, axis=0)
-            bkgd += np.roll(weight, p*bkg_offset, axis=0)
+            for p in bkg_parity:
+                bkgn += np.roll(prf*weight, p*bkg_offset, axis=0)
+                bkgd += np.roll(weight, p*bkg_offset, axis=0)
             
-        prf -= bkgn/bkgd
+            prf -= bkgn/bkgd
         
     return prf
 
