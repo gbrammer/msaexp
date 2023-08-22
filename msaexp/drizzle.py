@@ -1136,7 +1136,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     spec.meta['YTRACE'] = ytrace, 'Expected center of trace'
     
     spec.meta['MAXWPERC'] = max_wht_percentile, 'Maximum weight percentile'
-    spec.meta['MAXWFACT'] = max_med_wht_factor, 'Maximum weight percentile'
+    spec.meta['MAXWFACT'] = max_med_wht_factor, 'Maximum weight factor'
     
     prof_tab = grizli.utils.GTable()
     prof_tab.meta['VERSION'] = msaexp_version, 'msaexp software version'
@@ -1203,7 +1203,7 @@ def make_optimal_extraction(waves, sci2d, wht2d, profile_slice=None, prf_center=
     sci2d[~msk] = 0
     wht_mask[~msk] = 0
     
-    return sci2d*to_ujy, wht_mask/to_ujy**2, profile2d, spec, prof_tab
+    return sci2d*to_ujy, wht2d/to_ujy**2, profile2d, spec, prof_tab
 
 
 def extract_from_hdul(hdul, prf_center=None, master_bkg=None, verbose=True, line_limit_kwargs={}, **kwargs):
