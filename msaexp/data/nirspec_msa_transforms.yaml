@@ -98,52 +98,15 @@ coeffs:
       c3_0: -1.5922185275530333e-09
 degree: 3
 rms:
-  1: !!python/tuple
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - &id001 !!python/object/apply:numpy.dtype
-      args:
-      - f8
-      - false
-      - true
-      state: !!python/tuple
-      - 3
-      - <
-      - null
-      - null
-      - null
-      - -1
-      - -1
-      - 0
-    - !!binary |
-      AnskV6oKJz8=
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - *id001
-    - !!binary |
-      BBehaT6fJz8=
-  2: !!python/tuple
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - *id001
-    - !!binary |
-      iXJ8QBxNJD8=
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - *id001
-    - !!binary |
-      SE713r2lKD8=
-  3: !!python/tuple
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - *id001
-    - !!binary |
-      rOlzjVHmIj8=
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - *id001
-    - !!binary |
-      yuYF127BMD8=
-  4: !!python/tuple
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - *id001
-    - !!binary |
-      xUnCscGbET8=
-  - !!python/object/apply:numpy.core.multiarray.scalar
-    - *id001
-    - !!binary |
-      EH1N58RrMD8=
+  1:
+  - 0.00017579392767515944
+  - 0.00018022190926297182
+  2:
+  - 0.00015488595840275715
+  - 0.00018804495582945752
+  3:
+  - 0.00014419312967801684
+  - 0.0002556701283747796
+  4:
+  - 6.717080799693079e-05
+  - 0.0002505641671656936
