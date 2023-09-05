@@ -248,6 +248,9 @@ class MSAMetafile():
         src_table : `~astropy.table.Table`
             Table of source information
         
+        mast : `~astropy.table.Table`, None
+            Result of `~msaexp.msa.MSAMetafile.query_mast_exposures`
+        
         Examples
         --------
                 
@@ -342,6 +345,119 @@ class MSAMetafile():
         
         self.shutter_table = shut
         self.src_table = src
+        self.mast = None
+
+
+    @property
+    def metadata_id_list(self):
+        """
+        Returns
+        -------
+        ids : list
+            list of metadata_id from ``shutter_table``
+        
+        """
+        ids = list(np.unique(self.shutter_table['msa_metadata_id']))
+        return ids
+
+
+    @property
+    def metadata_id_unique(self):
+        """
+        Returns
+        -------
+        un : `grizli.utils.Unique`
+             Unique of metadata_id from ``shutter_table``
+        """
+        import grizli.utils
+        return grizli.utils.Unique(self.shutter_table['msa_metadata_id'])
+
+
+    @property
+    def key_pairs(self):
+        """
+        List of unique ``msa_metadata_id, dither_point_index`` pairs from the ``shutter_table``
+        
+        Returns
+        -------
+        keys : list
+            List of key pairs
+        """
+        keys = []
+        for row in self.shutter_table:
+            key = row['msa_metadata_id'], row['dither_point_index']
+            if key not in keys:
+                keys.append(key)
+
+        return keys
+
+
+    @property
+    def mast_key_pairs(self):
+        """
+        List of unique ``msametid, exposure`` pairs from the ``mast`` metadata table
+        
+        Returns
+        -------
+        keys : list
+            List of key pairs
+        """
+        mast = self.query_mast_exposures(force=False)
+        
+        keys = []
+        for row in mast:
+            key = row['msametid'], row['exposure']
+            if key not in keys:
+                keys.append(key)
+
+        return keys
+
+
+    def query_mast_exposures(self, force=False):
+        """
+        Query MAST database for exposures for this MSA file
+        
+        Parameters
+        ----------
+        force : bool
+            Running the query with this method stores the result in the `mast` 
+            attribute.  If the attribute is `None` or if ``force==True`` then run/redo
+            the query.
+        
+        Returns
+        -------
+        mat : `~astropy.table.Table`
+            Query results from `mastquery.jwst.query_jwst`.
+        
+        """
+        from mastquery.jwst import make_query_filter, query_jwst
+        
+        if (self.mast is not None) & (not force):
+            return self.mast
+            
+        filters = []
+
+        filters += make_query_filter('grating', 
+                      values=['PRISM','G140M','G235M','G395M','G140H','G235H','G395H'])
+        filters += make_query_filter('effexptm', range=[300, 5.e5])
+        filters += make_query_filter('productLevel', values=['2b'])
+        filters += make_query_filter('apername', values=['NRS_FULL_MSA'])
+        filters += make_query_filter('category', 
+                                     values=['COM','DD','ERS','GTO','GO'])
+                
+        filters += make_query_filter('detector', values=['NRS1'])
+        filters += make_query_filter('msametfl', 
+                                     values=[os.path.basename(self.filename)])
+
+        mast = query_jwst(instrument='NRS',
+                         filters=filters,
+                         columns="*",
+                         rates_and_cals=True,
+                         extensions=['rate','cal'])
+        
+        self.mast = mast
+        
+        return mast
 
 
     def get_transforms(self, dither_point_index=None, msa_metadata_id=None, fit_degree=2, verbose=False, min_source_id=0, **kwargs):
@@ -963,3 +1079,588 @@ class MSAMetafile():
         
             tab.write(mroot+'_slits.fits', overwrite=True)
         return tab
+
+
+    def get_siaf_transforms(self, prefix='https://github.com/spacetelescope/pysiaf/raw/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData/', check_rms=True):
+        """
+        Read shutter (i,j) > (v2,v3) transformations from the files at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+        """
+        from astropy.modeling.models import Polynomial2D
+        from astropy.modeling.fitting import LinearLSQFitter
+        import grizli.utils
+        
+        poly = Polynomial2D(degree=3)
+        
+        transforms = {}
+        
+        for quadrant in [1,2,3,4]:
+            ref_file = os.path.join(prefix, f'sky_fpa_projectionMSA_Q{quadrant}.fits')
+            fpa = grizli.utils.read_catalog(ref_file)
+            # i, j transformations
+            ij_to_v2 = LinearLSQFitter()(poly, fpa['I']*1., fpa['J']*1., 
+                                         fpa['XPOSSKY']*3600)
+            ij_to_v3 = LinearLSQFitter()(poly, fpa['I']*1., fpa['J']*1., 
+                                         fpa['YPOSSKY']*3600)
+            transforms[quadrant] = (ij_to_v2, ij_to_v3)
+            
+            if check_rms:
+                ijx = ij_to_v2(fpa['I']*1., fpa['J']*1.)
+                ijy = ij_to_v3(fpa['I']*1., fpa['J']*1.)
+                stdx = np.std(ijx - fpa['XPOSSKY']*3600)
+                stdy = np.std(ijy - fpa['YPOSSKY']*3600)
+                
+                print(f'Quadrant {quadrant} rms = {stdx:.2e} {stdy:.2e}')
+        
+        return transforms
+
+
+    def get_exposure_info(self, msa_metadata_id=1, dither_point_index=1):
+        """
+        Get MAST keywords for a particular exposure
+        
+        Parameters
+        ----------
+        msa_metadata_id, dither_point_index : int
+            Exposure definition
+        
+        Returns
+        -------
+        row : `~astropy.table.row.Row`
+            Row of the ``mast`` info table for a particular exposure
+        
+        """
+        mast = self.query_mast_exposures()
+        
+        ix = mast['msametfl'] == os.path.basename(self.filename)
+        ix &= mast['msametid'] == msa_metadata_id
+        ix &= mast['exposure'] == dither_point_index
+        if ix.sum() == 0:
+            msg = f'msametid = {msa_metadata_id}, exposure = {dither_point_index}'
+            msg += ' not found in MAST table'
+            raise ValueError(msg)
+        
+        row = mast[ix][0]
+        
+        return row
+
+
+    def get_siaf_aperture(self, msa_metadata_id=1, dither_point_index=1, pa_offset=-0.1124, ra_ref=None, dec_ref=None, roll_ref=None, use_ref_columns=True, **kwargs):
+        """
+        Generate a `pysiaf` aperture object based on pointing information
+        
+        Parameters
+        ----------
+        msa_metadata_id, dither_point_index : int
+            Exposure definition
+        
+        pa_offset : float
+            Empirical offset added to ``gs_v3_pa`` from the MAST query to match
+            ``ROLL_REF`` in the science headers
+        
+        ra_ref, dec_ref, roll_ref : None, float
+            Specify a reference parameters aperture attitude, e.g., taken from the 
+            ``ROLL_REF`` science header keywords
+        
+        use_ref_columns : bool
+            Use "ref" columns in `mast` metadata table if found, e.g., generated from
+            `~msaexp.msa.MSAMetafile.fit_mast_pointing_offset`
+        
+        Returns
+        -------
+        ra, dec, roll : float
+            The V2/V3 reference ra, dec, roll used for the aperture attitude
+        
+        ap : `pysiaf.aperture.NirspecAperture`
+            Aperture object with attitude set based on database pointing keywords and 
+            with various coordinate transformation methods
+        
+        """
+        import pysiaf
+        from pysiaf.utils import rotations
+        
+        # Define SIAF aperture
+        #---------------------
+        instrument = 'NIRSPEC'
+    
+        siaf = pysiaf.siaf.Siaf(instrument)
+        ap = siaf['NRS_FULL_MSA']
+        
+        # Input is fully specified
+        #-------------------------
+        if (ra_ref is not None) & (dec_ref is not None) & (roll_ref is not None):
+            att = rotations.attitude(ap.V2Ref,
+                                     ap.V3Ref,
+                                     ra_ref,
+                                     dec_ref,
+                                     roll_ref)
+    
+            ap.set_attitude_matrix(att)
+            
+            return ra_ref, dec_ref, roll_ref, ap
+        
+        # Get pointing information from MAST query
+        #-----------------------------------------
+        row = self.get_exposure_info(msa_metadata_id=msa_metadata_id,
+                                     dither_point_index=dither_point_index,
+                                     )
+        
+        if ('roll_ref' in row.colnames) & use_ref_columns:
+            ra_ref = row['ra_ref']
+            dec_ref = row['dec_ref']
+            roll_ref = row['roll_ref']
+            
+            att = rotations.attitude(ap.V2Ref,
+                                     ap.V3Ref,
+                                     ra_ref,
+                                     dec_ref,
+                                     roll_ref)
+    
+            ap.set_attitude_matrix(att)
+            
+            return ra_ref, dec_ref, roll_ref, ap
+            
+        if roll_ref is None:
+            roll = row['gs_v3_pa'] + pa_offset
+        else:
+            roll = roll_ref
+            
+        att = rotations.attitude(ap.V2Ref,
+                                 ap.V3Ref,
+                                 row['targ_ra'],
+                                 row['targ_dec'],
+                                 roll)
+    
+        ap.set_attitude_matrix(att)
+    
+        # Apply xoffset, yoffset defined in Ideal (idl) coordinates
+        #----------------------------------------------------------
+        tel = ap.idl_to_tel(-row['xoffset'],-row['yoffset'])
+        offset_rd = ap.tel_to_sky(*tel)
+        
+        # Recompute aperture with offset
+        #-------------------------------
+        siaf = pysiaf.siaf.Siaf(instrument)
+        ap = siaf['NRS_FULL_MSA']
+    
+        att = rotations.attitude(ap.V2Ref,
+                                 ap.V3Ref,
+                                 *offset_rd,
+                                 roll)
+    
+        ap.set_attitude_matrix(att)
+        return *offset_rd, roll, ap
+
+
+    def fit_mast_pointing_offset(self, iterations=3, verbose=True, apply=True):
+        """
+        Fit for offsets to the pointing attitude derived from the MAST metadata
+        
+        Parameters
+        ----------
+        iterations : int
+            Number of fitting iterations
+        
+        verbose : bool
+            Print messages
+        
+        apply : bool
+            Add updated pointing parameters to `ref` columns in `mast` metadata
+        
+        Returns
+        -------
+        res : `~astropy.table.Table`
+            Table summarizing fit results
+        
+        """
+        import skimage.transform
+        from skimage.measure import ransac
+        import grizli.utils
+    
+        transform = skimage.transform.EuclideanTransform
+
+        coeffs = load_siaf_shutter_transforms()
+
+        _shut = self.shutter_table
+        has_offset = np.isfinite(_shut['estimated_source_in_shutter_x'])
+        has_offset &= np.isfinite(_shut['estimated_source_in_shutter_y'])
+        
+        is_src = (_shut['source_id'] > 0) & (has_offset)
+
+        rows = []
+
+        msg = '{0} {1:>.0f} {2:>.0f} {2:.6f} {3:.6f} {4:.3f}  {5:>5.0f}  {6:.6f} {7:.6f} {8:.3f}'
+    
+        for key in self.mast_key_pairs:
+            msa_metadata_id, dither_point_index = key
+
+            _ = self.get_siaf_aperture(msa_metadata_id=msa_metadata_id,
+                                       dither_point_index=dither_point_index, 
+                                       pa_offset=0.0,
+                                       use_ref_columns=False)
+            _ra, _dec, _roll, ap = _
+            
+            xrow = [msa_metadata_id, dither_point_index, _ra*1., _dec*1, _roll*1]
+
+            exp = self.shutter_table['msa_metadata_id'] == msa_metadata_id
+            exp &= self.shutter_table['dither_point_index'] == dither_point_index
+                        
+            # _shut[is_src]['msa_metadata_id','dither_point_index']
+
+            Nsrc = (exp & is_src).sum()
+        
+            if Nsrc < 4:
+                xrow += [Nsrc, np.nan, np.nan, np.nan]
+                rows.append(xrow)
+                if verbose > 1:
+                    print(msg.format(*xrow))
+            
+                continue
+            
+            se = _shut[exp & is_src]
+                
+            row = se['shutter_row'] + se['estimated_source_in_shutter_x'] - 0.5
+            col = se['shutter_column'] + se['estimated_source_in_shutter_y'] - 0.5
+            ra, dec = se['ra'], se['dec']
+        
+            for _iter in range(iterations):
+            
+                input = []
+                output = []
+                for i in range(len(se)):
+            
+                    if se['shutter_quadrant'][i] not in coeffs:
+                        continue
+                
+                    ij_to_v2, ij_to_v3 = coeffs[se['shutter_quadrant'][i]]
+                    v2 = ij_to_v2(row[i], col[i])
+                    v3 = ij_to_v3(row[i], col[i])
+            
+                    sra, sdec = ap.tel_to_sky(v2, v3)
+                    output.append([sra, sdec])
+                    input.append([ra[i], dec[i]])
+            
+                input = np.array(input)
+                output = np.array(output)
+            
+                x0 = np.mean(input, axis=0)
+                cosd = np.array([[np.cos(inp[1]/180*np.pi),1] for inp in input])
+            
+                tf = transform()
+                tf.estimate((output - x0)*cosd, (input - x0)*cosd)
+            
+                tf, inliers = ransac( [(output - x0)*cosd, (input - x0)*cosd],
+                                                   transform, min_samples=3,
+                                                   residual_threshold=3, max_trials=100)
+            
+                pred = tf((output - x0)*cosd)
+            
+                if 1:
+                    _ = self.get_siaf_aperture(msa_metadata_id=msa_metadata_id,
+                                            dither_point_index=dither_point_index, 
+                                            ra_ref=_ra + tf.translation[0]/cosd[0][0],
+                                            dec_ref=_dec + tf.translation[1],
+                                            roll_ref=_roll - tf.rotation/np.pi*180
+                                            )
+                    _ra, _dec, _roll, ap = _
+                    
+            xrow += [Nsrc, _ra*1, _dec*1, _roll*1]
+            if verbose > 1:
+                print(msg.format(*xrow))
+            
+            rows.append(xrow)
+
+        res = grizli.utils.GTable(rows=rows, 
+                    names=['id','dith','ra0','dec0','roll0','Nsrc','ra','dec','roll'],
+                                  )
+                                  
+        cosd = np.cos(res['dec0']/180*np.pi)
+        res['dra'] = (res['ra']-res['ra0'])*cosd*3600
+        res['ddec'] = (res['dec']-res['dec0'])*3600
+        res['droll'] = (res['roll'] - res['roll0'])
+
+        if apply & (res['Nsrc'].max() > 4):
+            dra = np.nanmedian(res['dra']/3600/cosd)
+            dde = np.nanmedian(res['ddec']/3600)
+            dro = np.nanmedian(res['droll'])
+
+            res['ra_ref'] = res['ra0'] + dra
+            res['dec_ref'] = res['dec0'] + dde
+            res['roll_ref'] = res['roll0'] + dro
+
+            self.mast['ra_ref'] = 0.
+            self.mast['dec_ref'] = 0.
+            self.mast['roll_ref'] = 0.
+            
+            for i, (id, dith) in enumerate(zip(self.mast['msametid'],
+                                               self.mast['exposure'])):
+                _ = self.get_siaf_aperture(msa_metadata_id=id,
+                                           dither_point_index=dith, 
+                                           pa_offset=0.0,
+                                           use_ref_columns=False)
+                                           
+                _ra, _dec, _roll, ap = _
+                # print('xxx', _ra, _dec, _roll)
+                
+                ix = np.where((self.mast['msametid'] == id) & 
+                              (self.mast['exposure'] == dith))[0][0]
+                
+                self.mast['ra_ref'][ix] = _ra + dra
+                self.mast['dec_ref'][ix] = _dec + dde
+                self.mast['roll_ref'][ix] = _roll + dro
+                    
+                # for c in ['ra_ref','dec_ref','roll_ref']:
+                #     self.mast[c][ix] = res[c][i]
+            
+            if verbose:
+                print(f'Apply offset to metadata: {dra*3600:.2f}  {dde*3600:.2f}  {dro:>.2f}')
+            
+        return res
+
+
+    def regions_from_metafile_siaf(self, as_string=True, with_bars=True, msa_metadata_id=1, dither_point_index=1, meta_keys=['program','pi_name','proptarg','filename','filter','grating','expstart','effexptm','nod_type','final_0x0_EOSA'], verbose=False, **kwargs):
+        """
+        MSA shutter regions using pointing info and SIAF shutter transformations
+    
+        Parameters
+        ----------
+        as_string : bool
+            Return regions as DS9 region strings
+    
+        with_bars : bool
+            Account for bar vignetting
+    
+        msa_metadata_id, dither_point_index : int
+            Exposure definition
+    
+        Returns
+        -------
+            String or a list of `grizli.utils.SRegion` objects, depending on ``as_string``
+    
+        """
+        import grizli.utils
+        
+        # Exposure metadata
+        meta = self.get_exposure_info(msa_metadata_id=msa_metadata_id,
+                                     dither_point_index=dither_point_index,
+                                     )
+        
+        if verbose:
+            msg = 'Generate regions from {msametfl} id = {msametid:>3}'
+            msg += ' exposure = {exposure}'
+            msg += ' (filename = {filename})'
+            print(msg.format(**meta))
+            
+        # Slitlet transforms (i,j) > (v2,v3)
+        #----------------------------------
+        coeffs = load_siaf_shutter_transforms()
+        
+        # Aperture with pointing information
+        #-----------------------------------
+        _ra, _dec, _roll, ap = self.get_siaf_aperture(msa_metadata_id=msa_metadata_id,
+                                                dither_point_index=dither_point_index,
+                                                **kwargs)
+        
+        # Which exposure?
+        #----------------
+        exp = self.shutter_table['msa_metadata_id'] == msa_metadata_id
+        exp &= self.shutter_table['dither_point_index'] == dither_point_index
+
+        _shut = self.shutter_table
+
+        has_offset = np.isfinite(_shut['estimated_source_in_shutter_x'])
+        has_offset &= np.isfinite(_shut['estimated_source_in_shutter_y'])
+
+        is_src = (_shut['source_id'] > 0) & (has_offset)
+
+        # Regions for a particular exposure
+        se = _shut[exp]
+
+        sx = (np.array([-0.5, 0.5, 0.5, -0.5]))*(1-0.07/0.27*with_bars/2) #+ 0.5
+        sy = (np.array([-0.5, -0.5, 0.5, 0.5]))*(1-0.07/0.53*with_bars/2) #+ 0.5
+
+        row = se['shutter_row'] #+ se['estimated_source_in_shutter_x']
+        col = se['shutter_column'] #+ se['estimated_source_in_shutter_y']
+        ra, dec = se['ra'], se['dec']
+
+        regions = []
+
+        for i in range(len(se)):
+        
+            if se['shutter_quadrant'][i] not in coeffs:
+                continue
+            
+            ij_to_v2, ij_to_v3 = coeffs[se['shutter_quadrant'][i]]
+            v2 = ij_to_v2(row[i] + sx, col[i]+sy)
+            v3 = ij_to_v3(row[i] + sx, col[i]+sy)
+
+            sra, sdec = ap.tel_to_sky(v2, v3)
+        
+            #sra = pra(row[i] + sx, col[i]+sy)
+            #sdec = pdec(row[i] + sx, col[i]+sy)
+
+            sr = grizli.utils.SRegion(np.array([sra, sdec]), wrap=False)
+            sr.meta = {}
+            for k in ['program', 'source_id', 'ra', 'dec', 
+                      'slitlet_id', 'shutter_quadrant', 'shutter_row', 'shutter_column',
+                      'estimated_source_in_shutter_x', 'estimated_source_in_shutter_y']:
+                sr.meta[k] = se[k][i]
+    
+            sr.meta['is_source'] = np.isfinite(se['estimated_source_in_shutter_x'][i])
+    
+            if sr.meta['is_source']:
+                sr.ds9_properties = "color=cyan"
+            else:
+                sr.ds9_properties = "color=lightblue"
+    
+            regions.append(sr)
+    
+        if as_string:
+            output = f'# msametfl = {self.metafile}\n'
+        
+            di = dither_point_index
+            output += f'# dither_point_index = {di}\n'
+            mi = msa_metadata_id
+            output += f'# msa_metadata_id = {mi}\n'
+            
+            for k in meta_keys:
+                if k in meta.colnames:
+                    output += f'# {k} = {meta[k]}\n'
+                    
+            output += 'icrs\n'
+            for sr in regions:
+                m = sr.meta
+                if m['is_source']:
+                    output += f"circle({m['ra']:.7f}, {m['dec']:.7f}, 0.2\")"
+                    output += f" # color=cyan text=xx{m['source_id']}yy\n"
+            
+                for r in sr.region:
+                    output += r + '\n'
+        
+            output = output.replace('xx','{').replace('yy', '}')
+            
+        else:
+            output = regions
+        
+        return output
+
+
+    def all_regions_from_metafile_siaf(self, **kwargs):
+        """
+        Run `~msaexp.msa.MSAMetafile.regions_from_metafile_siaf` for all exposures
+        
+        Parameters
+        ----------
+        kwargs : dict
+            Passed to `~msaexp.msa.MSAMetafile.regions_from_metafile_siaf`
+        
+        Returns
+        -------
+        output : list, str
+            Depending on ``as_string`` input keyword
+        
+        """
+        output = None
+        for key in self.mast_key_pairs:
+            msa_metadata_id, dither_point_index = key
+            _out = self.regions_from_metafile_siaf(msa_metadata_id=msa_metadata_id,
+                                               dither_point_index=dither_point_index,
+                                                   **kwargs)
+            if output is None:
+                output = _out
+            else:
+                output += _out
+        
+        return output
+
+
+PYSIAF_GITHUB = 'https://github.com/spacetelescope/pysiaf/raw/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData/'
+
+def fit_siaf_shutter_transforms(prefix=PYSIAF_GITHUB, degree=3, check_rms=True):
+    """
+    Fit shutter (i,j) > (v2,v3) transformations from the files at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+    """
+    from astropy.modeling.models import Polynomial2D
+    from astropy.modeling.fitting import LinearLSQFitter
+    import grizli.utils
+    
+    def _model_to_dict(model):
+        """
+        """
+        params = {}
+        for k, v in zip(model.param_names, model.parameters):
+            params[k] = float(v)
+        return params
+    
+    poly = Polynomial2D(degree=degree)
+    
+    transforms = {'degree':degree, 'coeffs':{}, }
+    if check_rms:
+        transforms['rms'] = {}
+    
+    for quadrant in [1,2,3,4]:
+        ref_file = os.path.join(prefix, f'sky_fpa_projectionMSA_Q{quadrant}.fits')
+        fpa = grizli.utils.read_catalog(ref_file)
+        # i, j transformations
+        ij_to_v2 = LinearLSQFitter()(poly, fpa['I']*1., fpa['J']*1., 
+                                     fpa['XPOSSKY']*3600)
+        ij_to_v3 = LinearLSQFitter()(poly, fpa['I']*1., fpa['J']*1., 
+                                     fpa['YPOSSKY']*3600)
+        
+        v2d = _model_to_dict(ij_to_v2)
+        v3d = _model_to_dict(ij_to_v3)
+        
+        transforms['coeffs'][quadrant] = {'ij_to_v2':v2d, 'ij_to_v3':v3d}
+        
+        if check_rms:
+            ijx = ij_to_v2(fpa['I']*1., fpa['J']*1.)
+            ijy = ij_to_v3(fpa['I']*1., fpa['J']*1.)
+            stdx = np.std(ijx - fpa['XPOSSKY']*3600)
+            stdy = np.std(ijy - fpa['YPOSSKY']*3600)
+            
+            transforms['rms'][quadrant] = (stdx, stdy)
+            
+            print(f'Q{quadrant} rms = {stdx:.2e} {stdy:.2e}')
+        
+    if False:
+        import yaml
+        header = """# 2D polynomal fits to the tables at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+#
+# The keys of the "coeffs" dict are the MSA quadrant numbers: (1,2,3,4)
+# and the values are astropy.modeling.models.Polynomial2D(degree) coefficients
+# for the transformation shutter (row=i,col=j) > v2 and (row=i,col=j) > v3
+        """
+        with open('/tmp/nirspec_msa_transforms.yaml','w') as fp:
+            fp.write(header)
+            yaml.dump(transforms, fp)
+            
+    return transforms
+
+
+def load_siaf_shutter_transforms():
+    """
+    Read MSA shutter transforms (i,j) > (v2,v3) from file created with 
+    `msaexp.msa.fit_siaf_shutter_transforms`
+    
+    Returns
+    -------
+    tr : dict
+        Transform coefficients by quadrant
+    
+    """
+    import yaml
+    from astropy.modeling.models import Polynomial2D
+    
+    tfile = os.path.join(os.path.dirname(__file__),
+                         'data/nirspec_msa_transforms.yaml')
+    
+    with open(tfile) as fp:
+        traw = yaml.load(fp, Loader=yaml.Loader)
+    
+    degree = traw['degree']
+    tr = {}
+    for k in traw['coeffs']:
+        tr[k] = (Polynomial2D(degree, **traw['coeffs'][k]['ij_to_v2']),
+                 Polynomial2D(degree, **traw['coeffs'][k]['ij_to_v3']))
+    
+    return tr
+
