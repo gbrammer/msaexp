@@ -1,0 +1,149 @@
+# 2D polynomal fits to the tables at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+#
+# The keys of the "coeffs" dict are the MSA quadrant numbers: (1,2,3,4)
+# and the values are astropy.modeling.models.Polynomial2D(degree) coefficients
+# for the transformation shutter (row=i,col=j) > v2 and (row=i,col=j) > v3
+coeffs:
+  1:
+    ij_to_v2:
+      c0_0: 534.3004085195707
+      c0_1: -0.3602816490078609
+      c0_2: 1.6976223062243652e-05
+      c0_3: -1.0880919534556877e-09
+      c1_0: -0.2040578425141614
+      c1_1: 8.319384065984907e-06
+      c1_2: -5.963209727400268e-10
+      c2_0: 2.949744682986363e-06
+      c2_1: 1.3200649896679076e-10
+      c3_0: -1.1353961682456441e-09
+    ij_to_v3:
+      c0_0: -438.5350591725058
+      c0_1: 0.40115422387872696
+      c0_2: -1.812018035020059e-05
+      c0_3: 5.7451281191044946e-09
+      c1_0: -0.17765914335192104
+      c1_1: 6.70202274192332e-06
+      c1_2: -4.480320894357191e-09
+      c2_0: 8.201170174750252e-08
+      c2_1: 9.78827678755729e-10
+      c3_0: -1.5563707156568772e-09
+  2:
+    ij_to_v2:
+      c0_0: 448.7510446489852
+      c0_1: -0.35213343711255246
+      c0_2: 1.7088837787506127e-05
+      c0_3: -5.096175576242067e-09
+      c1_0: -0.2021696512178605
+      c1_1: 7.950168144349469e-06
+      c1_2: -4.2175233233567e-09
+      c2_0: 3.3065343169835984e-06
+      c2_1: -9.528564118370293e-10
+      c3_0: -1.8241253246212629e-09
+    ij_to_v3:
+      c0_0: -342.64945535096876
+      c0_1: 0.3933175473765178
+      c0_2: -1.56145889081704e-05
+      c0_3: 7.62045505119311e-09
+      c1_0: -0.17624733655572844
+      c1_1: 3.847445257629088e-06
+      c1_2: -5.534032265067106e-09
+      c2_0: 4.972466458003518e-08
+      c2_1: 2.8769876457399335e-09
+      c3_0: -9.28713547433061e-10
+  3:
+    ij_to_v2:
+      c0_0: 442.86357982738207
+      c0_1: -0.3565167648750838
+      c0_2: 1.7467028761063403e-05
+      c0_3: -4.5152011478335534e-09
+      c1_0: -0.20211952288530008
+      c1_1: 8.625075817924077e-06
+      c1_2: -4.198059248388895e-09
+      c2_0: 1.570264231614706e-06
+      c2_1: -1.1974497814454666e-09
+      c3_0: -1.903940668899979e-09
+    ij_to_v3:
+      c0_0: -518.648762958404
+      c0_1: 0.4044434919634281
+      c0_2: -1.9905877112380485e-05
+      c0_3: 5.53880599216056e-09
+      c1_0: -0.17850318359840026
+      c1_1: 7.666527516661403e-06
+      c1_2: -1.4001570745759216e-09
+      c2_0: -2.149368243350561e-06
+      c2_1: -3.2514885515132775e-12
+      c3_0: -4.543716506160568e-10
+  4:
+    ij_to_v2:
+      c0_0: 357.95626329408174
+      c0_1: -0.3487199011949841
+      c0_2: 1.507506354136472e-05
+      c0_3: -4.79805421784607e-09
+      c1_0: -0.20025354280464566
+      c1_1: 6.849715949700377e-06
+      c1_2: -5.60206884711035e-09
+      c2_0: 1.1422422540048107e-06
+      c2_1: -2.7680003565967497e-09
+      c3_0: -1.789232963244454e-09
+    ij_to_v3:
+      c0_0: -422.3195019240182
+      c0_1: 0.39560096359548347
+      c0_2: -1.7568313098272984e-05
+      c0_3: 6.116978020795932e-09
+      c1_0: -0.17684041567077802
+      c1_1: 6.568807811428799e-06
+      c1_2: -3.096316379797731e-09
+      c2_0: -1.483932493869439e-06
+      c2_1: 1.0463992050083693e-09
+      c3_0: -1.5922185275530333e-09
+degree: 3
+rms:
+  1: !!python/tuple
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - &id001 !!python/object/apply:numpy.dtype
+      args:
+      - f8
+      - false
+      - true
+      state: !!python/tuple
+      - 3
+      - <
+      - null
+      - null
+      - null
+      - -1
+      - -1
+      - 0
+    - !!binary |
+      AnskV6oKJz8=
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      BBehaT6fJz8=
+  2: !!python/tuple
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      iXJ8QBxNJD8=
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      SE713r2lKD8=
+  3: !!python/tuple
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      rOlzjVHmIj8=
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      yuYF127BMD8=
+  4: !!python/tuple
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      xUnCscGbET8=
+  - !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      EH1N58RrMD8=

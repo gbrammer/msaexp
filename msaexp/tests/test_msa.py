@@ -29,3 +29,20 @@ def test_summary():
     res = meta.make_summary_table(msa_metadata_id=None,
                                   image_path=None,
                                   write_tables=False)
+
+def test_mast_queries():
+    
+    uri = 'https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/'
+    meta = msa.MSAMetafile(uri+'jw02756001001_01_msa.fits')
+    
+    # Query exposure metadata
+    mast = meta.query_mast_exposures()
+
+    # regions from siaf transforms
+    regs = meta.regions_from_metafile_siaf()
+        
+    # Fit for a pointing offset
+    meta.fit_mast_pointing_offset()
+    
+    # regions from siaf transforms
+    regs = meta.regions_from_metafile_siaf()
