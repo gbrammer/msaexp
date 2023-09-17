@@ -548,8 +548,8 @@ class MSAMetafile():
             q = si['shutter_quadrant'] == qi
             # print(qi, q.sum())
         
-            row = si['shutter_row'] + si['estimated_source_in_shutter_x']
-            col = si['shutter_column'] + si['estimated_source_in_shutter_y']
+            row = si['shutter_row'] + (si['estimated_source_in_shutter_x'] - 0.5)
+            col = si['shutter_column'] + (si['estimated_source_in_shutter_y'] - 0.5)
 
             pra = fitter(p2, row[q], col[q], si['ra'][q])
             pdec = fitter(p2, row[q], col[q], si['dec'][q])
@@ -640,11 +640,11 @@ class MSAMetafile():
         # Regions for a particular exposure
         se = _shut[exp]
     
-        sx = (np.array([-0.5, 0.5, 0.5, -0.5]))*(1-0.07/0.27*with_bars/2) + 0.5
-        sy = (np.array([-0.5, -0.5, 0.5, 0.5]))*(1-0.07/0.53*with_bars/2) + 0.5
+        sx = (np.array([-0.5, 0.5, 0.5, -0.5]))*(1-0.07/0.27*with_bars/2)
+        sy = (np.array([-0.5, -0.5, 0.5, 0.5]))*(1-0.07/0.53*with_bars/2)
 
-        row = se['shutter_row'] #+ se['estimated_source_in_shutter_x']
-        col = se['shutter_column'] #+ se['estimated_source_in_shutter_y']
+        row = se['shutter_row']
+        col = se['shutter_column']
         ra, dec = se['ra'], se['dec']
     
         regions = []
@@ -1318,8 +1318,8 @@ class MSAMetafile():
             
             se = _shut[exp & is_src]
                 
-            row = se['shutter_row'] + se['estimated_source_in_shutter_x'] - 0.5
-            col = se['shutter_column'] + se['estimated_source_in_shutter_y'] - 0.5
+            row = se['shutter_row'] + (se['estimated_source_in_shutter_x'] - 0.5)
+            col = se['shutter_column'] + (se['estimated_source_in_shutter_y'] - 0.5)
             ra, dec = se['ra'], se['dec']
         
             for _iter in range(iterations):
@@ -1475,11 +1475,11 @@ class MSAMetafile():
         # Regions for a particular exposure
         se = _shut[exp]
 
-        sx = (np.array([-0.5, 0.5, 0.5, -0.5]))*(1-0.07/0.27*with_bars/2) #+ 0.5
-        sy = (np.array([-0.5, -0.5, 0.5, 0.5]))*(1-0.07/0.53*with_bars/2) #+ 0.5
+        sx = (np.array([-0.5, 0.5, 0.5, -0.5]))*(1-0.07/0.27*with_bars/2)
+        sy = (np.array([-0.5, -0.5, 0.5, 0.5]))*(1-0.07/0.53*with_bars/2)
 
-        row = se['shutter_row'] #+ se['estimated_source_in_shutter_x']
-        col = se['shutter_column'] #+ se['estimated_source_in_shutter_y']
+        row = se['shutter_row']
+        col = se['shutter_column']
         ra, dec = se['ra'], se['dec']
 
         regions = []
