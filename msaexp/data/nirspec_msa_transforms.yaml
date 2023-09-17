@@ -1,8 +1,21 @@
-# 2D polynomal fits to the tables at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+# 2D polynomal fits to the tables at https://github.com/spacetelescope/pysiaf/tree/main/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
 #
 # The keys of the "coeffs" dict are the MSA quadrant numbers: (1,2,3,4)
 # and the values are astropy.modeling.models.Polynomial2D(degree) coefficients
 # for the transformation shutter (row=i,col=j) > v2 and (row=i,col=j) > v3
+#
+# The coefficients of the "inverse" dict are the transformations
+# (v2,v3) > (row=i) and (v2,v3) > (col=j)
+#
+# RMS of the transformations:
+#   Q1 rms = 1.76e-04 1.80e-04    arcsec (i,j > v2,v3)
+#            6.93e-03 1.70e-03   shutter (v2,v3 > i,j)
+#   Q2 rms = 1.55e-04 1.88e-04    arcsec (i,j > v2,v3)
+#            8.96e-03 2.99e-03   shutter (v2,v3 > i,j)
+#   Q3 rms = 1.44e-04 2.56e-04    arcsec (i,j > v2,v3)
+#            6.66e-03 2.10e-03   shutter (v2,v3 > i,j)
+#   Q4 rms = 6.72e-05 2.51e-04    arcsec (i,j > v2,v3)
+#            9.91e-03 2.62e-03   shutter (v2,v3 > i,j)
 coeffs:
   1:
     ij_to_v2:
@@ -97,6 +110,94 @@ coeffs:
       c2_1: 1.0463992050083693e-09
       c3_0: -1.5922185275530333e-09
 degree: 3
+inverse:
+  1:
+    v23_to_i:
+      c0_0: 411.36778345314127
+      c0_1: -2.5701323687968936
+      c0_2: -9.898109699029941e-05
+      c1_0: -2.926077984470387
+      c1_1: 2.2819544770724272e-05
+      c2_0: 0.00017272902198887916
+    v23_to_j:
+      c0_0: 1338.5257312077545
+      c0_1: 1.5493218343621407
+      c0_2: 0.0001078751077401517
+      c1_0: -1.3728110057534957
+      c1_1: -0.00010420844402601141
+      c2_0: 0.000102431197769688
+  2:
+    v23_to_i:
+      c0_0: 414.6545606224776
+      c0_1: -2.5422111076416014
+      c0_2: -5.72942771669847e-05
+      c1_0: -2.9086508354528537
+      c1_1: 3.383949222128589e-05
+      c2_0: 0.00015602839654035812
+    v23_to_j:
+      c0_0: 1094.629039667978
+      c0_1: 1.5365143518122986
+      c0_2: 9.077376632599533e-05
+      c1_0: -1.3694005063267092
+      c1_1: -0.00010362132497798655
+      c2_0: 9.819090626695251e-05
+  3:
+    v23_to_i:
+      c0_0: -44.78641192172866
+      c0_1: -2.586098822683636
+      c0_2: -0.00016642375198940286
+      c1_0: -2.9153125817487995
+      c1_1: -8.98897394449902e-05
+      c2_0: 9.525568773615223e-05
+    v23_to_j:
+      c0_0: 1339.0786648783994
+      c0_1: 1.5562992755195402
+      c0_2: 0.00011583020152333123
+      c1_0: -1.3680594894495826
+      c1_1: -0.00010379107086533729
+      c2_0: 9.661352469754514e-05
+  4:
+    v23_to_i:
+      c0_0: -45.91537344837288
+      c0_1: -2.5707270790299557
+      c0_2: -0.00014980800447875184
+      c1_0: -2.886840730052532
+      c1_1: -9.030061589590838e-05
+      c2_0: 5.171082120273728e-05
+    v23_to_j:
+      c0_0: 1094.606732571564
+      c0_1: 1.5504192185678953
+      c0_2: 0.00011110544632693967
+      c1_0: -1.3534718518378357
+      c1_1: -9.787004174097993e-05
+      c2_0: 7.822683311088855e-05
+inverse_degree: 2
+irange:
+  1:
+  - 1
+  - 365
+  2:
+  - 1
+  - 365
+  3:
+  - 1
+  - 365
+  4:
+  - 1
+  - 365
+jrange:
+  1:
+  - 1
+  - 171
+  2:
+  - 1
+  - 171
+  3:
+  - 1
+  - 171
+  4:
+  - 1
+  - 171
 rms:
   1:
   - 0.00017579392767515944

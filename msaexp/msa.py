@@ -406,7 +406,7 @@ class MSAMetafile():
         
         keys = []
         for row in mast:
-            key = row['msametid'], row['exposure']
+            key = row['msametid'], row['patt_num']
             if key not in keys:
                 keys.append(key)
 
@@ -1133,7 +1133,7 @@ class MSAMetafile():
         
         ix = mast['msametfl'] == os.path.basename(self.filename)
         ix &= mast['msametid'] == msa_metadata_id
-        ix &= mast['exposure'] == dither_point_index
+        ix &= mast['patt_num'] == dither_point_index
         if ix.sum() == 0:
             msg = f'msametid = {msa_metadata_id}, exposure = {dither_point_index}'
             msg += ' not found in MAST table'
@@ -1392,7 +1392,7 @@ class MSAMetafile():
             self.mast['roll_ref'] = 0.
             
             for i, (id, dith) in enumerate(zip(self.mast['msametid'],
-                                               self.mast['exposure'])):
+                                               self.mast['patt_num'])):
                 _ = self.get_siaf_aperture(msa_metadata_id=id,
                                            dither_point_index=dith, 
                                            pa_offset=0.0,
@@ -1402,7 +1402,7 @@ class MSAMetafile():
                 # print('xxx', _ra, _dec, _roll)
                 
                 ix = np.where((self.mast['msametid'] == id) & 
-                              (self.mast['exposure'] == dith))[0][0]
+                              (self.mast['patt_num'] == dith))[0][0]
                 
                 self.mast['ra_ref'][ix] = _ra + dra
                 self.mast['dec_ref'][ix] = _dec + dde
@@ -1573,11 +1573,11 @@ class MSAMetafile():
         return output
 
 
-PYSIAF_GITHUB = 'https://github.com/spacetelescope/pysiaf/raw/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData/'
+PYSIAF_GITHUB = 'https://github.com/spacetelescope/pysiaf/raw/main/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData/'
 
-def fit_siaf_shutter_transforms(prefix=PYSIAF_GITHUB, degree=3, check_rms=True):
+def fit_siaf_shutter_transforms(prefix=PYSIAF_GITHUB, degree=3, inverse_degree=2, check_rms=True):
     """
-    Fit shutter (i,j) > (v2,v3) transformations from the files at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+    Fit shutter (i,j) > (v2,v3) transformations from the files at https://github.com/spacetelescope/pysiaf/tree/main/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
     """
     from astropy.modeling.models import Polynomial2D
     from astropy.modeling.fitting import LinearLSQFitter
@@ -1592,18 +1592,30 @@ def fit_siaf_shutter_transforms(prefix=PYSIAF_GITHUB, degree=3, check_rms=True):
         return params
     
     poly = Polynomial2D(degree=degree)
-    
-    transforms = {'degree':degree, 'coeffs':{}, }
+    pinv = Polynomial2D(degree=inverse_degree)
+
+    transforms = {'degree':degree, 'coeffs':{},
+                  'irange':{}, 'jrange':{},
+                  'inverse_degree': inverse_degree, 'inverse':{}}
+                  
     if check_rms:
         transforms['rms'] = {}
     
     for quadrant in [1,2,3,4]:
         ref_file = os.path.join(prefix, f'sky_fpa_projectionMSA_Q{quadrant}.fits')
         fpa = grizli.utils.read_catalog(ref_file)
-        # i, j transformations
-        ij_to_v2 = LinearLSQFitter()(poly, fpa['I']*1., fpa['J']*1., 
+        
+        transforms['irange'][quadrant] = [int(fpa['I'].min()), int(fpa['I'].max())]
+        transforms['jrange'][quadrant] = [int(fpa['J'].min()), int(fpa['J'].max())]
+        
+        # Transformation (i,j) to (v2,v3)
+        ij_to_v2 = LinearLSQFitter()(poly,
+                                     fpa['I']*1.,
+                                     fpa['J']*1.,
                                      fpa['XPOSSKY']*3600)
-        ij_to_v3 = LinearLSQFitter()(poly, fpa['I']*1., fpa['J']*1., 
+                                     
+        ij_to_v3 = LinearLSQFitter()(poly, fpa['I']*1.,
+                                     fpa['J']*1.,
                                      fpa['YPOSSKY']*3600)
         
         v2d = _model_to_dict(ij_to_v2)
@@ -1611,23 +1623,68 @@ def fit_siaf_shutter_transforms(prefix=PYSIAF_GITHUB, degree=3, check_rms=True):
         
         transforms['coeffs'][quadrant] = {'ij_to_v2':v2d, 'ij_to_v3':v3d}
         
+        # Inverse transformation v2,v3 to i,j
+        v23_to_i = LinearLSQFitter()(pinv,
+                                     fpa['XPOSSKY']*3600,
+                                     fpa['YPOSSKY']*3600,
+                                     fpa['I']*1.
+                                     )
+        
+        v23_to_j = LinearLSQFitter()(pinv,
+                                     fpa['XPOSSKY']*3600,
+                                     fpa['YPOSSKY']*3600,
+                                     fpa['J']*1.
+                                     )
+        
+        icoeffs = _model_to_dict(v23_to_i)
+        jcoeffs = _model_to_dict(v23_to_j)
+        
+        transforms['inverse'][quadrant] = {'v23_to_i':icoeffs, 'v23_to_j':jcoeffs}
+        
         if check_rms:
             ijx = ij_to_v2(fpa['I']*1., fpa['J']*1.)
             ijy = ij_to_v3(fpa['I']*1., fpa['J']*1.)
             stdx = np.std(ijx - fpa['XPOSSKY']*3600)
             stdy = np.std(ijy - fpa['YPOSSKY']*3600)
             
-            transforms['rms'][quadrant] = (stdx, stdy)
+            transforms['rms'][quadrant] = [float(stdx), float(stdy)]
             
-            print(f'Q{quadrant} rms = {stdx:.2e} {stdy:.2e}')
-        
+            msg = f'Q{quadrant} rms = {stdx:.2e} {stdy:.2e}    arcsec (i,j > v2,v3)'
+            
+            ix = v23_to_i(fpa['XPOSSKY']*3600.,
+                          fpa['YPOSSKY']*3600.)
+                          
+            jx = v23_to_j(fpa['XPOSSKY']*3600.,
+                          fpa['YPOSSKY']*3600.)
+                          
+            stdi = np.std(ix - fpa['I']*1.)
+            stdj = np.std(jx - fpa['J']*1.)
+            
+            msg += '\n' + f'         {stdi:.2e} {stdj:.2e}   shutter (v2,v3 > i,j)'
+            
+            print(msg)
+            
     if False:
         import yaml
-        header = """# 2D polynomal fits to the tables at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+        
+        header = """# 2D polynomal fits to the tables at https://github.com/spacetelescope/pysiaf/tree/main/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
 #
 # The keys of the "coeffs" dict are the MSA quadrant numbers: (1,2,3,4)
 # and the values are astropy.modeling.models.Polynomial2D(degree) coefficients
 # for the transformation shutter (row=i,col=j) > v2 and (row=i,col=j) > v3
+#
+# The coefficients of the "inverse" dict are the transformations
+# (v2,v3) > (row=i) and (v2,v3) > (col=j)
+#
+# RMS of the transformations:
+#   Q1 rms = 1.76e-04 1.80e-04    arcsec (i,j > v2,v3)
+#            6.93e-03 1.70e-03   shutter (v2,v3 > i,j)
+#   Q2 rms = 1.55e-04 1.88e-04    arcsec (i,j > v2,v3)
+#            8.96e-03 2.99e-03   shutter (v2,v3 > i,j)
+#   Q3 rms = 1.44e-04 2.56e-04    arcsec (i,j > v2,v3)
+#            6.66e-03 2.10e-03   shutter (v2,v3 > i,j)
+#   Q4 rms = 6.72e-05 2.51e-04    arcsec (i,j > v2,v3)
+#            9.91e-03 2.62e-03   shutter (v2,v3 > i,j)
         """
         with open('/tmp/nirspec_msa_transforms.yaml','w') as fp:
             fp.write(header)
@@ -1663,4 +1720,193 @@ def load_siaf_shutter_transforms():
                  Polynomial2D(degree, **traw['coeffs'][k]['ij_to_v3']))
     
     return tr
+
+
+def load_siaf_inverse_shutter_transforms():
+    """
+    Read MSA shutter transforms (v2,v3) > (i,j) from file created with 
+    `msaexp.msa.fit_siaf_shutter_transforms`
+    
+    Returns
+    -------
+    tr : dict
+        Nested dictionary with keys
+          - ``inverse``: inverse transform by quadrant
+          - ``irange``: Range of valid ``i``
+          - ``jrange``: Range of valid ``j``
+    
+    """
+    import yaml
+    from astropy.modeling.models import Polynomial2D
+    
+    tfile = os.path.join(os.path.dirname(__file__),
+                         'data/nirspec_msa_transforms.yaml')
+    
+    with open(tfile) as fp:
+        traw = yaml.load(fp, Loader=yaml.Loader)
+    
+    degree = traw['inverse_degree']
+    tr = {'inverse':{},
+          'irange': traw['irange'],
+          'jrange': traw['jrange'],
+          }
+    
+    for k in traw['inverse']:
+        tr['inverse'][k] = (Polynomial2D(degree, **traw['inverse'][k]['v23_to_i']),
+                 Polynomial2D(degree, **traw['inverse'][k]['v23_to_j']))
+    
+    return tr
+
+
+def msa_shutter_catalog(ra, dec, pointing=None, ap=None, inv=None, verbose=True):
+    """
+    Compute shutter centering for a list of input coordinates
+    
+    Parameters
+    ----------
+    ra, dec : array-like
+        Arrays of RA, Dec.  in decimal degrees
+    
+    pointing : None, (RA_REF, DEC_REF, ROLL_REF)
+        Pointing definition
+    
+    ap : `pysiaf.aperture.NirspecAperture`
+        Aperture object with attitude set based on database pointing keywords and 
+        with various coordinate transformation methods
+    
+    inv : dict
+        Inverse shutter transformations from 
+        `msaexp.msa.load_siaf_inverse_shutter_transforms`
+    
+    verbose : bool
+        Messaging
+    
+    Returns
+    -------
+    tab : `astropy.table.table`
+        Table with shutter information
+    
+    """
+    import pysiaf
+    from pysiaf.utils import rotations
+    from grizli import utils
+    
+    if pointing is not None:
+        siaf = pysiaf.siaf.Siaf('NIRSPEC')
+        ap = siaf['NRS_FULL_MSA']
+        att = rotations.attitude(ap.V2Ref,
+                                 ap.V3Ref,
+                                 *pointing)
+
+        ap.set_attitude_matrix(att)
+    
+    if ap is None:
+        raise ValueError('Either pointing or ap must be provided')
+        
+    if inv is None:
+        inv = load_siaf_inverse_shutter_transforms()
+        
+    tab = utils.GTable()
+    tab['ra'] = ra
+    tab['dec'] = dec
+    tab['quadrant'] = -1
+    tab['row_i'] = np.nan
+    tab['col_j'] = np.nan
+    
+    v2, v3 = ap.sky_to_tel(ra, dec)
+    
+    for q in [1,2,3,4]:
+        tr = inv['inverse'][q]
+        iq = tr[0](v2, v3) + 0.5
+        jq = tr[1](v2, v3) + 0.5
+        
+        inti = np.floor(iq).astype(int)
+        intj = np.floor(jq).astype(int)
+        
+        clip = (inti >= inv['irange'][q][0]) & (inti <= inv['irange'][q][1])
+        clip &= (intj >= inv['jrange'][q][0]) & (intj <= inv['jrange'][q][1])
+        
+        if clip.sum() > 0:
+            tab['quadrant'][clip] = q
+            tab['row_i'][clip] = iq[clip]
+            tab['col_j'][clip] = jq[clip]
+    
+    tab['di'] = tab['row_i'] - np.floor(tab['row_i']) - 0.5
+    tab['dj'] = tab['col_j'] - np.floor(tab['col_j']) - 0.5
+    
+    return tab
+
+
+def test_msa_shutter_catalog(rate_file):
+    """
+    """
+    
+    # metafl = 'jw01210001001_01_msa.fits'
+    # metafl = 'jw01208047001_01_msa.fits'
+    #
+    # rate_file = 'jw01208047001_03101_00001_nrs1_rate.fits'
+    # rate_file = 'jw01208047001_03101_00002_nrs1_rate.fits'
+    
+    import pysiaf
+    from pysiaf.utils import rotations
+    
+    im = pyfits.open(rate_file)
+    
+    metafl = im[0].header['MSAMETFL']
+    mid = im[0].header['MSAMETID']
+    dith = int(im[0].header['PATT_NUM'])
+    
+    pref = im[1].header['RA_REF'], im[1].header['DEC_REF'], im[1].header['ROLL_REF']
+    siaf = pysiaf.siaf.Siaf('NIRSPEC')
+    apref = siaf['NRS_FULL_MSA']
+    att = rotations.attitude(apref.V2Ref,
+                             apref.V3Ref,
+                             *pref)
+
+    apref.set_attitude_matrix(att)
+    
+    msa = MSAMetafile(metafl)
+    msa.fit_mast_pointing_offset()
+    
+    r0, d0, roll, ap = msa.get_siaf_aperture(msa_metadata_id=mid, 
+                                             dither_point_index=dith)
+    apc = ap
+    
+    shut = msa.shutter_table
+    sub = (shut['msa_metadata_id'] == mid) & (shut['dither_point_index'] == dith)
+    sub &= (shut['estimated_source_in_shutter_y'] > 0)
+    t = shut[sub]
+    ra, dec = t['ra'], t['dec']
+    
+    # What is transform between ra_ref, dec_ref, roll_ref and calculated?
+    yp, xp = np.indices((10,10))/10*20-10
+    v23i =  xp.flatten() + ap.V2Ref, yp.flatten() + ap.V3Ref
+    rd = ap.tel_to_sky(*v23i)
+    v23o = apref.sky_to_tel(*rd)
+    
+    import skimage.transform
+    from skimage.measure import ransac
+    import grizli.utils
+
+    transform = skimage.transform.EuclideanTransform
+    
+    tf = transform()
+    tf.estimate(np.array(v23i).T, np.array(v23o).T)
+    print(tf.translation, tf.rotation/np.pi*180)
+        
+    tab = msa_shutter_catalog(ra, dec, ap=ap, inv=None, verbose=True)
+    
+    tab['q'] = t['shutter_quadrant']
+    tab['row_in'] = t['shutter_row']
+    tab['col_in'] = t['shutter_column']
+    tab['dx'] = t['estimated_source_in_shutter_x']
+    tab['dy'] = t['estimated_source_in_shutter_y']
+
+    tab['i_off'] = tab['row_i'] - (tab['row_in'] + tab['dx'])
+    tab['j_off'] = tab['col_j'] - (tab['col_in'] + tab['dy'])
+    
+    # plt.scatter(tab['i_off'], tab['j_off'], c=tab['quadrant'])
+    
+    return tab
+
 
