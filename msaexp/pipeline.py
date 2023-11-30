@@ -1413,7 +1413,7 @@ class NirspecPipeline():
             else:
                 ytr = yd + yoffset
             
-            _ras, _des, ws = d2w(xtr, ytr)                 
+            _ras, _des, ws = d2w(xtr, ytr)
             
             for j in range(self.N):
                 if j == ip:
@@ -1434,7 +1434,9 @@ class NirspecPipeline():
                 except ValueError:
                     #print('background failed', j)
                     continue
-                    
+            
+            # before this was in the loop.  The if statement preserves the indentation
+            if True:
                 if (np.nanmax(_bkg) == 0) & (not get_slit_data):
                     axi = axes[ip]
                     axi.imshow(_sci*0., vmin=-0.05, vmax=0.3,
