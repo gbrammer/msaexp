@@ -2344,4 +2344,68 @@ def objfun_prf(params, waves, sci2d, wht2d, ycenter, sigma, bkg_offset, bkg_pari
     elif ret == 3:
         return chi2
     
+
+def slit_cutout_region(slitfile, as_text=True, skip=8, verbose=False):
+    """
+    Generate the region in the original exposure corresponding to a slit cutout
+    """
+    import jwst.datamodels
+    obj = jwst.datamodels.open(slitfile)
+    wcs = obj.meta.wcs
+    
+    if verbose:
+        print(f'Get slit region: {obj.source_name}')
         
+    sh = obj.data.shape
+    yp, xp = np.indices(sh)
+    
+    d2s = wcs.get_transform('detector','slit_frame')
+    s2d = wcs.get_transform('slit_frame','detector')
+    
+    ss = d2s(xp, yp)
+    sx, sy = s2d(ss[0][sh[0]//2,:],
+                 ss[0][sh[0]//2,:]*0. + obj.source_ypos,
+                 np.nanmedian(ss[2], axis=0),
+                 )
+    
+    ypi = yp*1.
+    ypi[~np.isfinite(ss[1])] = np.nan
+    ymi = np.nanmin(ypi, axis=0)
+    yma = np.nanmax(ypi, axis=0)
+    
+    xy = [np.array([np.hstack([sx, sx[::-1]])+obj.xstart+1,
+                    np.hstack([sy+2.5, sy[::-1]-2.5])+obj.ystart+1]).T[::skip,:],
+          np.array([np.hstack([sx, sx[::-1]])+obj.xstart+1,
+                    np.hstack([ymi, yma[::-1]])+obj.ystart+1]).T[::skip,:],
+         ]
+    
+    for i in range(2):
+        ok = np.isfinite(xy[i]).sum(axis=1) == 2
+        xy[i] = xy[i][ok,:]
+    
+    obj.close()
+    
+    sr = grizli.utils.SRegion(xy, wrap=False)
+    x0 = sr.centroid[0]
+    if as_text:
+        colors = ['white','cyan']
+        txt = '\n'.join(['polygon(' + r[2:-2] + f' # color={colors[i]}'
+                         for i, r in enumerate(sr.polystr(precision=2))])
+        txt += '\n# text({0:.2f},{1:.2f}) text={{{2}}} color={3}\n'.format(x0[0], x0[1]+2, obj.source_name, colors[-1])
+        txt = txt.replace('),(',',')
+        return txt
+    else:
+        sr.label = obj.source_name
+        return sr
+
+
+def all_slit_cutout_regions(files, output='slits.reg', **kwargs):
+    
+    with open(output, 'w') as fp:
+        for file in files:
+            txt = slit_cutout_region(file, as_text=True, skip=1, verbose=True)
+            fp.write(txt)
+            
+            
+    
+    
