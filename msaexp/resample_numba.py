@@ -125,7 +125,7 @@ def sample_gaussian_line_numba(spec_wobs, spec_R_fwhm, line_um, line_flux=1., ve
 
 
 @jit(nopython=True, fastmath=True, error_model='numpy')
-def pixel_integrated_gaussian_numba(x, mu, sigma, normalization=1.):
+def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.):
     """
     Low level function for a pixel-integrated gaussian
     
@@ -134,11 +134,14 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, normalization=1.):
     x : array-like
         Sample centers
     
-    mu : float
+    mu : float, array-like
         Gaussian center
     
-    sigma : float
+    sigma : float, array-like
         Gaussian width
+    
+    dx : float, array-like
+        Difference to override ``x[i+1] - x[i]`` if not provided as zero
     
     normalization : float
         Scaling
@@ -151,24 +154,28 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, normalization=1.):
     """
     N = len(x)
     samp = np.zeros_like(x)
-    s2dw = np.sqrt(2)*sigma
     
-    # i = 0
+    s2dw = np.sqrt(2)*sigma*np.ones_like(x)
+    
+    mux = mu*np.ones_like(x)
+        
+    if dx is None:
+        xdx = x[1:] - x[:-1]
+    else:
+        xdx = dx*np.ones_like(x)
+        
     i = 0
-    x0 = x[i] - mu
-    dx = x[i+1] - x[i]
+    x0 = x[i] - mux[i]
     
-    left = erf((x0 - dx/2)/s2dw)
-    right = erf((x0 + dx/2)/s2dw)
-    samp[i] = (right - left)/2/dx*normalization
+    left = erf((x0 - xdx[i]/2) / s2dw[i])
+    right = erf((x0 + xdx[i]/2) / s2dw[i])
+    samp[i] = (right - left)/2 * normalization
     
     for i in range(1, N):
-        x0 = x[i] - mu
-        dx = x[i] - x[i-1]
-        
-        left = erf((x0 - dx/2)/s2dw)
-        right = erf((x0 + dx/2)/s2dw)
-        samp[i] = (right - left)/2/dx*normalization
+        x0 = x[i] - mux[i]
+        left = erf((x0 - xdx[i]/2) / s2dw[i])
+        right = erf((x0 + xdx[i]/2) / s2dw[i])
+        samp[i] = (right - left)/2 * normalization
     
     return samp
     
