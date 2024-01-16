@@ -100,7 +100,7 @@ def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=0.1,
     return prf_frac
 
 
-def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff, mask, ipos, ineg, sh, force_positive, ret):
+def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff, mask, ipos, ineg, sh, fix_sigma, force_positive, ret):
     """
     """
     from msaexp.resample_numba import pixel_integrated_gaussian_numba as PRF
@@ -111,11 +111,17 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     
     EVAL_COUNT += 1
 
-    sigma = theta[0]/10.
+    if fix_sigma > 0:
+        sigma = fix_sigma/10.
+        i0 = 0
+    else:
+        sigma = theta[0]/10.
+        i0 = 1
+        
     yslit = yslit0*1.
     for j in np.where(ipos)[0]:
         xj = (xpix[j,:] - sh[1]/2) / sh[1]
-        _ytr = np.polyval(theta[1:], xj)
+        _ytr = np.polyval(theta[i0:], xj)
         _ytr += np.polyval(base_coeffs, xj)
         yslit[j,:] = ypix[j,:] - _ytr
     
@@ -147,7 +153,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
 
     pdiff = ppos - pneg
     
-    if (pneg.sum() == 0) & (len(theta) == 3):
+    if (pneg.sum() == 0) & (len(theta) == 1000):
         # print('bkg: ', EVAL_COUNT, theta)
         bkg = theta[2]/10.
     else:
@@ -172,7 +178,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     # else:
     #     CHI2_MASK = np.isfinite(diff)
 
-    if 1:
+    if 0:
         # two-sided
         # CHI2_MASK = (chi < 40) & (chi > -10)
         # CHI2_MASK &= ((smod+bkg).flatten()/np.sqrt(vdiff) > -10)
@@ -189,13 +195,22 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     #chi2 = np.nansum(chi[CHI2_MASK]**2)
     chi2 = np.nansum(huber(7, chi[CHI2_MASK & ok]))
     
+    # "prior" on sigma with logistic bounds
+    peak = 10000
+    chi2 += peak / (1 + np.exp(-1*(sigma - 2.8))) # right
+    chi2 += peak - peak / (1 + np.exp(-3*(sigma - 0))) # left
+    chi2 += (sigma - 5)**2/2/1**2
+    
     if (EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1):
-        print(f'{EVAL_COUNT:>8} {theta}  {chi2:.1f}')
+        tval = ' '.join([f'{t:6.3f}' for t in theta[i0:]])
+        tfix = '*' if i0 == 0 else ' '
+        print(f"{EVAL_COUNT:>8} {tfix}sigma={sigma*10:.2f}{tfix} [{tval}]  {chi2:.1f}")
 
-    if ret == 0:
-        return chi2
+    if ret == 1:
+        trace_coeffs = theta[i0:]
+        return snum, sden, smod, sigma, trace_coeffs, chi2
     else:
-        return snum, sden, smod, chi2
+        return chi2
 
 
 def objfun_prof(theta, wave, yslit, diff, vdiff, mask, ipos, ineg, sh, force_positive, ret):
@@ -320,7 +335,7 @@ def objfun_prof(theta, wave, yslit, diff, vdiff, mask, ipos, ineg, sh, force_pos
     if ret == 0:
         return chi2
     else:
-        return snum, sden, smod, chi2
+        return snum, sden, smod, 0, chi2
 
 
 class SlitGroup():
@@ -440,6 +455,14 @@ class SlitGroup():
         wtr = []
                 
         for slit in slits:
+            # try:
+            #     wcs = slit.meta.wcs
+            #     d2w = wcs.get_transform('detector', 'world')
+            # except AttributeError:
+            #     wcs = gwcs.WCS(slit.meta.wcs.instance['steps'])
+            #     d2w = wcs.get_transform('detector', 'world')
+            #     slit.meta.wcs = wcs
+
             _res = msautils.slit_trace_center(slit, 
                                   with_source_ypos=True,
                                   index_offset=0.0)
@@ -700,6 +723,11 @@ class SlitGroup():
             for p in self.unp.values:
                 if p not in exp_groups:
                     exp_groups.append(p)
+        
+        if 'evaluate' in kwargs:
+            force_evaluate = kwargs['evaluate']
+        else:
+            force_evaluate = None
             
         for k in range(niter):
             if verbose:
@@ -716,7 +744,12 @@ class SlitGroup():
                         kwargs['x0'] = tfits[ref_exp]['theta']
                     else:
                         kwargs['evaluate'] = False
-                
+                else:
+                    kwargs['evaluate'] = False
+                    
+                if force_evaluate is not None:
+                    kwargs['evaluate'] = force_evaluate
+                    
                 tfits[exp] = self.fit_single_trace(exp=exp, **kwargs)
                 dchi = tfits[exp]['chi2_fit'] - tfits[exp]['chi2_init']
                 
@@ -725,7 +758,7 @@ class SlitGroup():
                 if (dchi < dchi_threshold) | (kwargs['evaluate']):
                     msg += '\n'
                     for j in np.where(tfits[exp]['ipos'])[0]:
-                        self.trace_coeffs[j] = tfits[exp]['theta'][1:]
+                        self.trace_coeffs[j] = tfits[exp]['trace_coeffs']
                 else:
                     msg += '*\n'
                 
@@ -737,7 +770,7 @@ class SlitGroup():
         return tfits
 
 
-    def fit_single_trace(self, x0=None, sigma0=3., exp=1, force_positive=True, method='bfgs', tol=1.e-6, evaluate=False, degree=2, sigma_bounds=(1,20), with_bounds=True, **kwargs):
+    def fit_single_trace(self, x0=None, sigma0=3., exp=1, force_positive=True, method='powell', tol=1.e-6, evaluate=False, degree=2, sigma_bounds=(1,20), trace_bounds=(-1,1), fix_sigma=-1, with_bounds=True, **kwargs):
         """
         """
         from scipy.optimize import minimize
@@ -748,16 +781,22 @@ class SlitGroup():
         
         args = (base_coeffs, self.wave, self.xslit, self.ypix, self.yslit, diff,
                 vdiff, self.mask,
-                ipos, ineg, self.sh, force_positive, 0)
+                ipos, ineg, self.sh, fix_sigma, force_positive, 0)
         xargs = (base_coeffs, self.wave, self.xslit, self.ypix, self.yslit, diff,
                  vdiff, self.mask,
-                ipos, ineg, self.sh, force_positive, 1)
+                ipos, ineg, self.sh, fix_sigma, force_positive, 1)
         
         if x0 is None:
-            x0 = np.append([sigma0], np.zeros(degree+1))
+            if fix_sigma > 0:
+                x0 = np.zeros(degree+1)
+            else:
+                x0 = np.append([sigma0], np.zeros(degree+1))
         
         if with_bounds:
-            bounds = [sigma_bounds] + [(-1,1)]*(len(x0)-1)
+            if fix_sigma > 0:
+                bounds = [trace_bounds]*(len(x0))
+            else:
+                bounds = [sigma_bounds] + [trace_bounds]*(len(x0)-1)
         else:
             bounds = None
         
@@ -775,15 +814,21 @@ class SlitGroup():
             
             theta = _res.x
         
-        snum, sden, smod, chi2_init = objfun_prof_trace(x0, *xargs)
+        snum, sden, smod, sigma, trace_coeffs, chi2_init = objfun_prof_trace(x0, *xargs)
         
-        snum, sden, smod, chi2_fit = objfun_prof_trace(theta, *xargs)
+        snum, sden, smod, sigma, trace_coeffs, chi2_fit = objfun_prof_trace(theta, *xargs)
         
         out = {'theta':theta,
+               'sigma':sigma,
+               'trace_coeffs': trace_coeffs,
                'chi2_init': chi2_init, 'chi2_fit': chi2_fit,
                'ipos':ipos, 'ineg':ineg,
                'diff':diff, 'vdiff':vdiff,
-                'snum':snum, 'sden':sden, 'smod':smod
+                'snum':snum, 'sden':sden, 'smod':smod,
+                'force_positive': force_positive,
+                'bounds':bounds,
+                'method':method,
+                'tol':tol,
                }
         
         return out
@@ -862,7 +907,7 @@ class SlitGroup():
             ymax = np.nanpercentile(fit_result['smod'][np.isfinite(fit_result['smod'])], 98)*2.
             
             ax.scatter(self.yslit[0,:], fit_result['smod'], alpha=0.1, color='r')
-            ax.vlines(fit_result['theta'][0], -ymax, ymax, linestyle=':', color='r')
+            ax.vlines(fit_result['sigma'], -ymax, ymax, linestyle=':', color='r')
             
         ax.set_ylim(-0.5*ymax, ymax)
         ax.grid()
