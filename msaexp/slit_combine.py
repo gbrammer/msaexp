@@ -340,7 +340,7 @@ def objfun_prof(theta, wave, yslit, diff, vdiff, mask, ipos, ineg, sh, force_pos
 
 
 class SlitGroup():
-    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True):
+    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True):
         """
         """
         self.name = name
@@ -350,6 +350,7 @@ class SlitGroup():
         self.slits = []
         keep_files = []
         
+        self.trace_with_ypos = trace_with_ypos
         self.stuck_min_sn = stuck_min_sn
         self.undo_barshadow = undo_barshadow
         
@@ -454,8 +455,17 @@ class SlitGroup():
         xtr = []
         ytr = []
         wtr = []
-                
-        for slit in slits:
+        
+        attr_keys = ['source_ra','source_dec','source_xpos','source_ypos',
+                     'shutter_state', 'slitlet_id']
+        
+        self.info['shutter_state'] = 'xxxxxxxx'
+        
+        for k in attr_keys:
+            if k not in self.info.colnames:
+                self.info[k] = 0.
+        
+        for j, slit in enumerate(slits):
             # try:
             #     wcs = slit.meta.wcs
             #     d2w = wcs.get_transform('detector', 'world')
@@ -465,7 +475,7 @@ class SlitGroup():
             #     slit.meta.wcs = wcs
 
             _res = msautils.slit_trace_center(slit, 
-                                  with_source_ypos=True,
+                                  with_source_ypos=self.trace_with_ypos,
                                   index_offset=0.0)
             
             _xtr, _ytr, _wtr, slit_ra, slit_dec = _res
@@ -483,6 +493,9 @@ class SlitGroup():
             _ypi, _xpi = np.indices(slit.data.shape)
             _ras, _des, _wave = d2w(_xpi, _ypi)
             wave.append(_wave[sl].flatten())
+            
+            for k in attr_keys:
+                self.info[k][j] = getattr(slit, k)
             
             #_ras, _des, ws = d2w(_xtr, _ytr)
             #
@@ -552,6 +565,7 @@ class SlitGroup():
             
         self.xslit = xslit
         self.yslit = yslit
+        self.yslit_orig = yslit*1
         self.ypix = ypix
         self.wave = wave
         self.bar = bar
@@ -559,6 +573,15 @@ class SlitGroup():
         self.xtr = xtr
         self.ytr = ytr
         self.wtr = wtr
+        
+        if ((self.info['source_ra'] < 0.0001).sum() == self.N) & (self.N == 3):
+            msg = 'Seems to be a background slit.  Force [0, 5, -5] pix offsets'
+            print(msg)
+            self.ytr[0,:] -= 1.0
+            self.ytr[1,:] += 4.0
+            self.ytr[2,:] -= 6.0
+            self.info['manual_position'] = [2,3,1]
+            self.position_key = 'manual_position'
         
         self.set_trace_coeffs(degree=2)
         
@@ -576,6 +599,7 @@ class SlitGroup():
         
         self.base_coeffs = coeffs
         self.trace_coeffs = [c*0. for c in coeffs]
+        self.update_trace_from_coeffs()
 
 
     def update_trace_from_coeffs(self):
