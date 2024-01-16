@@ -200,6 +200,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     chi2 += peak / (1 + np.exp(-1*(sigma - 2.8))) # right
     chi2 += peak - peak / (1 + np.exp(-3*(sigma - 0))) # left
     chi2 += (sigma - 0.6)**2/2/0.1**2
+    chi2 += ((theta[i0:] - 0)**2/2/0.1**2).sum()
     
     if (EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1):
         tval = ' '.join([f'{t:6.3f}' for t in theta[i0:]])
