@@ -169,13 +169,13 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.):
     
     left = erf((x0 - xdx[i]/2) / s2dw[i])
     right = erf((x0 + xdx[i]/2) / s2dw[i])
-    samp[i] = (right - left)/2 * normalization
+    samp[i] = (right - left) / 2 / xdx[i] * normalization
     
     for i in range(1, N):
         x0 = x[i] - mux[i]
         left = erf((x0 - xdx[i]/2) / s2dw[i])
         right = erf((x0 + xdx[i]/2) / s2dw[i])
-        samp[i] = (right - left)/2 * normalization
+        samp[i] = (right - left) / 2 / xdx[i] * normalization
     
     return samp
     
