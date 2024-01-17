@@ -704,7 +704,7 @@ class SlitGroup():
         
         if ((self.info['source_ra'] < 0.0001).sum() == self.N) & (self.N == 3):
             msg = f'Seems to be a background slit.  '
-            msg += 'Force [0, {self.nod_offset}, -{self.nod_offset}] pix offsets'
+            msg += f'Force [0, {self.nod_offset}, -{self.nod_offset}] pix offsets'
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
             
             self.ytr[0,:] -= 1.0
