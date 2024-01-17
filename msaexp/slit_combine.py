@@ -1592,7 +1592,7 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
     return wave_bin, xbin, ybin, header, arrays, parrays
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, reference_exposure='auto', offset_degree=0, recenter_all=True, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, drizzle_kws=DRIZZLE_KWS, get_xobj=False):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, reference_exposure='auto', offset_degree=0, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, drizzle_kws=DRIZZLE_KWS, get_xobj=False):
     """
     Spectral combination workflow
     """
