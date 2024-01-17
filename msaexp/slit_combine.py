@@ -887,7 +887,7 @@ class SlitGroup():
     #
     #     return fig
     
-    def plot_2d_differences(self, fit=None, clip_sigma=3, kws=dict(cmap='plasma', interpolation='hanning'), figsize=(6,2)):
+    def plot_2d_differences(self, fit=None, clip_sigma=3, kws=dict(cmap='Blues', interpolation='hanning'), figsize=(6,2)):
         """
         """
         Ny = self.unp.N
@@ -1366,6 +1366,7 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     
     for k in xobj:
         bkg_offset = xobj[k]['obj'].nod_offset
+        # print('xxx nod_offset: ', bkg_offset)
         break
     
     _data = msaexp.drizzle.make_optimal_extraction(wave_bin, sci2d, wht2d,
