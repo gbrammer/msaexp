@@ -1666,7 +1666,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
             obj.nod_offset = 10
         
         ind = None
-        if root.startswith('glazebrook-v':
+        if root.startswith('glazebrook-v'):
             # flipped??
             print('  ! flip glazebrook')
     
