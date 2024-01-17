@@ -1825,7 +1825,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
         
         _head = hdul[g][1].header
         
-        specfile = f"{root}_{_head['GRATING']}-{_head['FILTER']}"
+        specfile = f"{root}_{_head['GRATING']}-{_head['FILTER']}".lower()
         specfile += f"_{_head['SRCNAME']}.spec.fits".lower()
         
         print(specfile)
