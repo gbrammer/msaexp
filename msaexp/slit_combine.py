@@ -1629,6 +1629,11 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
             
         print(f'\n* Group {g}   N={len(groups[g])}')
         
+        if ('glazebrook' in root) | ('suspense' in root):
+            nod_offset = 10
+        else:
+            nod_offset = 5
+            
         obj = SlitGroup(groups[g], g, position_key='y_index',
                         diffs=True, #(True & (~isinstance(id, str))),
                         stuck_min_sn=stuck_min_sn,
@@ -1636,6 +1641,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
                         # undo_barshadow=True,
                         # sky_arrays=(wsky, fsky),
                         trace_with_ypos=('b' not in target),
+                        nod_offset=nod_offset
                        )
         
         if 0:
@@ -1664,9 +1670,6 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
             elif ('b' in target) & ((obj.info['shutter_state'] == 'x').sum() > 0):
                 print(f'\n    single background shutter\n')
                 continue
-        
-        if 'glazebrook' in root:
-            obj.nod_offset = 10
         
         ind = None
         if root.startswith('glazebrook-v'):
