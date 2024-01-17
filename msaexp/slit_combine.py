@@ -1364,6 +1364,10 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     import msaexp.drizzle
     kwargs = {}
     
+    for k in xobj:
+        bkg_offset = xobj[k]['obj'].nod_offset
+        break
+    
     _data = msaexp.drizzle.make_optimal_extraction(wave_bin, sci2d, wht2d,
                                                profile_slice=None,
                                                prf_center=0.,
@@ -1374,7 +1378,7 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
                                                fix_center=False,
                                                fix_sigma=True,
                                                trim=0,
-                                               bkg_offset=6,
+                                               bkg_offset=bkg_offset,
                                                bkg_parity=[1,-1],
                                                offset_for_chi2=1.,
                                                max_wht_percentile=None,
@@ -1657,14 +1661,16 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
             elif ('b' in target) & ((obj.info['shutter_state'] == 'x').sum() > 0):
                 print(f'\n    single background shutter\n')
                 continue
-                
+        
+        if 'glazebrook' in root:
+            obj.nod_offset = 10
+        
         ind = None
-        if root == 'glazebrook-v1':
+        if root.startswith('glazebrook-v':
             # flipped??
             print('  ! flip glazebrook')
     
             ind = [0,2,1]
-            obj.nod_offset = 10
         
         elif 'maseda' in root:
             print('  ! flip maseda')
@@ -1794,18 +1800,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
         fig2d = obj.plot_2d_differences(fit=fit)
         fileroot = f'{root}_{obj.grating}-{obj.filter}_{target}'.lower()
         fig2d.savefig(f'{fileroot}.d2d.png')
-        
-        # for ex in obj.unp.values:
-        #     if (ex != show_exp):
-        #         continue
-        #
-        #     try:
-        #         xres = xobj[k]['fit'][ex]
-        #         fig = obj.plot_2d(exp=ex, yoffset=0., model=xres['smod'])
-        #         # fig = obj.plot_profile(exp=ex, fit_result=xres)
-        #     except:
-        #         continue
-
+    
     for k in xobj:
         xobj[k]['obj'].sky_arrays = None
 
