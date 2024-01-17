@@ -1004,7 +1004,7 @@ class SlitGroup():
             force_evaluate = kwargs['evaluate']
         else:
             force_evaluate = None
-            
+        
         for k in range(niter):
             if verbose:
                 print(f'   fit_all_traces, iter {k}')
@@ -1025,6 +1025,8 @@ class SlitGroup():
                     
                 if force_evaluate is not None:
                     kwargs['evaluate'] = force_evaluate
+                
+                # print('xxx ref_exp', ref_exp, exp, kwargs['evaluate'], force_evaluate)
                     
                 tfits[exp] = self.fit_single_trace(exp=exp, **kwargs)
                 dchi = tfits[exp]['chi2_fit'] - tfits[exp]['chi2_init']
@@ -1752,10 +1754,13 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
                    trace_bounds = (-1.0,1.0), 
                    initial_sigma=initial_sigma,
                    x0=initial_theta,
-                   evaluate=fix_params,
+                   #evaluate=fix_params,
                    method='powell',
                    tol=1.e-8
                   )
+        
+        if fix_params:
+            kws['evaluate'] = True
         
         if (i == 0) | (recenter_all):
     
