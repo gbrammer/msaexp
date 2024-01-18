@@ -2233,7 +2233,11 @@ def get_nirspec_psf_fwhm(wave):
         Wavelength in microns
     
     """
-    fwhm_table = grizli.utils.read_catalog("""# wave fwhm_pix
+    
+    # nspec = webbpsf.NIRSpec()
+    # nspec.image_mask = 'S200A1' # 0.2 arcsec slit
+    
+    fwhm_data = """# wave fwhm_pix
     0.6 1.04
     0.7 0.80
     0.8 0.67
@@ -2246,7 +2250,37 @@ def get_nirspec_psf_fwhm(wave):
     3.0 1.08
     4.0 1.41
     5.0 1.78
-    5.5 1.94""")
+    5.5 1.94"""
+    
+    # nspec.image_mask = 'MSA all open'
+    fwhm_data = """# wave fwhm_pix
+    0.60  1.347
+    0.65  1.119
+    0.70  1.074
+    0.75  0.935
+    0.80  0.857
+    0.85  0.807
+    0.90  0.796
+    0.95  0.775
+    1.00  0.772
+    1.08  0.823
+    1.16  0.872
+    1.25  0.907
+    1.50  0.978
+    1.75  1.056
+    2.00  1.114
+    2.25  1.111
+    2.50  1.193
+    2.75  1.199
+    3.00  1.299
+    3.50  1.430
+    4.00  1.567
+    4.50  1.885
+    5.00  2.058
+    5.25  2.271
+    5.50  2.357"""
+    
+    fwhm_table = grizli.utils.read_catalog(fwhm_data)
     
     fwhm = np.interp(wave, fwhm_table['wave'], fwhm_table['fwhm_pix'],
                      left=fwhm_table['fwhm_pix'][0],
