@@ -111,8 +111,9 @@ def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=0.1,
     if verbose:
         print(msg)
     
+    dxpix = slit_width / pixel_scale
     prf_frac = PRF(pix_center, pix_mu, pix_sigma,
-                   dx=slit_width / pixel_scale, normalization=1)
+                   dx=dxpix, normalization=1) * dxpix
     
     return prf_frac
 
@@ -791,7 +792,7 @@ class SlitGroup():
         sky = self.sky_background
         
         if self.undo_barshadow:
-            return (self.sci - sky) / self.bar
+            return (self.sci - sky) * self.bar
         else:
             return self.sci - sky
     
@@ -1550,14 +1551,16 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
                 
             # print(exp, ip)
             
-            if obj.diffs | (1):
-                ysl = (obj.yslit[ip,:].reshape(obj.sh) + 0.0).flatten()[ok]
-                if fit is not None:
-                    if (len(fit[exp]['theta']) != 4) & (0):
-                        ysl -= fit[exp]['theta'][0]
-            else:
-                ysl = (obj.yslit[ip,:].reshape(obj.sh) +
-                       np.nanmedian(obj.ytr[ip,:])).flatten()[ok]
+            ysl = (obj.yslit[ip,:].reshape(obj.sh) + 0.0).flatten()[ok]
+            
+            # if obj.diffs | (1):
+            #     ysl = (obj.yslit[ip,:].reshape(obj.sh) + 0.0).flatten()[ok]
+            #     if fit is not None:
+            #         if (len(fit[exp]['theta']) != 4) & (0):
+            #             ysl -= fit[exp]['theta'][0]
+            # else:
+            #     ysl = (obj.yslit[ip,:].reshape(obj.sh) +
+            #            np.nanmedian(obj.ytr[ip,:])).flatten()[ok]
             
             xsl = obj.xslit[ip,:][ok]
             xsl = obj.wave[ip,:][ok]
@@ -1594,13 +1597,14 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
     return wave_bin, xbin, ybin, header, arrays, parrays
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, reference_exposure='auto', offset_degree=0, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, drizzle_kws=DRIZZLE_KWS, get_xobj=False):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, reference_exposure='auto', trace_niter=4, offset_degree=0, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
     """
     Spectral combination workflow
     """
     global THETA_PRIOR
     
-    files = glob.glob(os.path.join(path_to_files, f'*phot*{target}.fits'))
+    if files is None:
+        files = glob.glob(os.path.join(path_to_files, f'*phot*{target}.fits'))
         
     for i in range(len(files))[::-1]:
         if 'jw04246003001_03101_00001_nrs2' in files[i]:
@@ -1635,12 +1639,12 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
             nod_offset = 5
             
         obj = SlitGroup(groups[g], g, position_key='y_index',
-                        diffs=True, #(True & (~isinstance(id, str))),
+                        diffs=diffs, #(True & (~isinstance(id, str))),
                         stuck_min_sn=stuck_min_sn,
                         # stuck_min_sn=-100,
-                        # undo_barshadow=True,
+                        undo_barshadow=undo_barshadow,
                         # sky_arrays=(wsky, fsky),
-                        trace_with_ypos=('b' not in target),
+                        trace_with_ypos=('b' not in target) & (not get_background),
                         nod_offset=nod_offset
                        )
         
@@ -1748,7 +1752,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
         if reference_exposure in ['auto']:
             reference_exposure = 1 if obj.N == 1 else 2 - ('bluejay' in root)
             
-        kws = dict(niter=4,
+        kws = dict(niter=trace_niter,
                    force_positive=(fit_type == 0),
                    degree=offset_degree,
                    ref_exp=reference_exposure,
@@ -1791,14 +1795,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./',  
             tfit = obj.fit_all_traces(**kws)
             
         xobj[k] = {'obj':obj, 'fit': tfit}
-        sigma_fit = tfit[obj.unp.values[0]]['theta'][0]/10.
-        
-    ### Fit plots
-    if reference_exposure is None:
-        show_exp = 2 if obj.N > 1 else 1
-    else:
-        show_exp = reference_exposure
-        
+
+    ### Fit plots        
     for k in keys:
         obj = xobj[k]['obj']
         if 'fit' in xobj[k]:
