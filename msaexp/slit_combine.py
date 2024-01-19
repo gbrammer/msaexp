@@ -1933,9 +1933,9 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                     if kws['fix_sigma'] is not None:
                         fix_sigma = kws['fix_sigma']
                     else:
-                        fix_sigma = tfit[obj.unp.values[0]]['sigma']
+                        fix_sigma = tfit[obj.unp.values[0]]['sigma']*10
                 else:
-                    fix_sigma = tfit[obj.unp.values[0]]['sigma']
+                    fix_sigma = tfit[obj.unp.values[0]]['sigma']*10
                 
         else:
             kws['x0'] = theta
