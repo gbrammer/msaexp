@@ -926,6 +926,9 @@ class SlitGroup():
 
             ax = axes[i][0]    
             ax.imshow(diff.reshape(self.sh), aspect='auto', origin='lower', **kws)
+            ax.text(0.05, 0.95, f'{self.name}\n{self.grating}',
+                    ha='left', va='top',
+                    fontsize=8, transform=ax.transAxes, bbox={'fc':'w', 'alpha':0.1})
             ax.text(0.05, 0.05, f'Npos = {ipos.sum()}\nNneg = {ineg.sum()}',
                     ha='left', va='bottom',
                     fontsize=8, transform=ax.transAxes, bbox={'fc':'w', 'alpha':0.1})
