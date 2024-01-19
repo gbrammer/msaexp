@@ -118,7 +118,7 @@ def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=0.1,
     return prf_frac
 
 
-def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff, mask, ipos, ineg, sh, fix_sigma, force_positive, ret):
+def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff, mask, ipos, ineg, sh, fix_sigma, force_positive, verbose, ret):
     """
     """
     from msaexp.resample_numba import pixel_integrated_gaussian_numba as PRF
@@ -213,7 +213,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     chi2 += (sigma - 0.6)**2/2/0.1**2
     chi2 += ((np.array(theta[i0:]) - 0)**2/2/THETA_PRIOR**2).sum()
     
-    if (EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1):
+    if ((EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1)) & verbose:
         tval = ' '.join([f'{t:6.3f}' for t in theta[i0:]])
         tfix = '*' if i0 == 0 else ' '
         print(f"{EVAL_COUNT:>8} {tfix}sigma={sigma*10:.2f}{tfix} [{tval}]  {chi2:.1f}")
@@ -351,7 +351,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
 
 
 class SlitGroup():
-    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, nod_offset=5):
+    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, nod_offset=5, reference_exposure='auto'):
         """
         Container for a list of 2D extracted ``SlitModel`` files
         
@@ -390,6 +390,10 @@ class SlitGroup():
             Nod offset size (pixels) to use if the slit model traces don't already 
             account for it, e.g., in background-indicated slits without explicit
             catalog sources
+        
+        reference_exposure : int, 'auto'
+            Define a reference nod position.  If ``'auto'``, then will use the exposure
+            in the middle of the nod offset distribution
         
         Attributes
         ----------
@@ -454,6 +458,7 @@ class SlitGroup():
         
         self.sky_arrays = sky_arrays
         self.undo_pathloss = undo_pathloss
+        self.reference_exposure = reference_exposure
         
         self.shapes = []
         
@@ -515,6 +520,36 @@ class SlitGroup():
         return utils.Unique(self.info[self.position_key], verbose=False)
 
 
+    @property
+    def calc_reference_exposure(self):
+        """
+        Define a reference exposure, usually middle of three nods
+        """
+        # if reference_exposure in ['auto']:
+        #     reference_exposure = 1 if obj.N == 1 else 2 - ('bluejay' in root)
+        if self.reference_exposure in ['auto']:
+            if self.N < 3:
+                ix = 0
+            else:
+                ix = np.nanargmin(np.abs(self.relative_nod_offset))
+            
+            return self.info[self.position_key][ix]
+        else:
+            return self.reference_exposure
+
+
+    @property
+    def relative_nod_offset(self):
+        """
+        Compute relative nod offsets from the trace polynomial
+        """
+        if self.N == 1:
+            return np.array([0])
+        
+        y0 = np.array([c[-1] for c in self.base_coeffs])
+        return y0 - np.median(y0)
+    
+    
     def parse_metadata(self, verbose=True):
         """
         Generate the `info` metadata attribute from the `slits` data
@@ -903,7 +938,10 @@ class SlitGroup():
     
         if Ny == Nx == 1:
             axes = [[axes]]
-
+        
+        ref_exp = self.calc_reference_exposure
+        nods = self.relative_nod_offset
+        
         for i, exp in enumerate(self.unp.values):
             ipos, ineg, diff, vdiff = self.make_diff_image(exp=exp)
 
@@ -926,12 +964,19 @@ class SlitGroup():
 
             ax = axes[i][0]    
             ax.imshow(diff.reshape(self.sh), aspect='auto', origin='lower', **kws)
-            ax.text(0.05, 0.95, f'{self.name}\n{self.grating}',
+            if i == 0:
+                ax.text(0.05, 0.95, f'{self.name}',
                     ha='left', va='top',
-                    fontsize=8, transform=ax.transAxes,
+                    fontsize=10, transform=ax.transAxes,
                     bbox={'fc':'w', 'alpha':0.1, 'ec':'None',})
-                    
-            ax.text(0.05, 0.05, f'Npos = {ipos.sum()}\nNneg = {ineg.sum()}',
+            
+            star = '*' if exp == ref_exp else ' '
+            spacer = ' '*5
+            msg = f'exp={exp}{star}  nod={nods[ipos][0]:5.1f}'
+            msg += f'{spacer}Npos = {ipos.sum()} {spacer}Nneg = {ineg.sum()}'
+            
+            ax.text(0.05, 0.05,
+                    msg,
                     ha='left', va='bottom',
                     fontsize=8, transform=ax.transAxes,
                     bbox={'fc':'w', 'alpha':0.1, 'ec':'None',})
@@ -946,13 +991,13 @@ class SlitGroup():
                     xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
                     _ytr = np.polyval(self.trace_coeffs[j], xj)
                     _ytr += np.polyval(self.base_coeffs[j], xj)
-                    _ = ax.plot(_ytr, color='tomato', alpha=0.2, lw=2)
+                    _ = ax.plot(_ytr, color='tomato', alpha=0.3, lw=2)
     
                 for j in np.where(ineg)[0]:
                     xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
                     _ytr = np.polyval(self.trace_coeffs[j], xj)
                     _ytr += np.polyval(self.base_coeffs[j], xj)
-                    _ = ax.plot(_ytr, color='wheat', alpha=0.2, lw=2)
+                    _ = ax.plot(_ytr, color='wheat', alpha=0.3, lw=2)
                 
                 ax.grid()
                 
@@ -1057,8 +1102,51 @@ class SlitGroup():
         return tfits
 
 
-    def fit_single_trace(self, x0=None, initial_sigma=3., exp=1, force_positive=True, method='powell', tol=1.e-6, evaluate=False, degree=2, sigma_bounds=(1,20), trace_bounds=(-1,1), fix_sigma=-1, with_bounds=True, **kwargs):
+    def fit_single_trace(self, x0=None, initial_sigma=3., exp=1, force_positive=True, method='powell', tol=1.e-6, evaluate=False, degree=2, sigma_bounds=(1,20), trace_bounds=(-1,1), fix_sigma=-1, with_bounds=True, verbose=True, **kwargs):
         """
+        Fit profile width and trace offset polynomial to one of the nod traces
+        
+        Parameters
+        ----------
+        x0 : array-like, None
+            Initial parameter guess
+        
+        initial_sigma : float
+            Initial profile sigma to use (pixels*10)
+        
+        exp : int
+            Exposure index (see ``unp``)
+        
+        force_positive : bool
+            Don't consider the negative subtracted parts of the difference image
+        
+        method, tol : str, float
+            Optimization parameters
+        
+        evaluate : bool
+            Don't fit, just evaluate with given parameters
+        
+        degree : int
+            Trace offset polynomial degree
+        
+        sigma_bounds : (float, float)
+            Bounds on profile width
+        
+        trace_bounds : (float, float)
+            Bounds on trace offset coefficients
+        
+        fix_sigma : float
+            If ``fix_sigma > 0``, don't fit for the profile width but fix to this
+            value
+        
+        with_bounds : bool
+            Use ``sigma_bounds`` and ``trace_bounds`` in optimization
+        
+        Returns
+        -------
+        fit : dict
+            Fit results
+        
         """
         from scipy.optimize import minimize
         global EVAL_COUNT
@@ -1068,10 +1156,10 @@ class SlitGroup():
         
         args = (base_coeffs, self.wave, self.xslit, self.ypix, self.yslit, diff,
                 vdiff, self.mask,
-                ipos, ineg, self.sh, fix_sigma, force_positive, 0)
+                ipos, ineg, self.sh, fix_sigma, force_positive, verbose, 0)
         xargs = (base_coeffs, self.wave, self.xslit, self.ypix, self.yslit, diff,
                  vdiff, self.mask,
-                ipos, ineg, self.sh, fix_sigma, force_positive, 1)
+                ipos, ineg, self.sh, fix_sigma, force_positive, verbose, 1)
         
         if x0 is None:
             if fix_sigma > 0:
@@ -1101,87 +1189,126 @@ class SlitGroup():
             
             theta = _res.x
         
-        snum, sden, smod, sigma, trace_coeffs, chi2_init = objfun_prof_trace(x0, *xargs)
+        # Initial values
+        _ = objfun_prof_trace(x0, *xargs)
+        snum, sden, smod, sigma, trace_coeffs, chi2_init = _
         
-        snum, sden, smod, sigma, trace_coeffs, chi2_fit = objfun_prof_trace(theta, *xargs)
+        # Evaluated
+        _ = objfun_prof_trace(theta, *xargs)
+        snum, sden, smod, sigma, trace_coeffs, chi2_fit = _
         
         out = {'theta': theta,
                'sigma': sigma,
                'trace_coeffs': trace_coeffs,
-               'chi2_init': chi2_init, 'chi2_fit': chi2_fit,
-               'ipos':ipos, 'ineg':ineg,
-               'diff':diff, 'vdiff':vdiff,
-                'snum':snum, 'sden':sden, 'smod':smod,
-                'force_positive': force_positive,
-                'bounds':bounds,
-                'method':method,
-                'tol':tol,
+               'chi2_init': chi2_init,
+               'chi2_fit': chi2_fit,
+               'ipos':ipos,
+               'ineg':ineg,
+               'diff':diff,
+               'vdiff':vdiff,
+               'snum':snum,
+               'sden':sden,
+               'smod':smod,
+               'force_positive': force_positive,
+               'bounds':bounds,
+               'method':method,
+               'tol':tol,
                }
         
         return out
 
 
-    # def extract_spectrum(self, x0=[0, 4], bounds=None, evaluate=False):
-    #     """
-    #     """
-    #     ydata = []
-    #     wdata = []
-    #     fdata = []
-    #     vdata = []
-    #     pdata = []
-    #     sodata = []
-    #
-    #     theta = np.array(x0)
-    #
-    #     for ex in self.unp.values:
-    #
-    #         res = self.fit_profile(exp=ex, x0=theta, bounds=bounds,
-    #                                evaluate=((ex > 1) | evaluate),
-    #                                )
-    #
-    #         # plt.imshow(diff.reshape(self.sh) ,aspect='auto', vmin=-0.1, vmax=0.1)
-    #
-    #         ysl = self.yslit[res['ipos'],:][0,:].reshape(self.sh)
-    #         wsl = self.wave[res['ipos'],:][0,:].reshape(self.sh)
-    #         ydata.append(ysl)
-    #         wdata.append(wsl)
-    #         sodata.append(np.argsort(wsl[0,:]))
-    #
-    #         fdata.append(res['diff'].reshape(self.sh))
-    #         vdata.append(res['vdiff'].reshape(self.sh))
-    #         pdata.append(res['smod']*res['sden']/res['snum'])
-    #
-    #         theta = res['theta']
-    #
-    #     # Sorting
-    #     sodata = np.argsort( np.hstack(wdata )[0,:])
-    #     ydata  = np.hstack(ydata )[:,sodata]
-    #     wdata  = np.hstack(wdata )[:,sodata]
-    #     fdata  = np.hstack(fdata )[:,sodata]
-    #     vdata  = np.hstack(vdata )[:,sodata]
-    #     pdata  = np.hstack(pdata )[:,sodata]
-    #
-    #     # Optimal extraction
-    #     msk = pdata > 0
-    #     fnum = np.nansum(fdata/vdata*pdata*msk, axis=0)
-    #     fden = np.nansum(pdata**2/vdata*msk, axis=0)
-    #     w0 = wdata[0,:]
-    #
-    #     mdata = pdata*fnum/fden
-    #     out = {'wave2d': wdata,
-    #            'yslit2d': ydata,
-    #            'flux2d': fdata,
-    #            'var2d':  vdata,
-    #            'prof2d': pdata,
-    #            'wave2d': wdata,
-    #            'fnum': fnum,
-    #            'fden': fden,
-    #            'theta': theta,
-    #            }
-    #
-    #     return out
+    def get_trace_sn(self, exposure_position='auto', theta=[4., 0], force_positive=True, **kwargs):
+        """
+        Compute spectrum S/N along the trace
+        
+        Parameters
+        ----------
+        exposure_position : int, 'auto'
+            Reference exposure position to use
+        
+        theta : array-like
+            Default trace profile parameters
+        
+        force_positive : bool
+            Parameter on `msaexp.slit_combine.fit_single_trace`
+        
+        Returns
+        -------
+        tfit : dict
+            Output from `msaexp.slit_combine.fit_single_trace` with an additional 
+            ``sn`` item
+        
+        """
+        ref_exp = (self.calc_reference_exposure if exposure_position is 'auto' 
+                   else exposure_position)
     
-    
+        tfit = self.fit_single_trace(exp=ref_exp,
+                                     x0=np.array(theta),
+                                     fix_sigma=-1,
+                                     evaluate=True,
+                                     force_positive=force_positive, 
+                                     verbose=False)
+                                     
+        tfit['sn'] = tfit['snum'] / np.sqrt(tfit['sden'])
+        
+        return tfit
+
+
+    def fit_params_by_sn(self, sn_percentile=80, sigma_threshold=5, degree_sn=[[-1000], [0]], verbose=True, **kwargs):
+        """
+        Compute trace offset polynomial degree and whether or not to fix the profile
+        sigma width as a function of S/N
+
+        Parameters
+        ----------
+        sn_percentile : float
+            Percentile of the 1D S/N array extracted along the trace
+
+        sigma_threshold : float
+            Threshold below which the profile width is fixed (``fix_sigma = True``)
+
+        degree_sn : [array-like, array-like]
+            The two arrays/lists ``x_sn, y_degree = degree_sn`` define the S/N 
+            thresholds ``x_sn`` below which a polynomial degree ``y_degree`` is used
+
+        kwargs : dict
+            Keyword arguments passed to the ``get_trace_sn`` method
+        
+        Returns
+        -------
+        sn : array-like
+            1D S/N along the dispersion axis
+        
+        fix_sigma : bool
+            Test whether SN percentile is below ``sigma_threshold``
+
+        interp_degree : int
+            The derived polynomial degree given the estimated SN percentile
+            ``interp_degree = np.interp(SN[sn_percentile], x_sn, y_degree)``
+        
+        """
+        tfit = self.get_trace_sn(**kwargs)
+        sn_x = np.nanpercentile(tfit['sn'], sn_percentile)
+        
+        if not np.isfinite(sn_x):
+            return tfit['sn'], True, degree_sn[1][0]
+        
+        interp_degree = int(np.interp(sn_x, *degree_sn,
+                                      left=degree_sn[1][0],
+                                      right=degree_sn[1][-1])
+                                      )
+
+        fix_sigma = sn_x < sigma_threshold
+
+        msg = f'fit_params_by_sn: {self.name}' # {degree_sn[0]} {degree_sn[1]}'
+        msg += f'  SN({sn_percentile:.0f}%) = {sn_x:.1f}  fix_sigma={fix_sigma}'
+        msg += f'  degree={interp_degree} '
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        
+        return tfit['sn'], fix_sigma, interp_degree
+
+
     def plot_profile(self, exp=1, ax=None, fit_result=None, ymax=0.2):
         """
         Make a plot of cross-dispersion profile
@@ -1290,7 +1417,7 @@ def obj_header(obj):
                 if k in ('', 'COMMENT','HISTORY'):
                     continue
                     
-                header[k] = im[ext].header[k]
+                header[k] = (im[ext].header[k], im[ext].header.comments[k])
 
     files = []
     header['EXPTIME'] = 0.
@@ -1443,7 +1570,8 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     
     for k in hdul['SCI'].header:
         if k not in hdul['SPEC1D'].header:
-            hdul['SPEC1D'].header[k] = hdul['SCI'].header[k]
+            hdul['SPEC1D'].header[k] = (hdul['SCI'].header[k], 
+                                        hdul['SCI'].header.comments[k])
 
     return hdul
 
@@ -1537,12 +1665,18 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
             fit = xobj[k]['fit']
             for e in fit:
                 sigma = fit[e]['sigma']
+                trace_coeffs = fit[e]['trace_coeffs']
                 break
         except:
             fit = None
             sigma = 1.
-
-        header['SIGMA'] = sigma
+            trace_coeffs = [0]
+            
+        header['SIGMA'] = (sigma, 'Profile width, pixels')
+        header['TRACEDEG'] = (len(trace_coeffs) - 1, 'Trace offset polynomial degree')
+        for i, val in enumerate(trace_coeffs):
+            header[f'TRACEC{i}'] = (val, 'Trace offset polynomial coefficient')
+        
         exp_ids = obj.unp.values
             
         for exp in exp_ids:
@@ -1556,19 +1690,8 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
             ok &= vdiff > 0
             if ok.sum() == 0:
                 continue
-                
-            # print(exp, ip)
             
             ysl = (obj.yslit[ip,:].reshape(obj.sh) + 0.0).flatten()[ok]
-            
-            # if obj.diffs | (1):
-            #     ysl = (obj.yslit[ip,:].reshape(obj.sh) + 0.0).flatten()[ok]
-            #     if fit is not None:
-            #         if (len(fit[exp]['theta']) != 4) & (0):
-            #             ysl -= fit[exp]['theta'][0]
-            # else:
-            #     ysl = (obj.yslit[ip,:].reshape(obj.sh) +
-            #            np.nanmedian(obj.ytr[ip,:])).flatten()[ok]
             
             xsl = obj.xslit[ip,:][ok]
             xsl = obj.wave[ip,:][ok]
@@ -1604,8 +1727,13 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
 
     return wave_bin, xbin, ybin, header, arrays, parrays
 
+FIT_PARAMS_SN_KWARGS = dict(sn_percentile=80,
+                            sigma_threshold=5,
+                            # degree_sn=[[-10000,10,100000], [0,1,2]],
+                            degree_sn=[[-10000], [0]],
+                            verbose=True)
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, reference_exposure='auto', trace_niter=4, offset_degree=0, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
     """
     Spectral combination workflow
     """
@@ -1653,7 +1781,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                         undo_barshadow=undo_barshadow,
                         # sky_arrays=(wsky, fsky),
                         trace_with_ypos=('b' not in target) & (not get_background),
-                        nod_offset=nod_offset
+                        nod_offset=nod_offset,
+                        reference_exposure=reference_exposure,
                        )
         
         if 0:
@@ -1745,7 +1874,11 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     keys = [xkeys[j] for j in so[::-1]]
     
     print('\nkeys: ', keys)
-
+    
+    if fit_params_kwargs is not None:
+        obj0 = xobj[keys[0]]['obj']
+        _sn, input_fix_sigma, offset_degree = obj0.fit_params_by_sn(**fit_params_kwargs)
+    
     # fix_sigma = None
     if input_fix_sigma is None:
         fix_sigma_across_groups = True
@@ -1766,13 +1899,13 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         # if ('140m' in k) | ('395h' in k):
         #     offset_degree = 0
         
-        if reference_exposure in ['auto']:
-            reference_exposure = 1 if obj.N == 1 else 2 - ('bluejay' in root)
+        # if reference_exposure in ['auto']:
+        #     reference_exposure = 1 if obj.N == 1 else 2 - ('bluejay' in root)
             
         kws = dict(niter=trace_niter,
                    force_positive=(fit_type == 0),
                    degree=offset_degree,
-                   ref_exp=reference_exposure,
+                   ref_exp=obj.calc_reference_exposure,
                    sigma_bounds=(3,12),
                    with_bounds=False,
                    trace_bounds = (-1.0,1.0), 
