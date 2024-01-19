@@ -208,8 +208,8 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     
     # "prior" on sigma with logistic bounds
     peak = 10000
-    chi2 += peak / (1 + np.exp(-1*(sigma - 2.8))) # right
-    chi2 += peak - peak / (1 + np.exp(-3*(sigma - 0))) # left
+    chi2 += peak / (1 + np.exp(-10*(sigma - 1.8))) # right
+    chi2 += peak - peak / (1 + np.exp(-30*(sigma - 0))) # left
     chi2 += (sigma - 0.6)**2/2/0.1**2
     chi2 += ((np.array(theta[i0:]) - 0)**2/2/THETA_PRIOR**2).sum()
     
@@ -683,7 +683,7 @@ class SlitGroup():
         if (self.grating in ['PRISM']):
             low = sci/np.sqrt(var) < self.stuck_min_sn
             nlow = low.sum(axis=1)
-            bad_exposures = nlow > 2*self.sh[1]
+            bad_exposures = nlow > 0.33*(np.isfinite(sci) & (sci != 0)).sum(axis=1)
             print('  Prism exposures with stuck shutters: ', bad_exposures.sum())
             for j in np.where(bad_exposures)[0]:
                 bad_j = nd.binary_dilation(low[j,:].reshape(self.sh), iterations=2)
@@ -750,7 +750,7 @@ class SlitGroup():
         self.wtr = wtr
         
         if ((self.info['source_ra'] < 0.0001).sum() == self.N):
-            if self.N == 3:
+            if self.N == -3:
                 msg = f'Seems to be a background slit.  '
                 msg += f'Force [0, {self.nod_offset}, -{self.nod_offset}] pix offsets'
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
@@ -764,11 +764,16 @@ class SlitGroup():
             else:
                 
                 offsets = (self.info['y_position'] - self.info['y_position'][0])/0.1
+                offsets = np.round(offsets/5)*5
+                
                 offstr = ', '.join([f'{_off:5.1f}' for _off in np.unique(offsets)])
                 
                 msg = f'Seems to be a background slit.  '
                 msg += f'Force {offstr} pix offsets'
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                
+                self.info['manual_position'] = offsets
+                self.position_key = 'manual_position'
                 
                 for i, _off in enumerate(offsets):
                     self.ytr[i,:] += _off - 1
@@ -1769,7 +1774,7 @@ FIT_PARAMS_SN_KWARGS = dict(sn_percentile=80,
                             degree_sn=[[-10000], [0]],
                             verbose=True)
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
     """
     Spectral combination workflow
     """
@@ -1803,7 +1808,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         if 'jw02561002001' in g:
             continue
             
-        print(f'\n* Group {g}   N={len(groups[g])}')
+        print(f'\n* Group {g}   N={len(groups[g])}\n==================================')
         
         if ('glazebrook' in root) | ('suspense' in root):
             nod_offset = 10
@@ -1819,6 +1824,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                         trace_with_ypos=('b' not in target) & (not get_background),
                         nod_offset=nod_offset,
                         reference_exposure=reference_exposure,
+                        pad_border=pad_border,
                        )
         
         if 0:
@@ -1915,9 +1921,11 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         obj0 = xobj[keys[0]]['obj']
         _sn, do_fix_sigma, offset_degree = obj0.fit_params_by_sn(**fit_params_kwargs)
         if do_fix_sigma:
-            input_fix_sigma = initial_sigma*1
+            #input_fix_sigma = initial_sigma*1
             recenter_all = False
-    
+            fix_params = True
+            initial_theta = np.array([initial_sigma, 0])
+            
     # fix_sigma = None
     if input_fix_sigma is None:
         fix_sigma_across_groups = True
@@ -2023,7 +2031,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         _head = hdul[g][1].header
         
         specfile = f"{root}_{_head['GRATING']}-{_head['FILTER']}".lower()
-        specfile += f"_{_head['SRCNAME']}.spec.fits".lower()
+        specfile += f"_{_head['SRCNAME']}.spec.fits".lower().replace('background_','b')
+        #specfile += f"_{_head['SRCNAME']}.spec.fits".lower().replace('background_','b')
         
         print(specfile)
         hdul[g].writeto(specfile, overwrite=True)
