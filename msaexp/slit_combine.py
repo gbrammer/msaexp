@@ -946,13 +946,13 @@ class SlitGroup():
                     xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
                     _ytr = np.polyval(self.trace_coeffs[j], xj)
                     _ytr += np.polyval(self.base_coeffs[j], xj)
-                    _ = ax.plot(_ytr, color='tomato', alpha=0.3, lw=3)
+                    _ = ax.plot(_ytr, color='tomato', alpha=0.2, lw=2)
     
                 for j in np.where(ineg)[0]:
                     xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
                     _ytr = np.polyval(self.trace_coeffs[j], xj)
                     _ytr += np.polyval(self.base_coeffs[j], xj)
-                    _ = ax.plot(_ytr, color='pink', alpha=0.3, lw=3)
+                    _ = ax.plot(_ytr, color='wheat', alpha=0.2, lw=2)
                 
                 ax.grid()
                 
