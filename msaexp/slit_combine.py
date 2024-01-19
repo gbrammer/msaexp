@@ -351,7 +351,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
 
 
 class SlitGroup():
-    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, nod_offset=5, reference_exposure='auto'):
+    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, nod_offset=5, pad_border=2, reference_exposure='auto'):
         """
         Container for a list of 2D extracted ``SlitModel`` files
         
@@ -459,6 +459,7 @@ class SlitGroup():
         self.sky_arrays = sky_arrays
         self.undo_pathloss = undo_pathloss
         self.reference_exposure = reference_exposure
+        self.pad_border = pad_border
         
         self.shapes = []
         
@@ -583,6 +584,8 @@ class SlitGroup():
         """
         Read science, variance and trace data from the ``slits`` SlitModel files
         """
+        import scipy.ndimage as nd
+        
         slits = self.slits
         
         sl = (slice(0,self.sh[0]), slice(0,self.sh[1]))
@@ -592,7 +595,7 @@ class SlitGroup():
             bar = np.array([slit.barshadow[sl].flatten()*1 for slit in slits])
         except:
             bar = None
-            
+        
         dq = np.array([slit.dq[sl].flatten()*1 for slit in slits])
         var = np.array([(slit.var_poisson + slit.var_rnoise)[sl].flatten()
                         for slit in slits])
@@ -693,6 +696,14 @@ class SlitGroup():
             
         # bad |= np.abs(yslit > 8)
         isfin = np.isfinite(sci)
+        
+        if self.pad_border > 0:
+            # grow mask around edges
+            for i in range(len(slits)):
+                ysl_i = wave[i,:].reshape(self.sh)
+                msk = nd.binary_dilation(~np.isfinite(ysl_i), 
+                                         iterations=self.pad_border)
+                bad[i,:] |= (msk).flatten()
         
         sci[bad] = np.nan
         mask = np.isfinite(sci)
@@ -1104,13 +1115,19 @@ class SlitGroup():
                     for j in np.where(tfits[exp]['ipos'])[0]:
                         self.trace_coeffs[j] = tfits[exp]['trace_coeffs']
                 else:
-                    tfits[exp]['theta'][len(tfits[exp]['trace_coeffs'])-1:] *= 0.
-                    
                     msg += '*\n'
                 
                 if verbose:
                     print(msg)
-                
+            
+            if ref_exp is not None:
+                # Match all fits
+                for i, exp in enumerate(exp_groups):
+                    tfits[exp]['theta'] = tfits[ref_exp]['theta']
+                    tfits[exp]['trace_coeffs'] = tfits[ref_exp]['trace_coeffs']
+                    for j in np.where(tfits[exp]['ipos'])[0]:
+                        self.trace_coeffs[j] = tfits[exp]['trace_coeffs']
+            
             self.update_trace_from_coeffs()
         
         return tfits
@@ -1256,7 +1273,10 @@ class SlitGroup():
         """
         ref_exp = (self.calc_reference_exposure if exposure_position is 'auto' 
                    else exposure_position)
-    
+        
+        if ref_exp is None:
+            ref_exp = self.unp.values[0]
+            
         tfit = self.fit_single_trace(exp=ref_exp,
                                      x0=np.array(theta),
                                      fix_sigma=-1,
@@ -1724,7 +1744,8 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
                 prf_i = 1.
                 
             arrays = pseudo_drizzle(xsl, ysl,
-                                    diff[ok] / prf_i, wht[ok] * prf_i**2,
+                                    diff[ok] / prf_i,
+                                    wht[ok] * prf_i**2,
                                     xbin, ybin,
                                     arrays=arrays, **dkws)
     
@@ -1732,7 +1753,8 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
                 mod = (fit[exp]['smod']/(fit[exp]['snum']/fit[exp]['sden'])).flatten()
     
                 parrays = pseudo_drizzle(xsl, ysl,
-                                         mod[ok], wht[ok] * prf_i**2,
+                                         mod[ok],
+                                         wht[ok] * prf_i**2,
                                          xbin, ybin,
                                          arrays=parrays, **dkws)
     
@@ -1894,15 +1916,16 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         _sn, do_fix_sigma, offset_degree = obj0.fit_params_by_sn(**fit_params_kwargs)
         if do_fix_sigma:
             input_fix_sigma = initial_sigma*1
+            recenter_all = False
     
     # fix_sigma = None
     if input_fix_sigma is None:
         fix_sigma_across_groups = True
-        fix_sigma = None
+        fix_sigma = -1
     else:
         if input_fix_sigma < 0:
             fix_sigma_across_groups = False
-            fix_sigma = None
+            fix_sigma = -1
         else:
             fix_sigma_across_groups = True
             fix_sigma = input_fix_sigma
@@ -1937,26 +1960,32 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         
         if (i == 0) | (recenter_all):
     
-            if fix_sigma is not None:
+            if fix_sigma > 0:
                 kws['fix_sigma'] = fix_sigma
-                
+            
+            # print('xxx', i, kws, recenter_all, fix_sigma)
+            
             tfit = obj.fit_all_traces(**kws)
             
             theta = tfit[obj.unp.values[0]]['theta']
     
             if (i == 0):
                 if 'fix_sigma' in kws:
-                    if kws['fix_sigma'] is not None:
+                    if kws['fix_sigma'] > 0:
                         fix_sigma = kws['fix_sigma']
                     else:
                         fix_sigma = tfit[obj.unp.values[0]]['sigma']*10
-                else:
+                elif fix_sigma_across_groups:
+                    theta = theta[1:]
                     fix_sigma = tfit[obj.unp.values[0]]['sigma']*10
-                
+
         else:
             kws['x0'] = theta
             kws['with_bounds'] = False
             kws['evaluate'] = True
+            kws['fix_sigma'] = fix_sigma
+            
+            # print('xxx', i, kws, recenter_all, fix_sigma)
             
             tfit = obj.fit_all_traces(**kws)
             
