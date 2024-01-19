@@ -738,18 +738,30 @@ class SlitGroup():
         self.ytr = ytr
         self.wtr = wtr
         
-        if ((self.info['source_ra'] < 0.0001).sum() == self.N) & (self.N == 3):
-            msg = f'Seems to be a background slit.  '
-            msg += f'Force [0, {self.nod_offset}, -{self.nod_offset}] pix offsets'
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        if ((self.info['source_ra'] < 0.0001).sum() == self.N):
+            if self.N == 3:
+                msg = f'Seems to be a background slit.  '
+                msg += f'Force [0, {self.nod_offset}, -{self.nod_offset}] pix offsets'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
             
-            self.ytr[0,:] -= 1.0
-            self.ytr[1,:] += -1 + self.nod_offset
-            self.ytr[2,:] -= 1 + self.nod_offset
+                self.ytr[0,:] -= 1.0
+                self.ytr[1,:] += -1 + self.nod_offset
+                self.ytr[2,:] -= 1 + self.nod_offset
             
-            self.info['manual_position'] = [2,3,1]
-            self.position_key = 'manual_position'
-        
+                self.info['manual_position'] = [2,3,1]
+                self.position_key = 'manual_position'
+            else:
+                
+                offsets = (self.info['y_position'] - self.info['y_position'][0])/0.1
+                offstr = ', '.join([f'{_off:5.1f}' for _off in np.unique(offsets)])
+                
+                msg = f'Seems to be a background slit.  '
+                msg += f'Force {offstr} pix offsets'
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                
+                for i, _off in enumerate(offsets):
+                    self.ytr[i,:] += _off - 1
+                
         self.set_trace_coeffs(degree=2)
 
 
@@ -1092,6 +1104,8 @@ class SlitGroup():
                     for j in np.where(tfits[exp]['ipos'])[0]:
                         self.trace_coeffs[j] = tfits[exp]['trace_coeffs']
                 else:
+                    tfits[exp]['theta'][len(tfits[exp]['trace_coeffs'])-1:] *= 0.
+                    
                     msg += '*\n'
                 
                 if verbose:
@@ -1877,7 +1891,9 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     
     if fit_params_kwargs is not None:
         obj0 = xobj[keys[0]]['obj']
-        _sn, input_fix_sigma, offset_degree = obj0.fit_params_by_sn(**fit_params_kwargs)
+        _sn, do_fix_sigma, offset_degree = obj0.fit_params_by_sn(**fit_params_kwargs)
+        if do_fix_sigma:
+            input_fix_sigma = initial_sigma*1
     
     # fix_sigma = None
     if input_fix_sigma is None:
