@@ -928,11 +928,14 @@ class SlitGroup():
             ax.imshow(diff.reshape(self.sh), aspect='auto', origin='lower', **kws)
             ax.text(0.05, 0.95, f'{self.name}\n{self.grating}',
                     ha='left', va='top',
-                    fontsize=8, transform=ax.transAxes, bbox={'fc':'w', 'alpha':0.1})
+                    fontsize=8, transform=ax.transAxes,
+                    bbox={'fc':'w', 'alpha':0.1, 'ec':'None',})
+                    
             ax.text(0.05, 0.05, f'Npos = {ipos.sum()}\nNneg = {ineg.sum()}',
                     ha='left', va='bottom',
-                    fontsize=8, transform=ax.transAxes, bbox={'fc':'w', 'alpha':0.1})
-        
+                    fontsize=8, transform=ax.transAxes,
+                    bbox={'fc':'w', 'alpha':0.1, 'ec':'None',})
+
             if model is not None:
                 axes[i][1].imshow(model, aspect='auto', origin='lower', **kws)
                 axes[i][2].imshow(diff.reshape(self.sh) - model, aspect='auto',
@@ -1102,8 +1105,8 @@ class SlitGroup():
         
         snum, sden, smod, sigma, trace_coeffs, chi2_fit = objfun_prof_trace(theta, *xargs)
         
-        out = {'theta':theta,
-               'sigma':sigma,
+        out = {'theta': theta,
+               'sigma': sigma,
                'trace_coeffs': trace_coeffs,
                'chi2_init': chi2_init, 'chi2_fit': chi2_fit,
                'ipos':ipos, 'ineg':ineg,
@@ -1744,7 +1747,16 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     print('\nkeys: ', keys)
 
     # fix_sigma = None
-    fix_sigma = input_fix_sigma
+    if input_fix_sigma is None:
+        fix_sigma_across_groups = True
+        fix_sigma = None
+    else:
+        if input_fix_sigma < 0:
+            fix_sigma_across_groups = False
+            fix_sigma = None
+        else:
+            fix_sigma_across_groups = True
+            fix_sigma = input_fix_sigma
     
     for i, k in enumerate(keys):
         print(f'\n##### Group #{i+1} / {len(xobj)}: {k} ####\n')
@@ -1788,9 +1800,9 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                     if kws['fix_sigma'] is not None:
                         fix_sigma = kws['fix_sigma']
                     else:
-                        fix_sigma = theta[0]
+                        fix_sigma = tfit[obj.unp.values[0]]['sigma']
                 else:
-                    fix_sigma = theta[0]
+                    fix_sigma = tfit[obj.unp.values[0]]['sigma']
                 
         else:
             kws['x0'] = theta
