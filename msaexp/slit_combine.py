@@ -943,14 +943,16 @@ class SlitGroup():
                     xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
                     _ytr = np.polyval(self.trace_coeffs[j], xj)
                     _ytr += np.polyval(self.base_coeffs[j], xj)
-                    _ = ax.plot(_ytr, color='k', alpha=0.3, lw=1)
+                    _ = ax.plot(_ytr, color='tomato', alpha=0.3, lw=3)
     
                 for j in np.where(ineg)[0]:
                     xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
                     _ytr = np.polyval(self.trace_coeffs[j], xj)
                     _ytr += np.polyval(self.base_coeffs[j], xj)
-                    _ = ax.plot(_ytr, color='0.8', alpha=0.3, lw=1)
-    
+                    _ = ax.plot(_ytr, color='pink', alpha=0.3, lw=3)
+                
+                ax.grid()
+                
         fig.tight_layout(pad=1)
         return fig
         
@@ -1749,8 +1751,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         
         obj = xobj[k]['obj']
         
-        if ('140m' in k) | ('395h' in k):
-            offset_degree = 0
+        # if ('140m' in k) | ('395h' in k):
+        #     offset_degree = 0
         
         if reference_exposure in ['auto']:
             reference_exposure = 1 if obj.N == 1 else 2 - ('bluejay' in root)
