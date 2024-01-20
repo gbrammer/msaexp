@@ -1682,7 +1682,7 @@ def average_path_loss(spec, header=None):
         spec['path_corr'].description = 'Average path loss correction already applied'
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, mask_cross_dispersion=None, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
     """
     Spectral combination workflow
     """
@@ -1829,6 +1829,20 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
             obj = xobj[k]['obj']
             for j in range(obj.N):
                 obj.sci[j, (obj.yslit[j,:] > 6)] = np.nan
+    
+            obj.mask &= np.isfinite(obj.sci)
+    
+    if mask_cross_dispersion is not None:
+        msg = f'slit_combine: mask_cross_dispersion {mask_cross_dispersion}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        for k in xobj:
+            obj = xobj[k]['obj']
+            for j in range(obj.N):
+                cross_mask = (obj.yslit[j,:] > mask_cross_dispersion[0])
+                cross_mask &= (obj.yslit[j,:] < mask_cross_dispersion[1])
+                
+                obj.sci[j, cross_mask] = np.nan
     
             obj.mask &= np.isfinite(obj.sci)
         
