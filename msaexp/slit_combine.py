@@ -12,6 +12,8 @@ import astropy.io.fits as pyfits
 import jwst.datamodels
 
 from grizli import utils
+utils.LOGFILE = '/tmp/msaexp_slit_combine.log.txt'
+
 import msaexp.utils as msautils
 
 EVAL_COUNT = 0
@@ -109,7 +111,7 @@ def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=0.1,
     
     msg = f'slit_prf_fraction: mu = {pix_mu:.2f}, sigma = {sigma:.1f} pix'
     if verbose:
-        print(msg)
+        utils.log_comment(utils.LOGFILE, msg)
     
     dxpix = slit_width / pixel_scale
     prf_frac = PRF(pix_center, pix_mu, pix_sigma,
@@ -173,7 +175,6 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     pdiff = ppos - pneg
     
     if (pneg.sum() == 0) & (len(theta) == 1000):
-        # print('bkg: ', EVAL_COUNT, theta)
         bkg = theta[2]/10.
     else:
         bkg = 0.
@@ -216,138 +217,14 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     if ((EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1)) & verbose:
         tval = ' '.join([f'{t:6.3f}' for t in theta[i0:]])
         tfix = '*' if i0 == 0 else ' '
-        print(f"{EVAL_COUNT:>8} {tfix}sigma={sigma*10:.2f}{tfix} [{tval}]  {chi2:.1f}")
+        msg = f"{EVAL_COUNT:>8} {tfix}sigma={sigma*10:.2f}{tfix} [{tval}]  {chi2:.1f}"
+        utils.log_comment(utils.LOGFILE, msg)
 
     if ret == 1:
         trace_coeffs = theta[i0:]
         return snum, sden, smod, sigma, trace_coeffs, chi2
     else:
         return chi2
-
-
-# def objfun_prof(theta, wave, yslit, diff, vdiff, mask, ipos, ineg, sh, force_positive, ret):
-#     """
-#     """
-#     from msaexp.resample_numba import pixel_integrated_gaussian_numba as PRF
-#
-#     global EVAL_COUNT
-#     global CHI2_MASK
-#     global SKIP_COUNT
-#
-#     EVAL_COUNT += 1
-#
-#     center = theta[0]
-#     if len(theta) > 1:
-#         sigma = theta[1]/10.
-#     else:
-#         sigma = 0.4
-#
-#     psf_fw = msautils.get_nirspec_psf_fwhm(wave)
-#
-#     sig2 = np.sqrt((psf_fw/2.35)**2 + sigma**2)
-#     ppos = PRF(yslit[ipos,:].flatten(), center, sig2[ipos,:].flatten(), dx=1)
-#     ppos = ppos.reshape(yslit[ipos,:].shape)
-#
-#     pneg = PRF(yslit[ineg,:].flatten(), center, sig2[ineg,:].flatten(), dx=1)
-#     if ineg.sum() > 0:
-#         pneg = pneg.reshape(yslit[ineg,:].shape)
-#     else:
-#         pneg = np.zeros_like(ppos)
-#
-#     if 0:
-#         ppos  = np.nansum(ppos, axis=0) / ipos.sum() #np.nansum(mask[ipos,:], axis=0)
-#         if ineg.sum() > 0:
-#             pneg  = np.nansum(pneg, axis=0) / ineg.sum() #np.nansum(mask[ineg,:], axis=0)
-#         else:
-#             pneg = np.zeros_like(ppos)
-#     else:
-#         ppos  = np.nansum(ppos, axis=0) / np.nansum(mask[ipos,:], axis=0)
-#         if pneg.sum() > 0:
-#             pneg  = np.nansum(pneg, axis=0) / np.nansum(mask[ineg,:], axis=0)
-#         else:
-#             pneg = np.zeros_like(ppos)
-#
-#     pdiff = ppos - pneg
-#
-#     if (pneg.sum() == 0) & (len(theta) == 3):
-#         # print('bkg: ', EVAL_COUNT, theta)
-#         bkg = theta[2]/10.
-#     else:
-#         bkg = 0.
-#
-#     if (len(theta) > 2) & (pneg.sum() > 0):
-#         sig2 = 3
-#         if len(theta) == 3:
-#             scales = [theta[2], theta[2]]
-#         else:
-#             scales = theta[2:]
-#
-#         for k, dy in enumerate([-1.,1.]):
-#             ppos = PRF(yslit[ipos,:].flatten(), center+dy, sig2, dx=1)
-#             ppos = ppos.reshape(yslit[ipos,:].shape)
-#             if ineg.sum() > 0:
-#                 pneg = PRF(yslit[ineg,:].flatten(), center+dy, sig2, dx=1)
-#                 pneg = pneg.reshape(yslit[ineg,:].shape)
-#             else:
-#                 pneg = np.zeros_like(ppos)
-#
-#             if 0:
-#                 ppos  = np.nansum(ppos, axis=0) / ipos.sum() #np.nansum(mask[ipos,:], axis=0)
-#                 if ineg.sum() > 0:
-#                     pneg  = np.nansum(pneg, axis=0) / ineg.sum() #np.nansum(mask[ineg,:], axis=0)
-#                 else:
-#                     pneg = np.zeros_like(ppos)
-#
-#             else:
-#                 ppos  = np.nansum(ppos, axis=0) / np.nansum(mask[ipos,:], axis=0)
-#                 if ineg.sum() > 0:
-#                     pneg  = np.nansum(pneg, axis=0) / np.nansum(mask[ineg,:], axis=0)
-#                 else:
-#                     pneg = np.zeros_like(ppos)
-#
-#             pdiff += (ppos - pneg)*scales[k]
-#
-#         pdiff /= 1 + np.sum(scales)
-#
-#     if force_positive:
-#         pdiff *= pdiff > 0
-#
-#     # Remove any masked pixels
-#     pmask = mask.sum(axis=0) == mask.shape[0]
-#
-#     snum = np.nansum(((diff-bkg)*pdiff/vdiff*pmask).reshape(sh), axis=0)
-#     sden = np.nansum((pdiff**2/vdiff*pmask).reshape(sh), axis=0)
-#     smod = snum/sden*pdiff.reshape(sh)
-#
-#     chi = (diff - (smod + bkg).flatten())/np.sqrt(vdiff)
-#
-#     # if (CHI2_MASK is None) or (CHI2_MASK.size != chi2.size):
-#     #     CHI2_MASK = np.isfinite(diff)
-#     # elif (EVAL_COUNT == 1): #| (CHI2_MASK.size != chi2.size):
-#     #     CHI2_MASK = chi2 < 40**2
-#     # else:
-#     #     CHI2_MASK = np.isfinite(diff)
-#
-#     if 1:
-#         # two-sided
-#         CHI2_MASK = (chi < 40) & (chi > -10)
-#         CHI2_MASK &= ((smod+bkg).flatten()/np.sqrt(vdiff) > -10)
-#     elif 0:
-#         # absolute value
-#         CHI2_MASK = (chi**2 < 40**2) #& ((smod+bkg).flatten()/np.sqrt(vdiff) > -10)
-#     else:
-#         # no mask
-#         CHI2_MASK = np.isfinite(diff)
-#
-#     chi2 = np.nansum(chi[CHI2_MASK]**2)
-#
-#     if (EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1):
-#         print(f'{EVAL_COUNT:>8} {theta}  {chi2:.1f}')
-#
-#     if ret == 0:
-#         return chi2
-#     else:
-#         return snum, sden, smod, 0, chi2
 
 
 class SlitGroup():
@@ -466,21 +343,14 @@ class SlitGroup():
         for i, file in enumerate(files):
             slit = jwst.datamodels.open(file)
             visit = f"{file.split('_')[0]}_{file.split('_')[3]}"
-    
-            # if i > 0:
-            #     if slit.data.size != self.slits[0].data.size:
-            #         # print(i,slit.data.shape, slits[0].data.shape)
-            #         continue
-            
+
             self.slits.append(slit)
             keep_files.append(file)
             self.shapes.append(slit.data.shape)
-            
+
         self.files = keep_files
         self.info = self.parse_metadata()
         self.sh = np.min(np.array(self.shapes), axis=0)
-        # print('shape: ', self.sh)
-        #self.slits[0].data.shape
         
         self.position_key = position_key
         
@@ -563,7 +433,9 @@ class SlitGroup():
         """
         rows = []
         for i, slit in enumerate(self.slits):
-            print(i, slit.meta.filename, slit.data.shape)
+            msg = f'{i:>2} {slit.meta.filename} {slit.data.shape}'
+            utils.log_comment(utils.LOGFILE, msg)
+            
             md = slit.meta.dither.instance
             mi = slit.meta.instrument.instance
             rows.append([slit.meta.filename,
@@ -684,7 +556,9 @@ class SlitGroup():
             low = sci/np.sqrt(var) < self.stuck_min_sn
             nlow = low.sum(axis=1)
             bad_exposures = nlow > 0.33*(np.isfinite(sci) & (sci != 0)).sum(axis=1)
-            print('  Prism exposures with stuck shutters: ', bad_exposures.sum())
+            msg = f'  Prism exposures with stuck shutters: {bad_exposures.sum()}'
+            utils.log_comment(utils.LOGFILE, msg)
+            
             for j in np.where(bad_exposures)[0]:
                 bad_j = nd.binary_dilation(low[j,:].reshape(self.sh), iterations=2)
                 bad[j,:] |= bad_j.flatten()
@@ -730,7 +604,7 @@ class SlitGroup():
                         if verbose:
                             msg = f'   {self.files[j]} source_type={slit.source_type} '
                             msg += pl_ext
-                            print(msg)
+                            utils.log_comment(utils.LOGFILE, msg)
                         
                         phot_scl *= sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
             
@@ -1089,7 +963,7 @@ class SlitGroup():
         
         for k in range(niter):
             if verbose:
-                print(f'   fit_all_traces, iter {k}')
+                utils.log_comment(utils.LOGFILE, f'   fit_all_traces, iter {k}')
                 
             for i, exp in enumerate(exp_groups):
                 
@@ -1108,8 +982,6 @@ class SlitGroup():
                 if force_evaluate is not None:
                     kwargs['evaluate'] = force_evaluate
                 
-                # print('xxx ref_exp', ref_exp, exp, kwargs['evaluate'], force_evaluate)
-                    
                 tfits[exp] = self.fit_single_trace(exp=exp, **kwargs)
                 dchi = tfits[exp]['chi2_fit'] - tfits[exp]['chi2_init']
                 
@@ -1123,7 +995,7 @@ class SlitGroup():
                     msg += '*\n'
                 
                 if verbose:
-                    print(msg)
+                    utils.log_comment(utils.LOGFILE, msg)
             
             if ref_exp is not None:
                 # Match all fits
@@ -1276,7 +1148,7 @@ class SlitGroup():
             ``sn`` item
         
         """
-        ref_exp = (self.calc_reference_exposure if exposure_position is 'auto' 
+        ref_exp = (self.calc_reference_exposure if exposure_position in ['auto'] 
                    else exposure_position)
         
         if ref_exp is None:
@@ -1369,34 +1241,6 @@ class SlitGroup():
         fig.tight_layout(pad=1)
         
         return fig
-    
-    
-    # def fit_all_positions(self, x0=[0., 10], evaluate=False, force_positive=False, fit_all=True, fit_kwargs={}, verbose=True):
-    #     """
-    #     """
-    #     results = {}
-    #
-    #     theta = None
-    #     for i, exp in enumerate(self.unp.values):
-    #         if fit_all | (theta is None):
-    #             results[exp] = self.fit_profile(x0=x0, exp=exp,
-    #                                             force_positive=force_positive,
-    #                                             evaluate=evaluate,
-    #                                             **fit_kwargs)
-    #             if verbose:
-    #                 theta = results[exp]['theta']
-    #                 # dchi2 = results[exp]['chi2_fit'] - results[exp]['chi2_init']
-    #                 msg = f"Fit at position {exp}:  shift = {theta[0]:.2f} "
-    #                 msg += f"sigma = {theta[1]:.2f}" #"   dchi2: {dchi2:9.1f}"
-    #                 print(msg)
-    #
-    #         else:
-    #             results[exp] = self.fit_profile(x0=theta, exp=exp,
-    #                                             evaluate=True,
-    #                                             force_positive=force_positive,
-    #                                             **fit_kwargs)
-    #
-    #     return results
 
 
 # grid for oversampling cross-dispersion
@@ -1543,7 +1387,6 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     
     for k in xobj:
         bkg_offset = xobj[k]['obj'].nod_offset
-        # print('xxx nod_offset: ', bkg_offset)
         break
     
     _data = msaexp.drizzle.make_optimal_extraction(wave_bin, sci2d, wht2d,
@@ -1575,6 +1418,9 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     spec['err'].unit = u.microJansky
     spec['wave'].unit = u.micron
     
+    # Add path_corr column
+    average_path_loss(spec, header=header)
+    
     for c in list(spec.colnames):
         if 'aper' in c:
             spec.remove_column(c)
@@ -1587,12 +1433,7 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     
     prof['profile'] = pdata
     prof['pfit'] = pmod
-    
-    hdul = pyfits.HDUList()
-    hdul.append(pyfits.BinTableHDU(data=spec, name='SPEC1D'))
-    
-    # header = pyfits.Header()
-    
+            
     for k in spec.meta:
         header[k] = spec.meta[k]
     
@@ -1601,10 +1442,12 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
                              show_date=False)
     
+    hdul = pyfits.HDUList()
+        
+    hdul.append(pyfits.BinTableHDU(data=spec, name='SPEC1D'))
     hdul.append(pyfits.ImageHDU(data=sci2d, header=header, name='SCI'))
     hdul.append(pyfits.ImageHDU(data=wht2d, header=header, name='WHT'))
     hdul.append(pyfits.ImageHDU(data=profile2d, header=header, name='PROFILE'))
-    
     hdul.append(pyfits.BinTableHDU(data=prof, name='PROF1D'))
     
     for k in hdul['SCI'].header:
@@ -1717,8 +1560,10 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
             header[f'TRACEC{i}'] = (val, 'Trace offset polynomial coefficient')
         
         exp_ids = obj.unp.values
-            
-        for exp in exp_ids:
+        
+        header['WITHPTH'] = (with_pathloss, 'Internal path loss correction')
+        
+        for ii, exp in enumerate(exp_ids):
             ipos, ineg, diff, vdiff = obj.make_diff_image(exp=exp)
             wht = 1./vdiff
             ip = np.where(ipos)[0][0]
@@ -1737,6 +1582,11 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
     
             # path loss
             if with_pathloss:
+                header[f'PTHEXP{ii}'] = (exp, 'Exposure group name')
+                header[f'PTHSIG{ii}'] = (fit[exp]['sigma'], f'Sigma of group {exp}')
+                header[f'PTHXPO{ii}'] = (obj.slits[ip].source_xpos,
+                                         f'source_xpos of grup {exp}')
+                
                 # print('With PRF pathloss correction')
                 prf_i = slit_prf_fraction(obj.wave[ip,:][ok],
                                           sigma=fit[exp]['sigma'],
@@ -1774,26 +1624,81 @@ FIT_PARAMS_SN_KWARGS = dict(sn_percentile=80,
                             degree_sn=[[-10000], [0]],
                             verbose=True)
 
+
+def average_path_loss(spec, header=None):
+    """
+    Get average pathloss correction from spectrum metadata
+    
+    Parameters
+    ----------
+    spec : Table
+        Table with metadata including pathloss parameters used above
+    
+    header : `~astropy.io.fits.Header`
+        Optional FITS header to use instead of ``spec.meta``
+    
+    Returns
+    -------
+    path_corr : Column
+        Adds a ``path_corr`` column to ``spec`` that represents the average path-loss
+        correction determined from the profile width and x_pos centering parameters
+        using `msaexp.slit_combine.slit_prf_fraction`
+        
+    """
+    if header is None:
+        header = spec.meta
+    
+    if 'WITHPTH' not in header:
+        print('WITHPTH keyword not found')
+        return False
+    
+    if not header['WITHPTH']:
+        print('WITHPTH = False')
+        return False
+    
+    prf_list = []
+    for i in range(100):
+        if f'PTHSIG{i}' in header:
+            sigma = header[f'PTHSIG{i}']
+            x_pos = header[f'PTHXPO{i}']
+
+            prf_i = slit_prf_fraction(spec['wave'].astype(float),
+                                      sigma=sigma,
+                                      x_pos=x_pos,
+                                      slit_width=0.2,
+                                      pixel_scale=0.1,
+                                      verbose=False)
+            prf_list.append(prf_i)
+    
+    if len(prf_list) > 0:
+        print('Added path_corr column to spec')
+        spec['path_corr'] = 1./np.nanmean(np.array(prf_list), axis=0)
+        spec['path_corr'].format = '.2f'
+        spec['path_corr'].description = 'Average path loss correction already applied'
+
+
 def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
     """
     Spectral combination workflow
     """
     global THETA_PRIOR
     
+    utils.LOGFILE = f'{root}_{target}.extract.log'
+    
     if files is None:
         files = glob.glob(os.path.join(path_to_files, f'*phot*{target}.fits'))
         
     for i in range(len(files))[::-1]:
         if 'jw04246003001_03101_00001_nrs2' in files[i]:
-            print(f'Exclude {files[i]}')
+            utils.log_comment(utils.LOGFILE, f'Exclude {files[i]}')
             files.pop(i)
         elif (target == '1210_9849') & ('jw01210001001' in files[i]):
-            print(f'Exclude {files[i]}')
+            utils.log_comment(utils.LOGFILE, f'Exclude {files[i]}')
             files.pop(i)
             
     files.sort()
     
-    print(f'{root}   target: {target}   Files: {len(files)}')
+    utils.log_comment(utils.LOGFILE, f'{root}   target: {target}   Files: {len(files)}')
     
     groups = split_visit_groups(files, join=join, gratings=do_gratings)
     
@@ -1808,7 +1713,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         if 'jw02561002001' in g:
             continue
             
-        print(f'\n* Group {g}   N={len(groups[g])}\n==================================')
+        msg = f'\n* Group {g}   N={len(groups[g])}\n=================================='
+        utils.log_comment(utils.LOGFILE, msg)
         
         if ('glazebrook' in root) | ('suspense' in root):
             nod_offset = 10
@@ -1829,40 +1735,41 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         
         if 0:
             if (obj.grating not in do_gratings) | (obj.sh[1] < 83*2**(obj.grating not in ['PRISM'])):
-                print(f'\n    skip shape=({obj.sh}) {obj.grating}\n')
+                msg = f'\n    skip shape=({obj.sh}) {obj.grating}\n'
+                utils.log_comment(utils.LOGFILE, msg)
                 continue
     
         if obj.diffs:
             valid_frac = obj.mask.sum() / obj.mask.size
             
             if obj.N == 1:
-                print(f'\n    skip N=1 {obj.grating}\n')
+                utils.log_comment(utils.LOGFILE, f'\n    skip N=1 {obj.grating}\n')
                 continue
             elif obj.bad_exposures.sum() == obj.N:
-                print(f'\n    skip all bad {obj.grating}\n')
+                utils.log_comment(utils.LOGFILE, f'\n    skip all bad {obj.grating}\n')
                 continue
             elif (len(obj.unp.values) == 1) & (obj.diffs):
-                print(f'\n    one position {obj.grating}\n')
+                utils.log_comment(utils.LOGFILE, f'\n    one position {obj.grating}\n')
                 continue
             elif os.path.basename(obj.files[0]).startswith('jw02561002001'):
-                print(f'\n    uncover {obj.files[0]}\n')
+                utils.log_comment(utils.LOGFILE, f'\n    uncover {obj.files[0]}\n')
                 continue
             elif valid_frac < 0.2:
-                print(f'\n    masked pixels {valid_frac:.2f}\n')
+                utils.log_comment(utils.LOGFILE, f'\n    masked pixels {valid_frac:.2f}\n')
                 continue
             elif ('b' in target) & ((obj.info['shutter_state'] == 'x').sum() > 0):
-                print(f'\n    single background shutter\n')
+                utils.log_comment(utils.LOGFILE, f'\n    single background shutter\n')
                 continue
         
         ind = None
         if root.startswith('glazebrook-v'):
             # flipped??
-            print('  ! flip glazebrook')
+            utils.log_comment(utils.LOGFILE, '  ! Flip glazebrook')
     
             ind = [0,2,1]
         
         elif 'maseda' in root:
-            print('  ! flip maseda')
+            utils.log_comment(utils.LOGFILE, '  ! Flip maseda')
     
             ind = [0,2,1]
     
@@ -1885,7 +1792,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         THETA_PRIOR = 0.2 if obj.trace_with_ypos else 2
 
     if len(xobj) == 0:
-        print('No valid spectra')
+        utils.log_comment(utils.LOGFILE, 'No valid spectra')
         return None
         
     if ('macs0417' in root) & (target == '1208_234'):
@@ -1915,7 +1822,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     so = np.argsort(okeys)
     keys = [xkeys[j] for j in so[::-1]]
     
-    print('\nkeys: ', keys)
+    utils.log_comment(utils.LOGFILE, f'\nkeys: {keys}')
     
     if fit_params_kwargs is not None:
         obj0 = xobj[keys[0]]['obj']
@@ -1939,7 +1846,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
             fix_sigma = input_fix_sigma
     
     for i, k in enumerate(keys):
-        print(f'\n##### Group #{i+1} / {len(xobj)}: {k} ####\n')
+        msg = f'\n##### Group #{i+1} / {len(xobj)}: {k} ####\n'
+        utils.log_comment(utils.LOGFILE, msg)
         
         obj = xobj[k]['obj']
         
@@ -1971,8 +1879,6 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
             if fix_sigma > 0:
                 kws['fix_sigma'] = fix_sigma
             
-            # print('xxx', i, kws, recenter_all, fix_sigma)
-            
             tfit = obj.fit_all_traces(**kws)
             
             theta = tfit[obj.unp.values[0]]['theta']
@@ -1992,8 +1898,6 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
             kws['with_bounds'] = False
             kws['evaluate'] = True
             kws['fix_sigma'] = fix_sigma
-            
-            # print('xxx', i, kws, recenter_all, fix_sigma)
             
             tfit = obj.fit_all_traces(**kws)
             
@@ -2022,7 +1926,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         else:
             gratings[gr] = [k]
 
-    print('\ngratings: ', gratings)
+    utils.log_comment(utils.LOGFILE, f'\ngratings: {gratings}')
 
     hdul = {}
     for g in gratings:
@@ -2034,7 +1938,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         specfile += f"_{_head['SRCNAME']}.spec.fits".lower().replace('background_','b')
         #specfile += f"_{_head['SRCNAME']}.spec.fits".lower().replace('background_','b')
         
-        print(specfile)
+        utils.log_comment(utils.LOGFILE, specfile)
         hdul[g].writeto(specfile, overwrite=True)
         
         fig = msautils.drizzled_hdu_figure(hdul[g])
