@@ -1784,14 +1784,16 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         if root.startswith('glazebrook-v'):
             # flipped??
             utils.log_comment(utils.LOGFILE, '  ! Flip glazebrook', verbose=True)
-    
             ind = [0,2,1]
         
         elif 'maseda' in root:
             utils.log_comment(utils.LOGFILE, '  ! Flip maseda', verbose=True)
-    
             ind = [0,2,1]
-    
+        
+        elif 'smacs0723-ero-v' in root:
+            utils.log_comment(utils.LOGFILE, '  ! Flip SMACS0723', verbose=True)
+            ind = [0,2,1]
+            
         if ind is not None:
             obj.xslit = obj.xslit[ind,:]
             obj.yslit = obj.yslit[ind,:]
