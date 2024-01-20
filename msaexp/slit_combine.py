@@ -110,8 +110,7 @@ def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=0.1,
     pix_sigma = np.sqrt((psf_fw/2.35)**2 + sigma**2)
     
     msg = f'slit_prf_fraction: mu = {pix_mu:.2f}, sigma = {sigma:.1f} pix'
-    if verbose:
-        utils.log_comment(utils.LOGFILE, msg)
+    utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
     
     dxpix = slit_width / pixel_scale
     prf_frac = PRF(pix_center, pix_mu, pix_sigma,
@@ -214,11 +213,11 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     chi2 += (sigma - 0.6)**2/2/0.1**2
     chi2 += ((np.array(theta[i0:]) - 0)**2/2/THETA_PRIOR**2).sum()
     
-    if ((EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1)) & verbose:
+    if ((EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1)):
         tval = ' '.join([f'{t:6.3f}' for t in theta[i0:]])
         tfix = '*' if i0 == 0 else ' '
         msg = f"{EVAL_COUNT:>8} {tfix}sigma={sigma*10:.2f}{tfix} [{tval}]  {chi2:.1f}"
-        utils.log_comment(utils.LOGFILE, msg)
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
     if ret == 1:
         trace_coeffs = theta[i0:]
@@ -434,7 +433,7 @@ class SlitGroup():
         rows = []
         for i, slit in enumerate(self.slits):
             msg = f'{i:>2} {slit.meta.filename} {slit.data.shape}'
-            utils.log_comment(utils.LOGFILE, msg)
+            utils.log_comment(utils.LOGFILE, msg, verbose=True)
             
             md = slit.meta.dither.instance
             mi = slit.meta.instrument.instance
@@ -557,7 +556,7 @@ class SlitGroup():
             nlow = low.sum(axis=1)
             bad_exposures = nlow > 0.33*(np.isfinite(sci) & (sci != 0)).sum(axis=1)
             msg = f'  Prism exposures with stuck shutters: {bad_exposures.sum()}'
-            utils.log_comment(utils.LOGFILE, msg)
+            utils.log_comment(utils.LOGFILE, msg, verbose=True)
             
             for j in np.where(bad_exposures)[0]:
                 bad_j = nd.binary_dilation(low[j,:].reshape(self.sh), iterations=2)
@@ -604,7 +603,7 @@ class SlitGroup():
                         if verbose:
                             msg = f'   {self.files[j]} source_type={slit.source_type} '
                             msg += pl_ext
-                            utils.log_comment(utils.LOGFILE, msg)
+                            utils.log_comment(utils.LOGFILE, msg, verbose=True)
                         
                         phot_scl *= sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
             
@@ -962,8 +961,9 @@ class SlitGroup():
             force_evaluate = None
         
         for k in range(niter):
-            if verbose:
-                utils.log_comment(utils.LOGFILE, f'   fit_all_traces, iter {k}')
+            utils.log_comment(utils.LOGFILE,
+                              f'   fit_all_traces, iter {k}',
+                              verbose=verbose)
                 
             for i, exp in enumerate(exp_groups):
                 
@@ -994,8 +994,7 @@ class SlitGroup():
                 else:
                     msg += '*\n'
                 
-                if verbose:
-                    utils.log_comment(utils.LOGFILE, msg)
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
             
             if ref_exp is not None:
                 # Match all fits
@@ -1439,7 +1438,9 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     
     msg = f"msaexp.drizzle.extract_from_hdul:  Output center = "
     msg += f" {header['PROFCEN']:6.2f}, sigma = {header['PROFSIG']:6.2f}"
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose, 
+    grizli.utils.log_comment(grizli.utils.LOGFILE,
+                             msg,
+                             verbose=verbose, 
                              show_date=False)
     
     hdul = pyfits.HDUList()
@@ -1690,15 +1691,17 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         
     for i in range(len(files))[::-1]:
         if 'jw04246003001_03101_00001_nrs2' in files[i]:
-            utils.log_comment(utils.LOGFILE, f'Exclude {files[i]}')
+            utils.log_comment(utils.LOGFILE, f'Exclude {files[i]}', verbose=True)
             files.pop(i)
         elif (target == '1210_9849') & ('jw01210001001' in files[i]):
-            utils.log_comment(utils.LOGFILE, f'Exclude {files[i]}')
+            utils.log_comment(utils.LOGFILE, f'Exclude {files[i]}', verbose=True)
             files.pop(i)
             
     files.sort()
     
-    utils.log_comment(utils.LOGFILE, f'{root}   target: {target}   Files: {len(files)}')
+    utils.log_comment(utils.LOGFILE,
+                      f'{root}   target: {target}   Files: {len(files)}',
+                      verbose=True)
     
     groups = split_visit_groups(files, join=join, gratings=do_gratings)
     
@@ -1714,7 +1717,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
             continue
             
         msg = f'\n* Group {g}   N={len(groups[g])}\n=================================='
-        utils.log_comment(utils.LOGFILE, msg)
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         if ('glazebrook' in root) | ('suspense' in root):
             nod_offset = 10
@@ -1736,40 +1739,52 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         if 0:
             if (obj.grating not in do_gratings) | (obj.sh[1] < 83*2**(obj.grating not in ['PRISM'])):
                 msg = f'\n    skip shape=({obj.sh}) {obj.grating}\n'
-                utils.log_comment(utils.LOGFILE, msg)
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
                 continue
     
         if obj.diffs:
             valid_frac = obj.mask.sum() / obj.mask.size
             
             if obj.N == 1:
-                utils.log_comment(utils.LOGFILE, f'\n    skip N=1 {obj.grating}\n')
+                utils.log_comment(utils.LOGFILE,
+                                  f'\n    skip N=1 {obj.grating}\n', 
+                                  verbose=True)
                 continue
             elif obj.bad_exposures.sum() == obj.N:
-                utils.log_comment(utils.LOGFILE, f'\n    skip all bad {obj.grating}\n')
+                utils.log_comment(utils.LOGFILE,
+                                  f'\n    skip all bad {obj.grating}\n',
+                                  verbose=True)
                 continue
             elif (len(obj.unp.values) == 1) & (obj.diffs):
-                utils.log_comment(utils.LOGFILE, f'\n    one position {obj.grating}\n')
+                utils.log_comment(utils.LOGFILE,
+                                  f'\n    one position {obj.grating}\n',
+                                  verbose=True)
                 continue
             elif os.path.basename(obj.files[0]).startswith('jw02561002001'):
-                utils.log_comment(utils.LOGFILE, f'\n    uncover {obj.files[0]}\n')
+                utils.log_comment(utils.LOGFILE,
+                                  f'\n    uncover {obj.files[0]}\n',
+                                  verbose=True)
                 continue
             elif valid_frac < 0.2:
-                utils.log_comment(utils.LOGFILE, f'\n    masked pixels {valid_frac:.2f}\n')
+                utils.log_comment(utils.LOGFILE,
+                                  f'\n    masked pixels {valid_frac:.2f}\n',
+                                  verbose=True)
                 continue
             elif ('b' in target) & ((obj.info['shutter_state'] == 'x').sum() > 0):
-                utils.log_comment(utils.LOGFILE, f'\n    single background shutter\n')
+                utils.log_comment(utils.LOGFILE,
+                                  f'\n    single background shutter\n',
+                                  verbose=True)
                 continue
         
         ind = None
         if root.startswith('glazebrook-v'):
             # flipped??
-            utils.log_comment(utils.LOGFILE, '  ! Flip glazebrook')
+            utils.log_comment(utils.LOGFILE, '  ! Flip glazebrook', verbose=True)
     
             ind = [0,2,1]
         
         elif 'maseda' in root:
-            utils.log_comment(utils.LOGFILE, '  ! Flip maseda')
+            utils.log_comment(utils.LOGFILE, '  ! Flip maseda', verbose=True)
     
             ind = [0,2,1]
     
@@ -1792,7 +1807,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         THETA_PRIOR = 0.2 if obj.trace_with_ypos else 2
 
     if len(xobj) == 0:
-        utils.log_comment(utils.LOGFILE, 'No valid spectra')
+        utils.log_comment(utils.LOGFILE, 'No valid spectra', verbose=True)
         return None
         
     if ('macs0417' in root) & (target == '1208_234'):
@@ -1822,7 +1837,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     so = np.argsort(okeys)
     keys = [xkeys[j] for j in so[::-1]]
     
-    utils.log_comment(utils.LOGFILE, f'\nkeys: {keys}')
+    utils.log_comment(utils.LOGFILE, f'\nkeys: {keys}', verbose=True)
     
     if fit_params_kwargs is not None:
         obj0 = xobj[keys[0]]['obj']
@@ -1847,7 +1862,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     
     for i, k in enumerate(keys):
         msg = f'\n##### Group #{i+1} / {len(xobj)}: {k} ####\n'
-        utils.log_comment(utils.LOGFILE, msg)
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         obj = xobj[k]['obj']
         
@@ -1926,7 +1941,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         else:
             gratings[gr] = [k]
 
-    utils.log_comment(utils.LOGFILE, f'\ngratings: {gratings}')
+    utils.log_comment(utils.LOGFILE, f'\ngratings: {gratings}', verbose=True)
 
     hdul = {}
     for g in gratings:
@@ -1938,7 +1953,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         specfile += f"_{_head['SRCNAME']}.spec.fits".lower().replace('background_','b')
         #specfile += f"_{_head['SRCNAME']}.spec.fits".lower().replace('background_','b')
         
-        utils.log_comment(utils.LOGFILE, specfile)
+        utils.log_comment(utils.LOGFILE, specfile, verbose=True)
         hdul[g].writeto(specfile, overwrite=True)
         
         fig = msautils.drizzled_hdu_figure(hdul[g])
