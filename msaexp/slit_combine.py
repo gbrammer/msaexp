@@ -20,8 +20,10 @@ EVAL_COUNT = 0
 CHI2_MASK = None
 SKIP_COUNT = 10000
 THETA_PRIOR = 0.1
-HUBER_ALPHA = 7
+CENTER_PRIOR = 0.
+SIGMA_PRIOR = 0.6
 
+HUBER_ALPHA = 7
 
 def split_visit_groups(files, join=[0, 3], gratings=['PRISM']):
     """
@@ -128,6 +130,8 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     global CHI2_MASK
     global SKIP_COUNT
     global THETA_PRIOR
+    global CENTER_PRIOR
+    global SIGMA_PRIOR
     
     EVAL_COUNT += 1
 
@@ -210,8 +214,8 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     peak = 10000
     chi2 += peak / (1 + np.exp(-10*(sigma - 1.8))) # right
     chi2 += peak - peak / (1 + np.exp(-30*(sigma - 0))) # left
-    chi2 += (sigma - 0.6)**2/2/0.1**2
-    chi2 += ((np.array(theta[i0:]) - 0)**2/2/THETA_PRIOR**2).sum()
+    chi2 += (sigma - SIGMA_PRIOR)**2/2/0.1**2
+    chi2 += ((np.array(theta[i0:]) - CENTER_PRIOR)**2/2/THETA_PRIOR**2).sum()
     
     if ((EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1)):
         tval = ' '.join([f'{t:6.3f}' for t in theta[i0:]])
@@ -1682,7 +1686,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     """
     Spectral combination workflow
     """
-    global THETA_PRIOR
+    global THETA_PRIOR, CENTER_PRIOR, SIGMA_PRIOR
     
     utils.LOGFILE = f'{root}_{target}.extract.log'
     
@@ -1847,7 +1851,14 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
             recenter_all = False
             fix_params = True
             initial_theta = np.array([initial_sigma, 0])
-            
+    
+    if initial_theta is not None:
+        CENTER_PRIOR = initial_theta[-1]
+        SIGMA_PRIOR = initial_theta[0]/10.
+    else:
+        CENTER_PRIOR = 0
+        SIGMA_PRIOR = 0.6
+        
     # fix_sigma = None
     if input_fix_sigma is None:
         fix_sigma_across_groups = True
