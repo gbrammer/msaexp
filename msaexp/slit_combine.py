@@ -19,7 +19,7 @@ import msaexp.utils as msautils
 EVAL_COUNT = 0
 CHI2_MASK = None
 SKIP_COUNT = 10000
-THETA_PRIOR = 0.1
+CENTER_WIDTH = 0.1
 CENTER_PRIOR = 0.
 SIGMA_PRIOR = 0.6
 
@@ -129,7 +129,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     global EVAL_COUNT
     global CHI2_MASK
     global SKIP_COUNT
-    global THETA_PRIOR
+    global CENTER_WIDTH
     global CENTER_PRIOR
     global SIGMA_PRIOR
     
@@ -215,7 +215,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     chi2 += peak / (1 + np.exp(-10*(sigma - 1.8))) # right
     chi2 += peak - peak / (1 + np.exp(-30*(sigma - 0))) # left
     chi2 += (sigma - SIGMA_PRIOR)**2/2/0.1**2
-    chi2 += ((np.array(theta[i0:]) - CENTER_PRIOR)**2/2/THETA_PRIOR**2).sum()
+    chi2 += ((np.array(theta[i0:]) - CENTER_PRIOR)**2/2/CENTER_WIDTH**2).sum()
     
     if ((EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1)):
         tval = ' '.join([f'{t:6.3f}' for t in theta[i0:]])
@@ -588,7 +588,8 @@ class SlitGroup():
         
         self.sci = sci
         self.dq = dq
-        self.mask = mask
+        self.mask = mask & True
+        self.bkg_mask = mask & True
         self.var = var
         self.var_flat = var_flat
         
@@ -620,7 +621,18 @@ class SlitGroup():
         self.yslit_orig = yslit*1
         self.ypix = ypix
         self.wave = wave
+        
         self.bar = bar
+        if os.path.exists('bar_correction.fits') & self.undo_barshadow:
+            print('bar_correction.fits')
+            _bar = utils.read_catalog('bar_correction.fits')
+            self.bcorr = np.interp(self.yslit,
+                                  _bar['xshutter'], _bar['bar_correction'],
+                                  left=1, right=1)
+                                  
+            self.bar /= np.interp(self.yslit,
+                                  _bar['xshutter'], _bar['bar_correction'],
+                                  left=1, right=1)
         
         self.xtr = xtr
         self.ytr = ytr
@@ -770,10 +782,10 @@ class SlitGroup():
 
         if self.diffs:
             ineg = ~self.unp[exp]
-            neg  = np.nansum(self.data[ineg,:], axis=0) / np.nansum(self.mask[ineg,:],
-                             axis=0)
-            vneg = np.nansum(self.var[ineg,:], axis=0) / np.nansum(self.mask[ineg,:],
-                             axis=0)
+            neg  = (np.nansum(self.data[ineg,:], axis=0) / 
+                    np.nansum(self.bkg_mask[ineg,:], axis=0))
+            vneg = (np.nansum(self.var[ineg,:], axis=0) / 
+                    np.nansum(self.bkg_mask[ineg,:], axis=0))
         else:
             ineg = np.zeros(self.N, dtype=bool)
             neg = np.zeros_like(pos)
@@ -784,49 +796,6 @@ class SlitGroup():
         
         return ipos, ineg, diff, vdiff
     
-    
-    # def plot_2d(self, exp=1, figsize=(10,3), yoffset=0, model=None, kws=dict(vmin=-0.02, vmax=0.1, cmap='plasma')):
-    #     """
-    #     Diagnostic plot of the 2D spectra
-    #     """
-    #     ipos, ineg, diff, vdiff = self.make_diff_image(exp=exp)
-    #
-    #     if model is None:
-    #         fig, ax = plt.subplots(1,1, figsize=figsize)
-    #         axes = [ax]
-    #     else:
-    #         fig, axes = plt.subplots(3,1, figsize=(figsize[0], figsize[1]*2),
-    #                                  sharex=True, sharey=True)
-    #
-    #     if model is not None:
-    #         vmax = np.nanpercentile(model[np.isfinite(model)], 95)*2
-    #         kws['vmin'] = -1*vmax
-    #         kws['vmax'] = 1.5*vmax
-    #
-    #     ax = axes[0]
-    #     ax.imshow(diff.reshape(self.sh), aspect='auto', origin='lower', **kws)
-    #
-    #     if model is not None:
-    #         axes[1].imshow(model, aspect='auto', origin='lower', **kws)
-    #         axes[2].imshow(diff.reshape(self.sh) - model, aspect='auto',
-    #                        origin='lower', **kws)
-    #
-    #     for ax in axes:
-    #         for j in np.where(ipos)[0]:
-    #             xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
-    #             _ytr = np.polyval(self.trace_coeffs[j], xj)
-    #             _ytr += np.polyval(self.base_coeffs[j], xj)
-    #             _ = ax.plot(_ytr + yoffset, color='k', alpha=0.3, lw=1)
-    #
-    #         for j in np.where(ineg)[0]:
-    #             xj =  (self.xtr[j,:] - self.sh[1]/2) / self.sh[1]
-    #             _ytr = np.polyval(self.trace_coeffs[j], xj)
-    #             _ytr += np.polyval(self.base_coeffs[j], xj)
-    #             _ = ax.plot(_ytr + yoffset, color='0.8', alpha=0.3, lw=1)
-    #
-    #     fig.tight_layout(pad=1)
-    #
-    #     return fig
     
     def plot_2d_differences(self, fit=None, clip_sigma=3, kws=dict(cmap='Blues', interpolation='hanning'), figsize=(6,2)):
         """
@@ -904,7 +873,7 @@ class SlitGroup():
                     _ytr += np.polyval(self.base_coeffs[j], xj)
                     _ = ax.plot(_ytr, color='wheat', alpha=0.3, lw=2)
                 
-                ax.grid()
+                # ax.grid()
                 
         fig.tight_layout(pad=1)
         return fig
@@ -1194,6 +1163,9 @@ class SlitGroup():
         sn : array-like
             1D S/N along the dispersion axis
         
+        sn_value : float
+            ``sn_percentile`` of ``sn`` array
+        
         fix_sigma : bool
             Test whether SN percentile is below ``sigma_threshold``
 
@@ -1203,24 +1175,25 @@ class SlitGroup():
         
         """
         tfit = self.get_trace_sn(**kwargs)
-        sn_x = np.nanpercentile(tfit['sn'], sn_percentile)
+        sn_value = np.nanpercentile(tfit['sn'], sn_percentile)
         
-        if not np.isfinite(sn_x):
-            return tfit['sn'], True, degree_sn[1][0]
+        if not np.isfinite(sn_value):
+            return tfit['sn'], sn_value, True, degree_sn[1][0]
         
-        interp_degree = int(np.interp(sn_x, *degree_sn,
-                                      left=degree_sn[1][0],
-                                      right=degree_sn[1][-1])
+        interp_degree = int(np.interp(sn_value,
+                                      *degree_sn,
+                                      left = degree_sn[1][0],
+                                      right = degree_sn[1][-1])
                                       )
 
-        fix_sigma = sn_x < sigma_threshold
+        fix_sigma = sn_value < sigma_threshold
 
         msg = f'fit_params_by_sn: {self.name}' # {degree_sn[0]} {degree_sn[1]}'
-        msg += f'  SN({sn_percentile:.0f}%) = {sn_x:.1f}  fix_sigma={fix_sigma}'
+        msg += f'  SN({sn_percentile:.0f}%) = {sn_value:.1f}  fix_sigma={fix_sigma}'
         msg += f'  degree={interp_degree} '
         utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
         
-        return tfit['sn'], fix_sigma, interp_degree
+        return tfit['sn'], sn_value, fix_sigma, interp_degree
 
 
     def plot_profile(self, exp=1, ax=None, fit_result=None, ymax=0.2):
@@ -1378,7 +1351,9 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     snum *= smsk
     
     snmask = snum/sden * np.sqrt(sden) > 3
-    
+    if snmask.sum() < 10:
+        snmask = snum/sden * np.sqrt(sden) > 1
+        
     pdata = np.nansum((num/den)*snmask*den, axis=1)
     pdata /= np.nansum(snmask*den, axis=1)
     
@@ -1682,11 +1657,11 @@ def average_path_loss(spec, header=None):
         spec['path_corr'].description = 'Average path loss correction already applied'
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, mask_cross_dispersion=None, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, get_background=False):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='bkg', reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
     """
     Spectral combination workflow
     """
-    global THETA_PRIOR, CENTER_PRIOR, SIGMA_PRIOR
+    global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR
     
     utils.LOGFILE = f'{root}_{target}.extract.log'
     
@@ -1727,14 +1702,17 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
             nod_offset = 10
         else:
             nod_offset = 5
+        
+        if trace_with_ypos in ['auto']:
+            trace_with_ypos = ('b' not in target) & (not get_background)
             
-        obj = SlitGroup(groups[g], g, position_key='y_index',
+        obj = SlitGroup(groups[g], g, position_key=position_key,
                         diffs=diffs, #(True & (~isinstance(id, str))),
                         stuck_min_sn=stuck_min_sn,
                         # stuck_min_sn=-100,
                         undo_barshadow=undo_barshadow,
                         # sky_arrays=(wsky, fsky),
-                        trace_with_ypos=('b' not in target) & (not get_background),
+                        trace_with_ypos=trace_with_ypos,
                         nod_offset=nod_offset,
                         reference_exposure=reference_exposure,
                         pad_border=pad_border,
@@ -1810,7 +1788,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     
         xobj[g] = {'obj':obj}
         
-        THETA_PRIOR = 0.2 if obj.trace_with_ypos else 2
+        if not obj.trace_with_ypos:
+            CENTER_WIDTH = 2
 
     if len(xobj) == 0:
         utils.log_comment(utils.LOGFILE, 'No valid spectra', verbose=True)
@@ -1834,6 +1813,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     
     if mask_cross_dispersion is not None:
         msg = f'slit_combine: mask_cross_dispersion {mask_cross_dispersion}'
+        msg += f'  cross_dispersion_mask_type={cross_dispersion_mask_type}'
         utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         for k in xobj:
@@ -1842,10 +1822,16 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                 cross_mask = (obj.yslit[j,:] > mask_cross_dispersion[0])
                 cross_mask &= (obj.yslit[j,:] < mask_cross_dispersion[1])
                 
-                obj.sci[j, cross_mask] = np.nan
-    
+                if cross_dispersion_mask_type == 'bkg':
+                    # Just mask background when doing the differences
+                    obj.bkg_mask[j,cross_mask] = False
+                else:
+                    # Mask out all pixels, source and background
+                    obj.sci[j, cross_mask] = np.nan
+                    
             obj.mask &= np.isfinite(obj.sci)
-        
+            obj.bkg_mask &= np.isfinite(obj.sci)
+    
     # Sort by grating
     okeys = []
     xkeys = []
@@ -1853,15 +1839,38 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         obj = xobj[k]['obj']
         okeys.append(f"{k.split('-')[-1]}-{obj.sh[1]}")
         xkeys.append(k)
-        
-    so = np.argsort(okeys)
-    keys = [xkeys[j] for j in so[::-1]]
     
+    if sort_by_sn:
+        # Sort in order of decreasing S/N
+        sn_keys = []
+        
+        for k in xkeys:
+            obj = xobj[k]['obj']
+            
+            _sn, sn_val, _, _ = obj.fit_params_by_sn(**fit_params_kwargs)
+            if 'prism' in k:
+                sn_val *= 2
+            
+            if not np.isfinite(sn_val):
+                sn_keys.append(-1)
+            else:
+                sn_keys.append(sn_val)
+        
+        so = np.argsort(sn_keys)[::-1]
+        
+    else:
+        # Sort by the keys favoring largest arrays in the reddest gratings
+        so = np.argsort(okeys)[::-1]
+        
+    keys = [xkeys[j] for j in so]
+        
     utils.log_comment(utils.LOGFILE, f'\nkeys: {keys}', verbose=True)
     
     if fit_params_kwargs is not None:
         obj0 = xobj[keys[0]]['obj']
-        _sn, do_fix_sigma, offset_degree = obj0.fit_params_by_sn(**fit_params_kwargs)
+        _ = obj0.fit_params_by_sn(**fit_params_kwargs)
+        _sn, sn_val, do_fix_sigma, offset_degree = _
+        
         if do_fix_sigma:
             #input_fix_sigma = initial_sigma*1
             recenter_all = False
@@ -1946,16 +1955,17 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         xobj[k] = {'obj':obj, 'fit': tfit}
 
     ### Fit plots        
-    for k in keys:
-        obj = xobj[k]['obj']
-        if 'fit' in xobj[k]:
-            fit = xobj[k]['fit']
-        else:
-            fit = None
+    if make_2d_plots:
+        for k in keys:
+            obj = xobj[k]['obj']
+            if 'fit' in xobj[k]:
+                fit = xobj[k]['fit']
+            else:
+                fit = None
             
-        fig2d = obj.plot_2d_differences(fit=fit)
-        fileroot = f'{root}_{obj.grating}-{obj.filter}_{target}'.lower()
-        fig2d.savefig(f'{fileroot}.d2d.png')
+            fig2d = obj.plot_2d_differences(fit=fit)
+            fileroot = f'{root}_{obj.grating}-{obj.filter}_{target}'.lower()
+            fig2d.savefig(f'{fileroot}.d2d.png')
     
     for k in xobj:
         xobj[k]['obj'].sky_arrays = None
