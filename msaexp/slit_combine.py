@@ -1788,8 +1788,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     
         xobj[g] = {'obj':obj}
         
-        if not obj.trace_with_ypos:
-            CENTER_WIDTH = 2
+        # if not obj.trace_with_ypos:
+        #     CENTER_WIDTH = 2
 
     if len(xobj) == 0:
         utils.log_comment(utils.LOGFILE, 'No valid spectra', verbose=True)
