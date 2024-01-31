@@ -2274,3 +2274,181 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     
     
     return fig, spec, data
+
+
+DEFAULT_FNUMBERS = [239, 205, # F814W, F160W
+                    362, 363, 364, 365, 366, 370, 371, 375, 376, 377, # NRC BB
+                    379, 380, 381, 382, 383, 384, 385, 386, # NRC MB
+                    ]
+                    
+DEFAULT_REST_FNUMBERS = [120, 121, # GALEX
+                         218, 219, 270, 271,  # FUV
+                         153, 154, 155, # UBV
+                         161, 162, 163, # 2MASS JHK
+                         414, 415, 416, # ugi Antwi-Danso 2022
+                         ]
+
+DEFAULT_SCALE_KWARGS = dict(order=0, sys_err=0.02,
+                            nspline=31, scale_disp=1.3, vel_width=100
+                            )
+
+def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fnumbers=DEFAULT_REST_FNUMBERS, scale_kwargs=DEFAULT_SCALE_KWARGS):
+    """
+    Integrate a spectrum through a list of filter bandpasses
+    
+    Parameters
+    ----------
+    file : str
+        Spectrum filename
+    
+    z : float
+        Redshift
+    
+    RES : `eazy.filters.FilterFile`
+        Container of filter bandpasses
+    
+    fnumbers : list
+        List of observed-frame ``f_numbers``
+    
+    rest_fnumbers : list
+        List of rest-frame ``f_numbers`` to evaluate at ``z``
+    
+    scale_kwargs : dict, None
+        If provided, initialize the spectrum by first passing through
+        `msaexp.spectrum.calc_uncertainty_scale`
+    
+    Returns
+    -------
+    fdict : dict
+        "horizontal" dictionary with keys for each separate filter
+    
+    sed : `~astropy.table.Table`
+        "vertical" table of the integrated flux densities
+    
+    """
+    import eazy.filters
+    
+    global SCALE_UNCERTAINTY
+    SCALE_UNCERTAINTY = 1.
+    
+    if RES is None:
+        RES = eazy.filters.FilterFile(path=None)
+    
+    if scale_kwargs is not None:
+        # Initialize spectrum rescaling uncertainties
+        spec, _, _, _ = calc_uncertainty_scale(file, z=z, **scale_kwargs)
+    else:
+        # Just read the catalog
+        spec = utils.read_catalog(file)
+    
+    rows = []
+    fdict = {'file':file, 'z':z}
+    
+    # Observed-frame filters
+    for fn in fnumbers:
+        obs_flux = integrate_spectrum_filter(spec, RES[fn], z=0)
+        rows.append([RES[fn].name, RES[fn].pivot/1.e4, fn, 0] + list(obs_flux))
+
+        for c, v in zip(['valid', 'frac', 'flux', 'err', 'full_err'], obs_flux):
+            fdict[f'obs_{fn}_{c}'] = v
+    
+    for fn in rest_fnumbers:
+        rest_flux = integrate_spectrum_filter(spec, RES[fn], z=z)
+        rows.append([RES[fn].name, RES[fn].pivot*(1+z)/1.e4, fn, z] + list(rest_flux))
+
+        for c, v in zip(['valid', 'frac', 'flux', 'err', 'full_err'], rest_flux):
+            fdict[f'rest_{fn}_{c}'] = v
+
+    sed = utils.GTable(names=['name', 'pivot','f_number', 'z',
+                              'valid', 'frac', 'flux', 'err', 'full_err'],
+                       rows=rows)
+    
+    return fdict, sed
+
+
+def integrate_spectrum_filter(spec, filt, z=0, filter_fraction_threshold=0.1):
+    """Integrate spectrum data through a filter bandpass
+
+    Parameters
+    ----------
+    spec : `~astropy.table.Table`
+        Spectrum data with columns ``wave`` (microns), ``flux`` and ``err``
+        [``full_err``] (fnu) and ``valid``
+
+    filt : `~eazy.filters.FilterDefinition`
+        Filter bandpass object
+
+    z : float
+        Redshift
+
+    filter_fraction_threshold : float
+        Minimum allowed ``filter_fraction``, i.e. for filters that overlap with the 
+        observed spectrum
+        
+    Returns
+    -------
+    npix : int
+        Number of "valid" pixels
+        
+    filter_fraction : float
+        Fraction of the integrated bandpass that falls on valid spectral wavelength bins
+
+    filter_flux : float
+        Integrated flux density, in units of ``spec['flux']``
+
+    filter_err : float
+        Propagated uncertainty from ``spec['err']``
+
+    filter_full_err : float
+        Propagated uncertianty from ``spec['full_err']``, if available.  Returns -1 if 
+        not available.
+        
+    """
+    
+    # Interpolate bandpass to wavelength grid
+    filter_int = np.interp(spec['wave'],
+                           filt.wave/1.e4*(1+z),
+                           filt.throughput,
+                           left=0.,
+                           right=0.)
+
+    if 'valid' in spec.colnames:
+        valid = spec['valid']
+    else:
+        valid = (spec['err'] > 0) & np.isfinite(spec['err'] + spec['flux'])
+
+    if valid.sum() < 2:
+        return (valid.sum(), 0., 0., -1., -1.)
+
+    # Full filter normalization
+    filt_norm_full = np.trapz(filt.throughput/(filt.wave/1.e4), filt.wave/1.e4)
+
+    # Normalization of filter sampled by the spectrum
+    filt_norm = np.trapz( (filter_int / spec['wave'])[valid], spec['wave'][valid])
+
+    filter_fraction = filt_norm / filt_norm_full
+
+    if filter_fraction < filter_fraction_threshold:
+        return (valid.sum(), filter_fraction, 0., -1., -1.)
+        
+    ## Integrals
+
+    # Trapezoid rule steps
+    trapz_dx = utils.trapz_dx(spec['wave'])
+
+    # Integrated flux
+    fnu_flux = ( (filter_int / filt_norm * trapz_dx *
+                  spec['flux'] / spec['wave'])[valid] ).sum()
+
+    # Propagated uncertainty
+    fnu_err = np.sqrt(( (filter_int / filt_norm * trapz_dx *
+                         spec['err'] / spec['wave'])[valid]**2 ).sum())
+
+    if 'full_err' in spec.colnames:
+        fnu_full_err = np.sqrt(( (filter_int / filt_norm * trapz_dx *
+                                  spec['full_err'] / spec['wave'])[valid]**2 ).sum())
+    else:
+        fnu_full_err = -1.
+        
+    return valid.sum(), filter_fraction, fnu_flux, fnu_err, fnu_full_err
+
