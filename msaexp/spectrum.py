@@ -2542,12 +2542,12 @@ def measure_dla_eqw(spec, z=0, wrange=[1180., 1350], slope_filters=[270,271], fi
     w1 = RES[slope_filters[1]].pivot / 1.e4
     
     if (f0[1] < filter_fraction_threshold) | (f1[1] < filter_fraction_threshold):
-        return (-1, -1, 0, -1, -1)
+        return (-1, -1, 0, -1, -1, None)
     
     wrest = spec['wave'] / (1+z)
     xdla = (wrest >= wrange[0]/1.e4) & (wrest <= wrange[1]/1.e4) & (spec['valid'])
     if xdla.sum() <= 2:
-        return (-1, -1, xdla.sum(), -1, -1)
+        return (-1, -1, xdla.sum(), -1, -1, None)
         
     x = wrest[xdla]
     
