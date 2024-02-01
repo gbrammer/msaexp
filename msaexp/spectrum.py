@@ -2292,7 +2292,10 @@ DEFAULT_SCALE_KWARGS = dict(order=0, sys_err=0.02,
                             nspline=31, scale_disp=1.3, vel_width=100
                             )
 
-def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fnumbers=DEFAULT_REST_FNUMBERS, scale_kwargs=DEFAULT_SCALE_KWARGS):
+DLA_KWS = dict(wrange=[1180., 1350], slope_filters=[270,271], 
+               filter_fraction_threshold=0.1, RES=None, make_plot=False)
+               
+def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fnumbers=DEFAULT_REST_FNUMBERS, scale_kwargs=DEFAULT_SCALE_KWARGS, dla_kwargs=DLA_KWS):
     """
     Integrate a spectrum through a list of filter bandpasses
     
@@ -2336,7 +2339,10 @@ def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fn
     
     if scale_kwargs is not None:
         # Initialize spectrum rescaling uncertainties
-        spec, _, _, _ = calc_uncertainty_scale(file, z=z, **scale_kwargs)
+        spec, escl, _sys_err, _ = calc_uncertainty_scale(file, z=z, **scale_kwargs)
+        spec['escale'] *= escl
+        set_spec_sys_err(spec, sys_err=_sys_err)
+        
     else:
         # Just read the catalog
         spec = utils.read_catalog(file)
@@ -2362,6 +2368,19 @@ def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fn
     sed = utils.GTable(names=['name', 'pivot','f_number', 'z',
                               'valid', 'frac', 'flux', 'err', 'full_err'],
                        rows=rows)
+    
+    if dla_kwargs is not None:
+        dla_kwargs['RES'] = RES
+        dla_kwargs['z'] = z
+        
+        _ = measure_dla_eqw(spec, **dla_kwargs)
+        beta, beta_unc, ndla, dla_value, dla_unc, _fig = _
+        
+        fdict['beta'] = beta
+        fdict['beta_unc'] = beta_unc
+        fdict['ndla'] = ndla
+        fdict['dla_value'] = dla_value
+        fdict['dla_unc'] = dla_unc
     
     return fdict, sed
 
@@ -2402,7 +2421,7 @@ def integrate_spectrum_filter(spec, filt, z=0, filter_fraction_threshold=0.1):
     filter_full_err : float
         Propagated uncertianty from ``spec['full_err']``, if available.  Returns -1 if 
         not available.
-        
+    
     """
     
     # Interpolate bandpass to wavelength grid
@@ -2451,4 +2470,147 @@ def integrate_spectrum_filter(spec, filt, z=0, filter_fraction_threshold=0.1):
         fnu_full_err = -1.
         
     return valid.sum(), filter_fraction, fnu_flux, fnu_err, fnu_full_err
+
+
+def measure_dla_eqw(spec, z=0, wrange=[1180., 1350], slope_filters=[270,271], filter_fraction_threshold=0.1, RES=None, make_plot=False):
+    """
+    Measure DLA parameter (Heintz+24)
+    
+    >>> DLA = Integrate(1 - Fobs/Fcont, dlam)
+    
+    over a limited range near Ly-alpha
+    
+    Parameters
+    ----------
+    spec : `~astropy.table.Table`
+        Spectrum data with columns ``wave`` (microns), ``flux`` and ``err``
+        [``full_err``] (fnu) and ``valid``
+
+    z : float
+        Redshift
+    
+    wrange : (float, float)
+        Wavelength range for the integral
+    
+    slope_filters : (int, int)
+        Filter indices of two filters to define the UV slope.  The default values of
+        ``slope_filters = (270, 271)`` fits the UV slope beta between rest-frame 
+        1400--1700 Angstroms.
+    
+    RES : `eazy.filters.FilterFile`
+        Container of filter bandpasses
+
+    make_plot : bool
+        Make a diagnostic plot
+    
+    Returns
+    -------
+    beta : float
+        Derived UV slope ``flam = lam**beta``
+    
+    beta_unc : float
+        Propagated uncertainty on ``beta``
+    
+    ndla : int
+        Number of wavelength pixels satisfying ``wrange``
+    
+    dla_value : float
+        Integrated DLA parameter
+    
+    dla_unc : float
+        Propagated uncertainty on ``dla_value``
+
+    fig : `~matplotlib.Figure`, None
+        Figure if ``make_plot=True``.
+    
+    """
+    if RES is None:
+        RES = eazy.filters.FilterFile(path=None)
+    
+    f0 = integrate_spectrum_filter(spec,
+                                   RES[slope_filters[0]],
+                                   z=z,
+                                   filter_fraction_threshold=filter_fraction_threshold)
+    
+    w0 = RES[slope_filters[0]].pivot / 1.e4
+    
+    f1 = integrate_spectrum_filter(spec,
+                                   RES[slope_filters[1]],
+                                   z=z,
+                                   filter_fraction_threshold=filter_fraction_threshold)
+    
+    w1 = RES[slope_filters[1]].pivot / 1.e4
+    
+    if (f0[1] < filter_fraction_threshold) | (f1[1] < filter_fraction_threshold):
+        return (-1, -1, 0, -1, -1)
+    
+    wrest = spec['wave'] / (1+z)
+    xdla = (wrest >= wrange[0]/1.e4) & (wrest <= wrange[1]/1.e4) & (spec['valid'])
+    if xdla.sum() <= 2:
+        return (-1, -1, xdla.sum(), -1, -1)
+        
+    x = wrest[xdla]
+    
+    # UV slope and uncertainty
+    beta = (np.log(f0[2]) - 2*np.log(w0) - np.log(f1[2]) + 2*np.log(w1)) / np.log(w0/w1)
+    vbeta = ((f0[4]/f0[2])**2 + (f1[4]/f1[2])**2) / np.abs(np.log(w0/w1))
+    beta_unc = np.sqrt(vbeta)
+    
+    # Continuum fit and uncertainty
+    log_fuv = (beta+2) * np.log(wrest/w0) + np.log(f0[2])
+    vlog_fuv = (vbeta) * np.abs(np.log(wrest/w0)) + (f0[4]/f0[2])**2
+    
+    fcont = np.exp(log_fuv)[xdla]
+    econt = (np.sqrt(vlog_fuv)*np.exp(log_fuv))[xdla]
+    
+    dx = utils.trapz_dx(x)*1.e4
+    sx = spec[xdla]
+    ydata = 1 - sx['flux'] / fcont
+    vdata = (sx['flux'] / fcont)**2 * ( (sx['full_err'] / sx['flux'])**2 +
+                                         (econt/fcont)**2 )
+    
+    # Do trapezoid rule integration and propagation of uncertainty
+    dla_value = (ydata*dx).sum()
+    dla_unc = np.sqrt((vdata*dx).sum())
+    
+    if make_plot:
+        fig, ax = plt.subplots(1, 1, figsize=(8,5))
+        
+        ax.errorbar(wrest, spec['flux'], spec['full_err'], color='k',
+                    marker='.',
+                    linestyle='None',
+                    alpha=0.5)
+        ax.step(wrest, spec['flux'], where='mid', color='k', alpha=0.5)
+        
+        ax.errorbar(w0, f0[2], f0[4], color='r', zorder=100, marker='o', alpha=0.4)
+        ax.errorbar(w1, f1[2], f1[4], color='r', zorder=100, marker='o', alpha=0.4)
+        
+        if dla_value < 0:
+            y0 = 2*np.interp(0.1216, x, fcont)
+        else:
+            y0 = 0.
+            
+        ax.vlines(0.1216 + np.array([-1,1])*dla_value/2.e4, y0,
+                  np.interp(0.1216, x, fcont), color='magenta',
+                  label=f'EW_DLA = {dla_value:.1f} ({dla_unc:.1f})')
+
+        ax.fill_between(x, fcont-econt, fcont+econt, color='red', alpha=0.1)
+        ax.plot(x, fcont, color='r', alpha=0.2,
+                label=f'Beta = {beta:5.2f} ({beta_unc:.2f})')
+
+        ymax = np.maximum(f0[2]+f0[4], f1[2]+f1[4])*2
+        ax.set_ylim(-0.1*ymax, ymax)
+        ax.set_xlim(0.11, w1 + 0.2*(w1-w0))
+        ax.grid()
+        ax.set_xlabel(r'$\lambda_\mathrm{rest}$')
+        ax.set_ylabel(r'$f_\nu$')
+        leg = ax.legend(loc='upper right')
+        leg.set_title(f"{spec.meta['SRCNAME']}\nz = {z:.4f}")
+        # ax.set_title(spec.meta['FILENAME'])
+        
+        fig.tight_layout(pad=1)
+    else:
+        fig = None
+        
+    return beta, beta_unc, xdla.sum(), dla_value, dla_unc, fig
 
