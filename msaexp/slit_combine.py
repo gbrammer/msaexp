@@ -16,6 +16,9 @@ utils.LOGFILE = '/tmp/msaexp_slit_combine.log.txt'
 
 import msaexp.utils as msautils
 
+# Cross-dispersion pixel scale computed from one of the fixed slits
+PIX_SCALE = 0.10544
+
 EVAL_COUNT = 0
 CHI2_MASK = None
 SKIP_COUNT = 10000
@@ -73,7 +76,7 @@ def split_visit_groups(files, join=[0, 3], gratings=['PRISM']):
     return groups
 
 
-def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=0.1, verbose=True):
+def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=PIX_SCALE, verbose=True):
     """
     Rough slit-loss correction given derived source width and x_offset shutter centering
     
@@ -214,7 +217,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     peak = 10000
     chi2 += peak / (1 + np.exp(-10*(sigma - 1.8))) # right
     chi2 += peak - peak / (1 + np.exp(-30*(sigma - 0))) # left
-    chi2 += (sigma - SIGMA_PRIOR)**2/2/0.1**2
+    chi2 += (sigma - SIGMA_PRIOR)**2 / 2 / PIX_SCALE**2
     chi2 += ((np.array(theta[i0:]) - CENTER_PRIOR)**2/2/CENTER_WIDTH**2).sum()
     
     if ((EVAL_COUNT % SKIP_COUNT == 0) | (ret == 1)):
@@ -231,7 +234,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
 
 
 class SlitGroup():
-    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, nod_offset=5, pad_border=2, reference_exposure='auto'):
+    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, nod_offset=0.5/PIX_SCALE, pad_border=2, reference_exposure='auto'):
         """
         Container for a list of 2D extracted ``SlitModel`` files
         
@@ -412,6 +415,53 @@ class SlitGroup():
             return self.reference_exposure
 
 
+    @property
+    def source_ypixel_position(self):
+        """
+        Expected relative y pixel location of the source
+        """
+        sl = self.slits[0]
+        #return(sl.source_ypos)
+        wcs = sl.meta.wcs
+        s2d = wcs.get_transform('slit_frame', 'detector')
+    
+        central_wave = np.nanmedian(self.wtr[0,:])*1.e-6
+        # central_wave = 4.e-6
+
+        x0 = s2d(0.0, 0, central_wave)
+        x1 = s2d(0.0, 1, central_wave)
+        dpdy = np.sqrt(((np.array(x0)-np.array(x1))**2).sum())
+    
+        source_ypix = 0.5 - sl.source_ypos*dpdy
+        return source_ypix
+
+
+    @property
+    def slit_pixel_scale(self):
+        """
+        Compute cross dispersion pixel scale from slit WCS
+
+        Returns
+        -------
+        pix_scale : float
+            Cross-dispersion pixel scale ``arcsec / pixel``
+    
+        """
+    
+        sl = self.slits[0]
+        wcs = sl.meta.wcs
+        d2s = wcs.get_transform('detector', 'world')
+    
+        x0 = d2s(self.sh[1]//2, self.sh[0]//2)
+        x1 = d2s(self.sh[1]//2, self.sh[0]//2+1)
+    
+        dx = np.array(x1) - np.array(x0)
+        cosd = np.cos(x0[1]/180*np.pi)
+        pix_scale = np.sqrt((dx[0]*cosd)**2 + dx[1]**2)*3600.
+    
+        return pix_scale
+    
+    
     @property
     def relative_nod_offset(self):
         """
@@ -652,7 +702,9 @@ class SlitGroup():
                 self.position_key = 'manual_position'
             else:
                 
-                offsets = (self.info['y_position'] - self.info['y_position'][0])/0.1
+                offsets = (self.info['y_position'] - self.info['y_position'][0])
+                offsets /= self.slit_pixel_scale
+                
                 offsets = np.round(offsets/5)*5
                 
                 offstr = ', '.join([f'{_off:5.1f}' for _off in np.unique(offsets)])
@@ -666,6 +718,20 @@ class SlitGroup():
                 
                 for i, _off in enumerate(offsets):
                     self.ytr[i,:] += _off - 1
+        
+        elif self.info['lamp_mode'][0] == 'FIXEDSLIT':
+
+            _dy = (self.info['y_offset'] - self.info['y_offset'][0])
+            _dy /= self.slit_pixel_scale
+
+            msg = f' Fixed slit: '
+            _dystr = ', '.join([f'{_dyi:5.2f}' for _dyi in _dy])
+        
+            msg += f'force [{_dystr}] pix offsets'
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        
+            for i, _dyi in enumerate(_dy):
+                self.ytr[i,:] += -1 + _dyi
                 
         self.set_trace_coeffs(degree=2)
 
@@ -1572,7 +1638,7 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
                                           sigma=fit[exp]['sigma'],
                                           x_pos=obj.slits[ip].source_xpos,
                                           slit_width=0.2,
-                                          pixel_scale=0.1,
+                                          pixel_scale=PIX_SCALE,
                                           verbose=False)
             else:
                 # print('WithOUT PRF pathloss')
@@ -1646,7 +1712,7 @@ def average_path_loss(spec, header=None):
                                       sigma=sigma,
                                       x_pos=x_pos,
                                       slit_width=0.2,
-                                      pixel_scale=0.1,
+                                      pixel_scale=PIX_SCALE,
                                       verbose=False)
             prf_list.append(prf_i)
     
@@ -1718,12 +1784,14 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                         pad_border=pad_border,
                        )
         
+        # print('xxx', position_key, np.array(obj.info[position_key]), len(obj.files), len(obj.slits), obj.sh)
+        
         if 0:
             if (obj.grating not in do_gratings) | (obj.sh[1] < 83*2**(obj.grating not in ['PRISM'])):
                 msg = f'\n    skip shape=({obj.sh}) {obj.grating}\n'
                 utils.log_comment(utils.LOGFILE, msg, verbose=True)
                 continue
-    
+        
         if obj.diffs:
             valid_frac = obj.mask.sum() / obj.mask.size
             
@@ -1732,26 +1800,31 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                                   f'\n    skip N=1 {obj.grating}\n', 
                                   verbose=True)
                 continue
+            
             elif obj.bad_exposures.sum() == obj.N:
                 utils.log_comment(utils.LOGFILE,
                                   f'\n    skip all bad {obj.grating}\n',
                                   verbose=True)
                 continue
+            
             elif (len(obj.unp.values) == 1) & (obj.diffs):
                 utils.log_comment(utils.LOGFILE,
                                   f'\n    one position {obj.grating}\n',
                                   verbose=True)
                 continue
+            
             elif os.path.basename(obj.files[0]).startswith('jw02561002001'):
                 utils.log_comment(utils.LOGFILE,
                                   f'\n    uncover {obj.files[0]}\n',
                                   verbose=True)
                 continue
+            
             elif valid_frac < 0.2:
                 utils.log_comment(utils.LOGFILE,
                                   f'\n    masked pixels {valid_frac:.2f}\n',
                                   verbose=True)
                 continue
+            
             elif ('b' in target) & ((obj.info['shutter_state'] == 'x').sum() > 0):
                 utils.log_comment(utils.LOGFILE,
                                   f'\n    single background shutter\n',
