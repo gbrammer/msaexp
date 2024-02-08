@@ -783,13 +783,22 @@ class SlitGroup():
         
         """
         yslit = []
+        yshutter = []
+        
         for i in range(self.N):
             xi =  (self.xtr[i,:] - self.sh[1]/2) / self.sh[1]
             _ytr = np.polyval(self.base_coeffs[i], xi)
+            if i == 0:
+                _ytr0 = _ytr*1.
+
             _ytr += np.polyval(self.trace_coeffs[i], xi)
             yslit.append((self.ypix[i,:].reshape(self.sh) - _ytr).flatten())
-        
+            
+            
+            yshutter.append((self.ypix[i,:].reshape(self.sh) - _ytr0).flatten())
+                
         self.yslit = np.array(yslit)
+        self.yshutter = np.array(yshutter)
 
 
     @property
@@ -1916,6 +1925,13 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                 if cross_dispersion_mask_type == 'bkg':
                     # Just mask background when doing the differences
                     obj.bkg_mask[j,cross_mask] = False
+                    
+                elif cross_dispersion_mask_type == 'fixed':
+                    # Relative to first trace
+                    cross_mask = (obj.yshutter[j,:] > mask_cross_dispersion[0])
+                    cross_mask &= (obj.yshutter[j,:] < mask_cross_dispersion[1])
+                    obj.sci[j, cross_mask] = np.nan
+                    
                 else:
                     # Mask out all pixels, source and background
                     obj.sci[j, cross_mask] = np.nan
