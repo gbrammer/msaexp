@@ -234,7 +234,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
 
 
 class SlitGroup():
-    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, nod_offset=0.5/PIX_SCALE, pad_border=2, reference_exposure='auto'):
+    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, trace_from_yoffset=False, nod_offset=0.5/PIX_SCALE, pad_border=2, reference_exposure='auto'):
         """
         Container for a list of 2D extracted ``SlitModel`` files
         
@@ -335,6 +335,8 @@ class SlitGroup():
         keep_files = []
         
         self.trace_with_ypos = trace_with_ypos
+        self.trace_from_yoffset = trace_from_yoffset
+        
         self.stuck_min_sn = stuck_min_sn
         self.undo_barshadow = undo_barshadow
         self.nod_offset = nod_offset
@@ -719,9 +721,9 @@ class SlitGroup():
                 for i, _off in enumerate(offsets):
                     self.ytr[i,:] += _off - 1
         
-        elif self.info['lamp_mode'][0] == 'FIXEDSLIT':
+        elif (self.info['lamp_mode'][0] == 'FIXEDSLIT') & (1):
 
-            _dy = (self.info['y_offset'] - self.info['y_offset'][0])
+            _dy = self.info['y_offset'] - np.median(self.info['y_offset']) #[0])
             _dy /= self.slit_pixel_scale
 
             msg = f' Fixed slit: '
@@ -731,8 +733,22 @@ class SlitGroup():
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
         
             for i, _dyi in enumerate(_dy):
-                self.ytr[i,:] += -1 + _dyi
-                
+                self.ytr[i,:] += 1 + _dyi
+        
+        elif self.trace_from_yoffset:
+
+            _dy = self.info['y_offset'] - self.info['y_offset'][0]
+            _dy /= self.slit_pixel_scale
+
+            msg = f' Recomputed offsets slit: '
+            _dystr = ', '.join([f'{_dyi:5.2f}' for _dyi in _dy])
+        
+            msg += f'force [{_dystr}] pix offsets'
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        
+            for i, _dyi in enumerate(_dy):
+                self.ytr[i,:] = self.ytr[0,:] + _dyi
+            
         self.set_trace_coeffs(degree=2)
 
 
@@ -1723,7 +1739,7 @@ def average_path_loss(spec, header=None):
         spec['path_corr'].description = 'Average path loss correction already applied'
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='bkg', reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='bkg', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
     """
     Spectral combination workflow
     """
@@ -1764,10 +1780,11 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         msg = f'\n* Group {g}   N={len(groups[g])}\n=================================='
         utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
-        if ('glazebrook' in root) | ('suspense' in root):
-            nod_offset = 10
-        else:
-            nod_offset = 5
+        if nod_offset is None:
+            if ('glazebrook' in root) | ('suspense' in root):
+                nod_offset = 10
+            else:
+                nod_offset = 5
         
         if trace_with_ypos in ['auto']:
             trace_with_ypos = ('b' not in target) & (not get_background)
@@ -1779,6 +1796,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                         undo_barshadow=undo_barshadow,
                         # sky_arrays=(wsky, fsky),
                         trace_with_ypos=trace_with_ypos,
+                        trace_from_yoffset=trace_from_yoffset,
                         nod_offset=nod_offset,
                         reference_exposure=reference_exposure,
                         pad_border=pad_border,
