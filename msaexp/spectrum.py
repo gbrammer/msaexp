@@ -899,7 +899,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                               sys_err=sys_err,
                               **kwargs)
         
-        for k in ['coeffs', 'covar', 'model', 'mline', 'fullchi2', 'contchi2']:
+        for k in ['coeffs', 'covar', 'model', 'mline', 'fullchi2', 'contchi2','eqwidth']:
             if k in spl_data:
                 data[f'spl_{k}'] = spl_data[k]
         
@@ -2091,7 +2091,7 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
             else:
                 eqwi = np.nan
             
-            eqwidth[t] = eqwi
+            eqwidth[t] = [float(eqwi)]
             
             print(f'{t:>20}   {coeffs[i]:8.1f} ± {covard[i]:8.1f} (EW={eqwi:9.1f})')
             
