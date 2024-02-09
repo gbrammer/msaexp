@@ -971,9 +971,9 @@ class NirspecPipeline():
             meta['skip'] = skip
             meta['redshift'] = None
             
-            is_fixed = meta['meta']['instrument']['lamp_mode'] == 'FIXEDSLIT'
+            # is_fixed = meta['meta']['instrument']['lamp_mode'] == 'FIXEDSLIT'
             
-            if is_fixed & (meta['source_name'] is None):
+            if self.is_fixed_slit & (meta['source_name'] is None):
                 # Set source info for fixed slit targets
                 targ = meta['meta']['target']
                 _name = f"{targ['proposer_name'].lower()}_{_slit.name}".lower()
