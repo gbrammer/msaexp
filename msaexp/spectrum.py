@@ -191,7 +191,7 @@ class SpectrumSampler(object):
         self.resample_func = resample_func
         self.sample_line_func = sample_line_func
                 
-        self.initialize_spec(spec_input)
+        self.initialize_spec(spec_input, **kwargs)
 
         self.initialize_emission_line()
 
@@ -369,7 +369,7 @@ class SpectrumSampler(object):
         return res
 
 
-    def bspline_array(self, nspline=13, log=False, get_matrix=True):
+    def bspline_array(self, nspline=13, log=False, by_wavelength=False, get_matrix=True):
         """
         Initialize bspline templates for continuum fits
         
@@ -390,21 +390,60 @@ class SpectrumSampler(object):
             bspline data, depending on ``get_matrix``
         
         """
-        if get_matrix:
+        # if get_matrix:
+        #     if by_wavelength:
+        #         bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
+        #                                degree=3,
+        #                                df=nspline,
+        #                                log=log,
+        #                                get_matrix=get_matrix
+        #                                )
+        #     else:
+        #         bspl = utils.bspline_templates(wave=np.arange(len(self.spec_wobs)),
+        #                                degree=3,
+        #                                df=nspline,
+        #                                log=log,
+        #                                get_matrix=get_matrix
+        #                                )
+        #
+        #     bspl = bspl.T
+        # else:
+        #     if by_wavelength:
+        #         bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
+        #                                degree=3,
+        #                                df=nspline,
+        #                                log=log,
+        #                                get_matrix=get_matrix
+        #                                )
+        #     else:
+        #         bspl = utils.bspline_templates(wave=np.arange(len(self.spec_wobs)),
+        #                                degree=3,
+        #                                df=nspline,
+        #                                log=log,
+        #                                get_matrix=get_matrix
+        #                                )
+        #         for t in bspl:
+        #             bspl[t].wave = self.spec_wobs
+        if by_wavelength:
             bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
-                                       degree=3,
-                                       df=nspline,
-                                       log=log,
-                                       get_matrix=get_matrix
-                                       )
+                                   degree=3,
+                                   df=nspline,
+                                   log=log,
+                                   get_matrix=get_matrix
+                                   )
+        else:
+            bspl = utils.bspline_templates(wave=np.arange(len(self.spec_wobs)),
+                                   degree=3,
+                                   df=nspline,
+                                   log=log,
+                                   get_matrix=get_matrix
+                                   )
+
+        if get_matrix:
             bspl = bspl.T
         else:
-            bspl = utils.bspline_templates(wave=self.spec_wobs*1.e4,
-                                       degree=3,
-                                       df=nspline,
-                                       log=log,
-                                       get_matrix=get_matrix
-                                       )
+            for t in bspl:
+                bspl[t].wave = self.spec_wobs
             
         return bspl
 
@@ -870,7 +909,7 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     
     sp['wave'].unit = u.micron
     sp['flux'].unit = u.microJansky
-        
+    
     sp.write(froot+'.spec.zfit.fits', overwrite=True)
     
     zdata = {}
@@ -1517,7 +1556,7 @@ def fit_redshift_grid(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fi
     return zgrid, chi2
 
 
-def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=3, update=True, verbose=True, init=(1, 3), **kwargs):
+def calc_uncertainty_scale(file=None, data=None, order=0, initial_mask=(0.2, 5), sys_err=0.02, fit_sys_err=False, method='bfgs', tol=None, student_df=10, update=True, verbose=True, **kwargs):
     """
     Compute a polynomial scaling of the spectrum uncertainties.  The procedure is to fit for
     coefficients of a polynomial multiplied to the `err` array of the spectrum such that 
@@ -1531,20 +1570,37 @@ def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=3, update=
     data : tuple
         Precomputed outputs from `msaexp.spectrum.plot_spectrum`
     
+    order : int
+        Degree of the correction polynomial
+    
+    initial_mask : (float, float)
+        Masking for the fit initialization.  First parameter is zeroth-order 
+        uncertainty scaling and the second parameter is the mask threshold of the 
+        residuals
+    
+    sys_err : float
+        Systematic component of the uncertainties
+    
+    fit_sys_err : bool
+        Fit for adjusted ``sys_err`` parameter
+
     method : str
         Optimization method for `scipy.optimize.minimize`
     
-    order : int
-        Degree of the correction polynomial
+    tol : None, float
+        Tolerance parameter passed to `scipy.optimize.minimize`
+    
+    student_df : int, None
+        If specified, calculate log likelihood of a `scipy.stats.t Student-t 
+        distribution with ``df=student_df``.  Otherwise, calculate log-likelihood 
+        of the `scipy.stats.normal` distribution.
     
     update : bool
         Update the global `msaexp.spectrum.SCALE_UNCERTAINTY` array with the fit result
     
     verbose : bool
-        Print status messages
-    
-    init : (float, float)
-        Masking for the fit initialization
+        Print status messages.  If ``verbose > 1`` will also print status at each
+        step of the optimization.
     
     kwargs : dict
         Keyword arguments for `msaexp.spectrum.plot_spectrum` if `data` not specified
@@ -1557,74 +1613,135 @@ def calc_uncertainty_scale(file=None, data=None, method='bfgs', order=3, update=
     escale : array
         The wavelength-dependent scaling of the uncertainties
     
+    sys_err : float
+        The systematic uncertainty used, fixed or adjusted depending on ``fit_sys_err``
+    
     res : object
         Output from `scipy.optimize.minimize`
     
     """
     from scipy.stats import norm
+    from scipy.stats import t as student
+    
     from scipy.optimize import minimize
     
     global SCALE_UNCERTAINTY
     SCALE_UNCERTAINTY = 1.0
     
     if data is None:
-        spec, spl, _ = plot_spectrum(file=file, eazy_templates=None,
-                                  get_spl_templates=True,
-                                  **kwargs
+        spec, spl = plot_spectrum(inp=file,
+                                     eazy_templates=None,
+                                     get_spl_templates=True,
+                                     sys_err=sys_err,
+                                     get_init_data=True,
+                                     **kwargs
                                   )
     else:
         spec, spl = data
         
-    ok = (spec['err'] > 0) & (spec['flux'] != 0)
-    ok &= np.isfinite(spec['err']+spec['flux'])
+    # if 'full_err' in spec.colnames:
+    #     _err = spec['full_err']
+    # else:
+    #     _err = spec['err']
+    _err = spec['err']
     
-    if init is not None:
-        err = init[0]*spec['err']
-        if 'escale' in spec.colnames:
-            err *= spec['escale']
-            
-        err = np.sqrt(err**2 + (0.02*spec['flux'])**2)
-        _Ax = spl/err
-        _yx = spec['flux']/err
-        _x = np.linalg.lstsq(_Ax[:,ok].T, _yx[ok], rcond=None)
-        _model = spl.T.dot(_x[0])
-        ok &= np.abs((spec['flux']-_model)/err) < init[1]
+    ok = (_err > 0) & (spec['flux'] != 0)
+    ok &= np.isfinite(_err+spec['flux'])
     
-    def objfun_scale_uncertainties(c):
+    # print('escale: ', np.nanpercentile(spec['escale'], [10,50,90]))
     
-        err = 10**np.polyval(c, spec['wave'])*spec['err']
+    def objfun_scale_uncertainties(c, ok, ret):
+        
+        if fit_sys_err:
+            _sys_err = c[0] / 100
+            _coeffs = c[1:]
+        else:
+            _coeffs = c[:]
+            _sys_err = sys_err
+        
+        err = 10**np.polyval(_coeffs, spec['wave'] - 3)*_err
         if 'escale' in spec.colnames:
             err *= spec['escale']
 
-        err = np.sqrt(err**2 + (0.02*spec['flux'])**2)
+        _full_err = np.sqrt(err**2 + np.maximum(_sys_err*spec['flux'], 0)**2)
         
-        _Ax = spl/err
-        _yx = spec['flux']/err
+        _Ax = spl / _full_err
+        _yx = spec['flux'] / _full_err
         _x = np.linalg.lstsq(_Ax[:,ok].T, _yx[ok], rcond=None)
         _model = spl.T.dot(_x[0])
-    
-        lnp = norm.logpdf((spec['flux']-_model)[ok],
+        
+        if ret == 1:
+            return _sys_err, _full_err, _model
+            
+        if student_df is None:
+            _lnp = norm.logpdf((spec['flux'] - _model)[ok],
                           loc=_model[ok]*0.,
-                          scale=err[ok]).sum()
-    
+                          scale=_full_err[ok]).sum()
+            chi2 = -1*_lnp/2
+        else:
+            _lnp = student.logpdf((spec['flux'] - _model)[ok],
+                          student_df,
+                          loc=_model[ok]*0.,
+                          scale=_full_err[ok]).sum()
+            chi2 = -1*_lnp/2
+        
+        if 0:
+            _resid = (spec['flux'] - _model)[ok] / _full_err[ok]
+            chi2 = np.log(utils.nmad(_resid))**2
+        
         if verbose > 1:
-            print(c, lnp)
+            cstr = ' '.join([f'{ci:6.2f}' for ci in c])
+            print(f"{cstr}: {chi2:.6e}")
     
-        return -lnp/2.
+        return chi2
+
+    if fit_sys_err:
+        c0 = np.zeros(order+2)
+        c0[0] = sys_err*100
+    else:
+        c0 = np.zeros(order+1)
+
+    if initial_mask is not None:
+        c0[-1] = initial_mask[0]
+        _sys, _efit, _model = objfun_scale_uncertainties(c0, ok, 1)
+        bad = np.abs((spec['flux'] - _model)/_efit) > initial_mask[1]
+        
+        msg = f'calc_uncertainty_scale: Mask additional {(bad & ok).sum()} pixels'
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        
+        ok &= ~bad
 
     # objfun_scale_uncertainties([0.0])
-    c0 = np.zeros(order+1)
+    # print('xxx: fit_sys_err', fit_sys_err, sys_err)
+    
     #c0[-1] = np.log10(3)
     
-    res = minimize(objfun_scale_uncertainties, c0, method=method)
+    res = minimize(objfun_scale_uncertainties, c0, method=method, args=(ok, 0))
+    _sys, _efit, _model = objfun_scale_uncertainties(res.x, ok, 1)
+    spec.meta['calc_syse'] = _sys
+    spec['calc_err'] = _efit
+    spec['calc_model'] = _model
+    spec['calc_valid'] = ok
+
+    if fit_sys_err:
+        sys_err, _coeffs = res.x[0]/100., res.x[1:]
+    else:
+        _coeffs = res.x[:]
+
+    _resid = (spec['flux'] - _model)/_efit
+    msg = f'calc_uncertainty_scale: sys_err = {sys_err:.4f}'
+    msg += f'\ncalc_uncertainty_scale: coeffs = {_coeffs}'
+    msg += f'\ncalc_uncertainty_scale: NMAD = {utils.nmad(_resid[ok]):.3f}'
+    utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
     
     if update:
-        if verbose:
-            print('Set SCALE_UNCERTAINTY: ', res.x)
+
+        msg = f'calc_uncertainty_scale: Set SCALE_UNCERTAINTY: {_coeffs}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
             
-        SCALE_UNCERTAINTY = res.x
+        SCALE_UNCERTAINTY = _coeffs
     
-    return spec, 10**np.polyval(res.x, spec['wave']), res
+    return spec, 10**np.polyval(_coeffs, spec['wave'] - 3), sys_err, res
 
 
 def setup_spectrum(file, **kwargs):
@@ -1632,6 +1749,23 @@ def setup_spectrum(file, **kwargs):
     Deprecated, use `msaexp.spectrum.read_spectrum`
     """
     return read_spectrum(file, **kwargs)
+
+
+def set_spec_sys_err(spec, sys_err=0.02):
+    """
+    Set `full_err` columns including a systematic component
+    
+        >>> full_err**2 = (err * escale)**2 + (sys_err * maximum(flux,0))**2
+    
+    """
+    spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
+                                np.maximum(sys_err*spec['flux'], 0)**2)
+    
+    if 'aper_err' in spec.colnames:
+        spec['aper_full_err'] = np.sqrt((spec['aper_err']*spec['escale'])**2 +
+                                   np.maximum(sys_err*spec['aper_flux'],0)**2)
+        
+    spec.meta['sys_err'] = sys_err
 
 
 def read_spectrum(inp, spectrum_extension='SPEC1D', sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 0.8], **kwargs):
@@ -1748,14 +1882,16 @@ def read_spectrum(inp, spectrum_extension='SPEC1D', sys_err=0.02, err_mask=(10,0
         medi = np.interp(spec['wave'], spec['wave'][valid], med, left=0, right=0)
         valid &= spec['err'] > err_median_filter[1]*medi
         
-    spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
-                               (sys_err*spec['flux'])**2)
+    set_spec_sys_err(spec, sys_err=sys_err)
     
-    if 'aper_err' in spec.colnames:
-        spec['aper_full_err'] = np.sqrt((spec['aper_err']*spec['escale'])**2 +
-                                   (sys_err*spec['aper_flux'])**2)
-        
-    spec.meta['sys_err'] = sys_err
+    # spec['full_err'] = np.sqrt((spec['err']*spec['escale'])**2 +
+    #                             np.maximum(sys_err*spec['flux'], 0)**2)
+    #
+    # if 'aper_err' in spec.colnames:
+    #     spec['aper_full_err'] = np.sqrt((spec['aper_err']*spec['escale'])**2 +
+    #                                np.maximum(sys_err*spec['aper_flux'],0)**2)
+    #
+    # spec.meta['sys_err'] = sys_err
     
     spec['full_err'][~valid] = 0
     spec['flux'][~valid] = 0.
@@ -1798,7 +1934,7 @@ def read_spectrum(inp, spectrum_extension='SPEC1D', sys_err=0.02, err_mask=(10,0
     return spec
 
 
-def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, use_aper_columns=False, label=None, **kwargs):
+def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', z=9.505, vel_width=100, bkg=None, scale_disp=1.3, nspline=27, show_cont=True, draws=100, figsize=(16, 8), ranges=[(3650, 4980)], Rline=1000, full_log=False, write=False, eazy_templates=None, use_full_dispersion=True, get_init_data=False, get_spl_templates=False, scale_uncertainty_kwargs=None, plot_unit=None, spline_single=True, sys_err=0.02, return_fit_results=False, use_aper_columns=False, label=None, **kwargs):
     """
     Make a diagnostic figure
     
@@ -1815,10 +1951,10 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     lw, lr = utils.get_line_wavelengths()
         
     if isinstance(inp, str):
-        sampler = SpectrumSampler(inp, **kwargs)
+        sampler = SpectrumSampler(inp, sys_err=sys_err, **kwargs)
         file = inp
     elif isinstance(inp, pyfits.HDUList):
-        sampler = SpectrumSampler(inp, **kwargs)
+        sampler = SpectrumSampler(inp, sys_err=sys_err, **kwargs)
         file = None
     else:
         file = None
@@ -1835,11 +1971,22 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
         else:
             ap_corr = 1
         
-        flam = spec['aper_flux']*spec['to_flam']*ap_corr
-        eflam = spec['aper_full_err']*spec['to_flam']*ap_corr
+        flux_column = 'aper_flux'
+        err_column = 'aper_full_err'
+        
+        #flam = spec['aper_flux']*spec['to_flam']*ap_corr
+        #eflam = spec['aper_full_err']*spec['to_flam']*ap_corr
     else:
-        flam = spec['flux']*spec['to_flam']
-        eflam = spec['full_err']*spec['to_flam']
+        
+        flux_column = 'flux'
+        err_column = 'full_err'
+        
+        #flam = spec['flux']*spec['to_flam']
+        #eflam = spec['full_err']*spec['to_flam']
+        ap_corr = 1.
+    
+    flam = spec[flux_column] * spec['to_flam']*ap_corr
+    eflam = spec[err_column] * spec['to_flam']*ap_corr
     
     wrest = spec['wave']/(1+z)*1.e4
     wobs = spec['wave']
@@ -1849,10 +1996,6 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     eflam[~mask] = np.nan
     
     bspl = sampler.bspline_array(nspline=nspline, get_matrix=True)
-
-    # bspl = utils.bspline_templates(wave=spec['wave']*1.e4,
-    #                                degree=3,
-    #                                df=nspline)
                                    
     w0 = utils.log_zgrid([spec['wave'].min()*1.e4,
                           spec['wave'].max()*1.e4], 1./Rline)
@@ -1867,13 +2010,19 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
                         grating=spec.grating,
                         **kwargs,
                         )
-            
+    
+    if get_init_data:
+        return spec, _A
+    
     if scale_uncertainty_kwargs is not None:
-        _, escl, _ = calc_uncertainty_scale(file=None,
+        _, escl, _sys_err, _ = calc_uncertainty_scale(file=None,
                                             data=(spec, _A),
+                                            sys_err=sys_err,
                                             **scale_uncertainty_kwargs)
-        eflam *= escl
+        # eflam *= escl
         spec['escale'] *= escl
+        set_spec_sys_err(spec, sys_err=_sys_err)
+        eflam = spec[err_column] * spec['to_flam'] * ap_corr
         
     okt = _A[:,mask].sum(axis=1) > 0
     
@@ -2125,3 +2274,343 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
     
     
     return fig, spec, data
+
+
+DEFAULT_FNUMBERS = [239, 205, # F814W, F160W
+                    362, 363, 364, 365, 366, 370, 371, 375, 376, 377, # NRC BB
+                    379, 380, 381, 382, 383, 384, 385, 386, # NRC MB
+                    ]
+                    
+DEFAULT_REST_FNUMBERS = [120, 121, # GALEX
+                         218, 219, 270, 271,  # FUV
+                         153, 154, 155, # UBV
+                         161, 162, 163, # 2MASS JHK
+                         414, 415, 416, # ugi Antwi-Danso 2022
+                         ]
+
+DEFAULT_SCALE_KWARGS = dict(order=0, sys_err=0.02,
+                            nspline=31, scale_disp=1.3, vel_width=100
+                            )
+
+DLA_KWS = dict(wrange=[1180., 1350], slope_filters=[270,271], 
+               filter_fraction_threshold=0.1, RES=None, make_plot=False)
+               
+def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fnumbers=DEFAULT_REST_FNUMBERS, scale_kwargs=DEFAULT_SCALE_KWARGS, dla_kwargs=DLA_KWS):
+    """
+    Integrate a spectrum through a list of filter bandpasses
+    
+    Parameters
+    ----------
+    file : str
+        Spectrum filename
+    
+    z : float
+        Redshift
+    
+    RES : `eazy.filters.FilterFile`
+        Container of filter bandpasses
+    
+    fnumbers : list
+        List of observed-frame ``f_numbers``
+    
+    rest_fnumbers : list
+        List of rest-frame ``f_numbers`` to evaluate at ``z``
+    
+    scale_kwargs : dict, None
+        If provided, initialize the spectrum by first passing through
+        `msaexp.spectrum.calc_uncertainty_scale`
+    
+    Returns
+    -------
+    fdict : dict
+        "horizontal" dictionary with keys for each separate filter
+    
+    sed : `~astropy.table.Table`
+        "vertical" table of the integrated flux densities
+    
+    """
+    import eazy.filters
+    
+    global SCALE_UNCERTAINTY
+    SCALE_UNCERTAINTY = 1.
+    
+    if RES is None:
+        RES = eazy.filters.FilterFile(path=None)
+    
+    if scale_kwargs is not None:
+        # Initialize spectrum rescaling uncertainties
+        spec, escl, _sys_err, _ = calc_uncertainty_scale(file, z=z, **scale_kwargs)
+        spec['escale'] *= escl
+        set_spec_sys_err(spec, sys_err=_sys_err)
+        
+    else:
+        # Just read the catalog
+        spec = utils.read_catalog(file)
+    
+    rows = []
+    fdict = {'file':file, 'z':z}
+    
+    # Observed-frame filters
+    for fn in fnumbers:
+        obs_flux = integrate_spectrum_filter(spec, RES[fn], z=0)
+        rows.append([RES[fn].name, RES[fn].pivot/1.e4, fn, 0] + list(obs_flux))
+
+        for c, v in zip(['valid', 'frac', 'flux', 'err', 'full_err'], obs_flux):
+            fdict[f'obs_{fn}_{c}'] = v
+    
+    for fn in rest_fnumbers:
+        rest_flux = integrate_spectrum_filter(spec, RES[fn], z=z)
+        rows.append([RES[fn].name, RES[fn].pivot*(1+z)/1.e4, fn, z] + list(rest_flux))
+
+        for c, v in zip(['valid', 'frac', 'flux', 'err', 'full_err'], rest_flux):
+            fdict[f'rest_{fn}_{c}'] = v
+
+    sed = utils.GTable(names=['name', 'pivot','f_number', 'z',
+                              'valid', 'frac', 'flux', 'err', 'full_err'],
+                       rows=rows)
+    
+    if dla_kwargs is not None:
+        dla_kwargs['RES'] = RES
+        dla_kwargs['z'] = z
+        
+        _ = measure_dla_eqw(spec, **dla_kwargs)
+        beta, beta_unc, ndla, dla_value, dla_unc, _fig = _
+        
+        fdict['beta'] = beta
+        fdict['beta_unc'] = beta_unc
+        fdict['ndla'] = ndla
+        fdict['dla_value'] = dla_value
+        fdict['dla_unc'] = dla_unc
+    
+    return fdict, sed
+
+
+def integrate_spectrum_filter(spec, filt, z=0, filter_fraction_threshold=0.1):
+    """Integrate spectrum data through a filter bandpass
+
+    Parameters
+    ----------
+    spec : `~astropy.table.Table`
+        Spectrum data with columns ``wave`` (microns), ``flux`` and ``err``
+        [``full_err``] (fnu) and ``valid``
+
+    filt : `~eazy.filters.FilterDefinition`
+        Filter bandpass object
+
+    z : float
+        Redshift
+
+    filter_fraction_threshold : float
+        Minimum allowed ``filter_fraction``, i.e. for filters that overlap with the 
+        observed spectrum
+        
+    Returns
+    -------
+    npix : int
+        Number of "valid" pixels
+        
+    filter_fraction : float
+        Fraction of the integrated bandpass that falls on valid spectral wavelength bins
+
+    filter_flux : float
+        Integrated flux density, in units of ``spec['flux']``
+
+    filter_err : float
+        Propagated uncertainty from ``spec['err']``
+
+    filter_full_err : float
+        Propagated uncertianty from ``spec['full_err']``, if available.  Returns -1 if 
+        not available.
+    
+    """
+    
+    # Interpolate bandpass to wavelength grid
+    filter_int = np.interp(spec['wave'],
+                           filt.wave/1.e4*(1+z),
+                           filt.throughput,
+                           left=0.,
+                           right=0.)
+
+    if 'valid' in spec.colnames:
+        valid = spec['valid']
+    else:
+        valid = (spec['err'] > 0) & np.isfinite(spec['err'] + spec['flux'])
+
+    if valid.sum() < 2:
+        return (valid.sum(), 0., 0., -1., -1.)
+
+    # Full filter normalization
+    filt_norm_full = np.trapz(filt.throughput/(filt.wave/1.e4), filt.wave/1.e4)
+
+    # Normalization of filter sampled by the spectrum
+    filt_norm = np.trapz( (filter_int / spec['wave'])[valid], spec['wave'][valid])
+
+    filter_fraction = filt_norm / filt_norm_full
+
+    if filter_fraction < filter_fraction_threshold:
+        return (valid.sum(), filter_fraction, 0., -1., -1.)
+        
+    ## Integrals
+
+    # Trapezoid rule steps
+    trapz_dx = utils.trapz_dx(spec['wave'])
+
+    # Integrated flux
+    fnu_flux = ( (filter_int / filt_norm * trapz_dx *
+                  spec['flux'] / spec['wave'])[valid] ).sum()
+
+    # Propagated uncertainty
+    fnu_err = np.sqrt(( (filter_int / filt_norm * trapz_dx *
+                         spec['err'] / spec['wave'])[valid]**2 ).sum())
+
+    if 'full_err' in spec.colnames:
+        fnu_full_err = np.sqrt(( (filter_int / filt_norm * trapz_dx *
+                                  spec['full_err'] / spec['wave'])[valid]**2 ).sum())
+    else:
+        fnu_full_err = -1.
+        
+    return valid.sum(), filter_fraction, fnu_flux, fnu_err, fnu_full_err
+
+
+def measure_dla_eqw(spec, z=0, wrange=[1180., 1350], slope_filters=[270,271], filter_fraction_threshold=0.1, RES=None, make_plot=False):
+    """
+    Measure DLA parameter (Heintz+24)
+    
+    >>> DLA = Integrate(1 - Fobs/Fcont, dlam)
+    
+    over a limited range near Ly-alpha
+    
+    Parameters
+    ----------
+    spec : `~astropy.table.Table`
+        Spectrum data with columns ``wave`` (microns), ``flux`` and ``err``
+        [``full_err``] (fnu) and ``valid``
+
+    z : float
+        Redshift
+    
+    wrange : (float, float)
+        Wavelength range for the integral
+    
+    slope_filters : (int, int)
+        Filter indices of two filters to define the UV slope.  The default values of
+        ``slope_filters = (270, 271)`` fits the UV slope beta between rest-frame 
+        1400--1700 Angstroms.
+    
+    RES : `eazy.filters.FilterFile`
+        Container of filter bandpasses
+
+    make_plot : bool
+        Make a diagnostic plot
+    
+    Returns
+    -------
+    beta : float
+        Derived UV slope ``flam = lam**beta``
+    
+    beta_unc : float
+        Propagated uncertainty on ``beta``
+    
+    ndla : int
+        Number of wavelength pixels satisfying ``wrange``
+    
+    dla_value : float
+        Integrated DLA parameter
+    
+    dla_unc : float
+        Propagated uncertainty on ``dla_value``
+
+    fig : `~matplotlib.Figure`, None
+        Figure if ``make_plot=True``.
+    
+    """
+    if RES is None:
+        RES = eazy.filters.FilterFile(path=None)
+    
+    f0 = integrate_spectrum_filter(spec,
+                                   RES[slope_filters[0]],
+                                   z=z,
+                                   filter_fraction_threshold=filter_fraction_threshold)
+    
+    w0 = RES[slope_filters[0]].pivot / 1.e4
+    
+    f1 = integrate_spectrum_filter(spec,
+                                   RES[slope_filters[1]],
+                                   z=z,
+                                   filter_fraction_threshold=filter_fraction_threshold)
+    
+    w1 = RES[slope_filters[1]].pivot / 1.e4
+    
+    if (f0[1] < filter_fraction_threshold) | (f1[1] < filter_fraction_threshold):
+        return (-1, -1, 0, -1, -1, None)
+    
+    wrest = spec['wave'] / (1+z)
+    xdla = (wrest >= wrange[0]/1.e4) & (wrest <= wrange[1]/1.e4) & (spec['valid'])
+    if xdla.sum() <= 2:
+        return (-1, -1, xdla.sum(), -1, -1, None)
+        
+    x = wrest[xdla]
+    
+    # UV slope and uncertainty
+    beta = (np.log(f0[2]) - 2*np.log(w0) - np.log(f1[2]) + 2*np.log(w1)) / np.log(w0/w1)
+    vbeta = ((f0[4]/f0[2])**2 + (f1[4]/f1[2])**2) / np.abs(np.log(w0/w1))
+    beta_unc = np.sqrt(vbeta)
+    
+    # Continuum fit and uncertainty
+    log_fuv = (beta+2) * np.log(wrest/w0) + np.log(f0[2])
+    vlog_fuv = (vbeta) * np.abs(np.log(wrest/w0)) + (f0[4]/f0[2])**2
+    
+    fcont = np.exp(log_fuv)[xdla]
+    econt = (np.sqrt(vlog_fuv)*np.exp(log_fuv))[xdla]
+    
+    dx = utils.trapz_dx(x)*1.e4
+    sx = spec[xdla]
+    ydata = 1 - sx['flux'] / fcont
+    vdata = (sx['flux'] / fcont)**2 * ( (sx['full_err'] / sx['flux'])**2 +
+                                         (econt/fcont)**2 )
+    
+    # Do trapezoid rule integration and propagation of uncertainty
+    dla_value = (ydata*dx).sum()
+    dla_unc = np.sqrt((vdata*dx).sum())
+    
+    if make_plot:
+        fig, ax = plt.subplots(1, 1, figsize=(8,5))
+        
+        ax.errorbar(wrest, spec['flux'], spec['full_err'], color='k',
+                    marker='.',
+                    linestyle='None',
+                    alpha=0.5)
+        ax.step(wrest, spec['flux'], where='mid', color='k', alpha=0.5)
+        
+        ax.errorbar(w0, f0[2], f0[4], color='r', zorder=100, marker='o', alpha=0.4)
+        ax.errorbar(w1, f1[2], f1[4], color='r', zorder=100, marker='o', alpha=0.4)
+        
+        if dla_value < 0:
+            y0 = 2*np.interp(0.1216, x, fcont)
+        else:
+            y0 = 0.
+            
+        ax.vlines(0.1216 + np.array([-1,1])*dla_value/2.e4, y0,
+                  np.interp(0.1216, x, fcont), color='magenta',
+                  label=f'EW_DLA = {dla_value:.1f} ({dla_unc:.1f})')
+
+        ax.fill_between(x, fcont-econt, fcont+econt, color='red', alpha=0.1)
+        ax.plot(x, fcont, color='r', alpha=0.2,
+                label=f'Beta = {beta:5.2f} ({beta_unc:.2f})')
+
+        ymax = np.maximum(f0[2]+f0[4], f1[2]+f1[4])*2
+        ax.set_ylim(-0.1*ymax, ymax)
+        ax.set_xlim(0.11, w1 + 0.2*(w1-w0))
+        ax.grid()
+        ax.set_xlabel(r'$\lambda_\mathrm{rest}$')
+        ax.set_ylabel(r'$f_\nu$')
+        leg = ax.legend(loc='upper right')
+        leg.set_title(f"{spec.meta['SRCNAME']}\nz = {z:.4f}")
+        # ax.set_title(spec.meta['FILENAME'])
+        
+        fig.tight_layout(pad=1)
+    else:
+        fig = None
+        
+    return beta, beta_unc, xdla.sum(), dla_value, dla_unc, fig
+
