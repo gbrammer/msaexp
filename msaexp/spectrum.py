@@ -2282,8 +2282,9 @@ DEFAULT_FNUMBERS = [239, 205, # F814W, F160W
                     ]
                     
 DEFAULT_REST_FNUMBERS = [120, 121, # GALEX
-                         218, 219, 270, 271,  # FUV
+                         218, 219, 270, 271, 272, 274, # FUV
                          153, 154, 155, # UBV
+                         156, 157, 158, 159, 160, # SDSS ugriz
                          161, 162, 163, # 2MASS JHK
                          414, 415, 416, # ugi Antwi-Danso 2022
                          ]
@@ -2292,7 +2293,7 @@ DEFAULT_SCALE_KWARGS = dict(order=0, sys_err=0.02,
                             nspline=31, scale_disp=1.3, vel_width=100
                             )
 
-DLA_KWS = dict(wrange=[1180., 1350], slope_filters=[270,271], 
+DLA_KWS = dict(wrange=[1180., 1350], slope_filters=[270, 271],
                filter_fraction_threshold=0.1, RES=None, make_plot=False)
                
 def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fnumbers=DEFAULT_REST_FNUMBERS, scale_kwargs=DEFAULT_SCALE_KWARGS, dla_kwargs=DLA_KWS):
