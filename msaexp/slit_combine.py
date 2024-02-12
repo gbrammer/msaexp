@@ -28,6 +28,8 @@ SIGMA_PRIOR = 0.6
 
 HUBER_ALPHA = 7
 
+MAX_VALID_DATA = 100
+
 def split_visit_groups(files, join=[0, 3], gratings=['PRISM']):
     """
     Compute groupings of `SlitModel` files based on exposure, visit, detector, slit_id
@@ -512,6 +514,7 @@ class SlitGroup():
         Read science, variance and trace data from the ``slits`` SlitModel files
         """
         import scipy.ndimage as nd
+        global MAX_VALID_DATA
         
         slits = self.slits
         
@@ -620,7 +623,7 @@ class SlitGroup():
             
             self.bad_exposures = bad_exposures
             
-            bad |= sci > 100
+            bad |= sci > MAX_VALID_DATA
             bad |= sci == 0
             
         # bad |= np.abs(yslit > 8)
@@ -1797,6 +1800,18 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
         
         if trace_with_ypos in ['auto']:
             trace_with_ypos = ('b' not in target) & (not get_background)
+        
+        if root.startswith('glazebrook-v'):
+            utils.log_comment(utils.LOGFILE, '  ! Auto glazebrook', verbose=True)
+            trace_from_yoffset = True
+            
+        elif 'maseda' in root:
+            utils.log_comment(utils.LOGFILE, '  ! Auto maseda', verbose=True)
+            trace_from_yoffset = True
+        
+        elif 'smacs0723-ero-v' in root:
+            utils.log_comment(utils.LOGFILE, '  ! Auto SMACS0723', verbose=True)
+            trace_from_yoffset = True
             
         obj = SlitGroup(groups[g], g, position_key=position_key,
                         diffs=diffs, #(True & (~isinstance(id, str))),
@@ -1859,18 +1874,18 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                 continue
         
         ind = None
-        if root.startswith('glazebrook-v'):
-            # flipped??
-            utils.log_comment(utils.LOGFILE, '  ! Flip glazebrook', verbose=True)
-            ind = [0,2,1]
-        
-        elif 'maseda' in root:
-            utils.log_comment(utils.LOGFILE, '  ! Flip maseda', verbose=True)
-            ind = [0,2,1]
-        
-        elif 'smacs0723-ero-v' in root:
-            utils.log_comment(utils.LOGFILE, '  ! Flip SMACS0723', verbose=True)
-            ind = [0,2,1]
+        # if root.startswith('glazebrook-v'):
+        #     # flipped??
+        #     utils.log_comment(utils.LOGFILE, '  ! Flip glazebrook', verbose=True)
+        #     ind = [0,2,1]
+        #
+        # elif 'maseda' in root:
+        #     utils.log_comment(utils.LOGFILE, '  ! Flip maseda', verbose=True)
+        #     ind = [0,2,1]
+        #
+        # elif 'smacs0723-ero-v' in root:
+        #     utils.log_comment(utils.LOGFILE, '  ! Flip SMACS0723', verbose=True)
+        #     ind = [0,2,1]
             
         if ind is not None:
             obj.xslit = obj.xslit[ind,:]
