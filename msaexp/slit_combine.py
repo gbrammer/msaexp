@@ -1751,7 +1751,7 @@ def average_path_loss(spec, header=None):
         spec['path_corr'].description = 'Average path loss correction already applied'
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='bkg', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='bkg', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
     """
     Spectral combination workflow
     """
@@ -1818,6 +1818,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                         stuck_min_sn=stuck_min_sn,
                         # stuck_min_sn=-100,
                         undo_barshadow=undo_barshadow,
+                        undo_pathloss=undo_pathloss,
                         # sky_arrays=(wsky, fsky),
                         trace_with_ypos=trace_with_ypos,
                         trace_from_yoffset=trace_from_yoffset,
