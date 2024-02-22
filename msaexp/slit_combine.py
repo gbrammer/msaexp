@@ -30,7 +30,7 @@ HUBER_ALPHA = 7
 
 MAX_VALID_DATA = 100
 
-def split_visit_groups(files, join=[0, 3], gratings=['PRISM']):
+def split_visit_groups(files, join=[0, 3], gratings=['PRISM'], split_uncover=True, verbose=True):
     """
     Compute groupings of `SlitModel` files based on exposure, visit, detector, slit_id
     
@@ -73,7 +73,15 @@ def split_visit_groups(files, join=[0, 3], gratings=['PRISM']):
     un = utils.Unique(keys, verbose=False)
     groups = {}
     for k in np.unique(keys):
-        groups[k] = np.array(all_files)[un[k]].tolist()
+        if split_uncover & (un[k].sum() % 6 == 0) & ('jw02561' in files[0]):
+            msg = 'split_visit_groups: split UNCOVER sub groups '
+            msg += f'{k} N={un[k].sum()}'
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            ksp = k.split('-')
+            groups[ksp[0] + 'a-' + ksp[1]] = np.array(all_files)[un[k]][0::2].tolist()
+            groups[ksp[0] + 'b-' + ksp[1]] = np.array(all_files)[un[k]][1::2].tolist()
+        else:
+            groups[k] = np.array(all_files)[un[k]].tolist()
     
     return groups
 
@@ -156,7 +164,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     
     psf_fw = msautils.get_nirspec_psf_fwhm(wave)
     
-    sig2 = np.sqrt((psf_fw/2.35)**2 + sigma**2)
+    sig2 = np.sqrt((psf_fw / 2.35)**2 + sigma**2)
     
     ppos = PRF(yslit[ipos,:].flatten(), 0., sig2[ipos,:].flatten(), dx=1)
     ppos = ppos.reshape(yslit[ipos,:].shape)
@@ -193,8 +201,8 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     # Remove any masked pixels
     pmask = mask.sum(axis=0) == mask.shape[0]
     
-    snum = np.nansum(((diff-bkg)*pdiff/vdiff*pmask).reshape(sh), axis=0)
-    sden = np.nansum((pdiff**2/vdiff*pmask).reshape(sh), axis=0)
+    snum = np.nansum(((diff - bkg) * pdiff / vdiff * pmask).reshape(sh), axis=0)
+    sden = np.nansum((pdiff**2 / vdiff * pmask).reshape(sh), axis=0)
     smod = snum/sden*pdiff.reshape(sh)
     
     chi = (diff - (smod + bkg).flatten())/np.sqrt(vdiff)
@@ -279,6 +287,9 @@ class SlitGroup():
         reference_exposure : int, 'auto'
             Define a reference nod position.  If ``'auto'``, then will use the exposure
             in the middle of the nod offset distribution
+        
+        pad_border : int
+            Grow mask around edges of 2D cutouts
         
         Attributes
         ----------
@@ -869,17 +880,18 @@ class SlitGroup():
         """
         ipos = self.unp[exp]
 
-        pos  = np.nansum(self.data[ipos,:], axis=0) / np.nansum(self.mask[ipos,:],
-                         axis=0)
-        vpos = np.nansum(self.var[ipos,:], axis=0) / np.nansum(self.mask[ipos,:],
-                         axis=0)
+        pos  = (np.nansum(self.data[ipos,:], axis=0) /
+                np.nansum(self.mask[ipos,:], axis=0))
+
+        vpos = (np.nansum(self.var[ipos,:], axis=0) /
+                np.nansum(self.mask[ipos,:], axis=0)**2)
 
         if self.diffs:
             ineg = ~self.unp[exp]
-            neg  = (np.nansum(self.data[ineg,:], axis=0) / 
+            neg  = (np.nansum(self.data[ineg,:], axis=0) /
                     np.nansum(self.bkg_mask[ineg,:], axis=0))
-            vneg = (np.nansum(self.var[ineg,:], axis=0) / 
-                    np.nansum(self.bkg_mask[ineg,:], axis=0))
+            vneg = (np.nansum(self.var[ineg,:], axis=0) /
+                    np.nansum(self.bkg_mask[ineg,:], axis=0)**2)
         else:
             ineg = np.zeros(self.N, dtype=bool)
             neg = np.zeros_like(pos)
@@ -1439,7 +1451,7 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     pmask = (mnum/den > 0)
     snum = np.nansum((num/den)*mnum*pmask, axis=0)
     sden = np.nansum(mnum**2/den*pmask, axis=0)
-    
+        
     smsk = nd.binary_erosion(np.isfinite(snum/sden), iterations=2)*1.
     smsk[smsk < 1] = np.nan
     snum *= smsk
@@ -1671,22 +1683,22 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
             else:
                 # print('WithOUT PRF pathloss')
                 prf_i = 1.
-                
+
             arrays = pseudo_drizzle(xsl, ysl,
                                     diff[ok] / prf_i,
                                     wht[ok] * prf_i**2,
                                     xbin, ybin,
                                     arrays=arrays, **dkws)
-    
+
             if fit is not None:
                 mod = (fit[exp]['smod']/(fit[exp]['snum']/fit[exp]['sden'])).flatten()
-    
+
                 parrays = pseudo_drizzle(xsl, ysl,
                                          mod[ok],
                                          wht[ok] * prf_i**2,
                                          xbin, ybin,
                                          arrays=parrays, **dkws)
-    
+
             else:
                 mnum = num*0.
 
@@ -1751,9 +1763,65 @@ def average_path_loss(spec, header=None):
         spec['path_corr'].description = 'Average path loss correction already applied'
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='bkg', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], split_uncover=True, stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='trace', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
     """
     Spectral combination workflow
+    
+    Parameters
+    ----------
+    target : str
+        Target name.  If no ``files`` specified, will search for the 2D slit cutout
+        files with names like ``*phot*{target}.fits``
+    
+    root : str
+        Output file rootname
+    
+    path_to_files : str
+        Directory path containing the ``phot`` files
+    
+    files : list, None
+        Optional explicit list of ``phot`` files to combine
+    
+    do_gratings : list
+        Gratings to consider
+    
+    join : list
+        Indices of ``files[i].split('[._]') + GRATING`` to join as a group
+    
+    split_uncover : bool
+        Split sub-pixel dithers from UNCOVER when defining exposure groups
+    
+    stuck_min_sn, pad_border, position_key: 
+        See `msaexp.slit_combine.SlitGroup`
+    
+    sort_by_sn : bool
+        Try to process groups in order of decreasing S/N, i.e., to derive the
+        trace offsets in the prism where it will be best defined and propagate to 
+        other groups with the gratings
+    
+    mask_cross_dispersion : None or [int, int]
+        Optional cross-dispersion masking, e.g., for stuck-closed shutters or multiple
+        sources within a slitlet.  The specified values are integer indices of the 
+        pixel range to mask.  See ``cross_dispersion_mask_type``.
+    
+    cross_dispersion_mask_type : str
+        Type of cross dispersion mask to apply.  With ``'trace'``, the masked pixels 
+        are calculated relative to the (expected) center of the trace, and, e.g.,
+        ``mask_cross_dispersion = [5,100]`` will mask all pixels 5 pixels "above" the 
+        center of the trace (100 is an arbitrarily large number to include all pixels).
+        The mask will shift along with the nod offsets.
+    
+        With ``fixed``, the mask indices are relative to the trace *in the first
+        exposure* and won't shift with the nod offsets. So
+        ``mask_cross_dispersion = [-3,3]`` would mask roughly the central shutter in 
+        all exposures that will contain the source in some exposures and not in others.
+        This can be used to try to mitigate some stuck-closed shutters, though the
+        how effective it is is still under investigation.
+       
+    trace_from_yoffset, reference_exposure :
+        See `msaexp.slit_combine.SlitGroup`
+    
+    
     """
     global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR
     
@@ -1776,7 +1844,8 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                       f'{root}   target: {target}   Files: {len(files)}',
                       verbose=True)
     
-    groups = split_visit_groups(files, join=join, gratings=do_gratings)
+    groups = split_visit_groups(files, join=join, gratings=do_gratings,
+                                split_uncover=split_uncover)
     
     xobj = {}
     for ig, g in enumerate(groups):
@@ -1826,8 +1895,6 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                         reference_exposure=reference_exposure,
                         pad_border=pad_border,
                        )
-        
-        # print('xxx', position_key, np.array(obj.info[position_key]), len(obj.files), len(obj.slits), obj.sh)
         
         if 0:
             if (obj.grating not in do_gratings) | (obj.sh[1] < 83*2**(obj.grating not in ['PRISM'])):
