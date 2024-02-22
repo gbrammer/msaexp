@@ -49,3 +49,6 @@ Browsable table: https://s3.amazonaws.com/msaexp-nirspec/extractions/nirspec_gra
 
 Full catalog: https://s3.amazonaws.com/msaexp-nirspec/extractions/nirspec_graded_v0.ecsv
 
+Updated and additional extractions (2024-Feb): https://s3.amazonaws.com/msaexp-nirspec/extractions/nirspec_graded_v2.html
+(Though see https://github.com/gbrammer/msaexp/pull/54)
+
