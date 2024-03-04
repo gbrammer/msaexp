@@ -2293,10 +2293,12 @@ DEFAULT_SCALE_KWARGS = dict(order=0, sys_err=0.02,
                             nspline=31, scale_disp=1.3, vel_width=100
                             )
 
-DLA_KWS = dict(wrange=[1180., 1350], slope_filters=[270, 271],
-               filter_fraction_threshold=0.1, RES=None, make_plot=False)
+BETA_KWS = dict(wrange=((0.14, 0.1860), (0.1955, 0.2580)),
+                ref_wave=0.1550,
+                dla_wrange=(0.1180, 0.1350),
+                fit_restart=False, make_plot=False)
                
-def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fnumbers=DEFAULT_REST_FNUMBERS, scale_kwargs=DEFAULT_SCALE_KWARGS, dla_kwargs=DLA_KWS):
+def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fnumbers=DEFAULT_REST_FNUMBERS, scale_kwargs=DEFAULT_SCALE_KWARGS, beta_kwargs=BETA_KWS):
     """
     Integrate a spectrum through a list of filter bandpasses
     
@@ -2321,6 +2323,9 @@ def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fn
         If provided, initialize the spectrum by first passing through
         `msaexp.spectrum.calc_uncertainty_scale`
     
+    beta_kwargs : dict
+        Compute rest-frame UV slope and DLA equivalent width with 
+        `msaexp.spectrum.measure_uv_slope`
     Returns
     -------
     fdict : dict
@@ -2347,9 +2352,11 @@ def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fn
     else:
         # Just read the catalog
         spec = utils.read_catalog(file)
-    
+        if 'escale' not in spec.colnames:
+            spec['escale'] = 1.
+            
     rows = []
-    fdict = {'file':file, 'z':z}
+    fdict = {'file':file, 'z':z, 'escale': np.nanmedian(spec['escale'])}
     
     # Observed-frame filters
     for fn in fnumbers:
@@ -2370,18 +2377,24 @@ def do_integrate_filters(file, z=0, RES=None, fnumbers=DEFAULT_FNUMBERS, rest_fn
                               'valid', 'frac', 'flux', 'err', 'full_err'],
                        rows=rows)
     
-    if dla_kwargs is not None:
-        dla_kwargs['RES'] = RES
-        dla_kwargs['z'] = z
+    if beta_kwargs is not None:
+        bet = measure_uv_slope(spec, z, **beta_kwargs)
+        # beta, beta_unc, ndla, dla_value, dla_unc, _fig = _
         
-        _ = measure_dla_eqw(spec, **dla_kwargs)
-        beta, beta_unc, ndla, dla_value, dla_unc, _fig = _
+        cov = bet.pop('beta_cov')
         
-        fdict['beta'] = beta
-        fdict['beta_unc'] = beta_unc
-        fdict['ndla'] = ndla
-        fdict['dla_value'] = dla_value
-        fdict['dla_unc'] = dla_unc
+        for k in bet:
+            fdict[k] = bet[k]
+        
+        for i in range(2):
+            for j in range(2):
+                fdict[f'beta_cov_{i}{j}'] = cov[i][j]
+                
+        # fdict['dla_beta'] = beta
+        # fdict['dla_beta_unc'] = beta_unc
+        # fdict['ndla'] = ndla
+        # fdict['dla_value'] = dla_value
+        # fdict['dla_unc'] = dla_unc
     
     return fdict, sed
 
@@ -2473,13 +2486,152 @@ def integrate_spectrum_filter(spec, filt, z=0, filter_fraction_threshold=0.1):
     return valid.sum(), filter_fraction, fnu_flux, fnu_err, fnu_full_err
 
 
-def measure_dla_eqw(spec, z=0, wrange=[1180., 1350], slope_filters=[270,271], filter_fraction_threshold=0.1, RES=None, make_plot=False):
+# def measure_dla_eqw(spec, z=0, wrange=[1180., 1350], slope_filters=[270,271], filter_fraction_threshold=0.1, RES=None, make_plot=False):
+#     """
+#     Measure DLA parameter (Heintz+24)
+#
+#     >>> DLA = Integrate(1 - Fobs/Fcont, dlam)
+#
+#     over a limited range near Ly-alpha
+#
+#     Parameters
+#     ----------
+#     spec : `~astropy.table.Table`
+#         Spectrum data with columns ``wave`` (microns), ``flux`` and ``err``
+#         [``full_err``] (fnu) and ``valid``
+#
+#     z : float
+#         Redshift
+#
+#     wrange : (float, float)
+#         Wavelength range for the integral
+#
+#     slope_filters : (int, int)
+#         Filter indices of two filters to define the UV slope.  The default values of
+#         ``slope_filters = (270, 271)`` fits the UV slope beta between rest-frame
+#         1400--1700 Angstroms.
+#
+#     RES : `eazy.filters.FilterFile`
+#         Container of filter bandpasses
+#
+#     make_plot : bool
+#         Make a diagnostic plot
+#
+#     Returns
+#     -------
+#     beta : float
+#         Derived UV slope ``flam = lam**beta``
+#
+#     beta_unc : float
+#         Propagated uncertainty on ``beta``
+#
+#     ndla : int
+#         Number of wavelength pixels satisfying ``wrange``
+#
+#     dla_value : float
+#         Integrated DLA parameter
+#
+#     dla_unc : float
+#         Propagated uncertainty on ``dla_value``
+#
+#     fig : `~matplotlib.Figure`, None
+#         Figure if ``make_plot=True``.
+#
+#     """
+#     if RES is None:
+#         RES = eazy.filters.FilterFile(path=None)
+#
+#     f0 = integrate_spectrum_filter(spec,
+#                                    RES[slope_filters[0]],
+#                                    z=z,
+#                                    filter_fraction_threshold=filter_fraction_threshold)
+#
+#     w0 = RES[slope_filters[0]].pivot / 1.e4
+#
+#     f1 = integrate_spectrum_filter(spec,
+#                                    RES[slope_filters[1]],
+#                                    z=z,
+#                                    filter_fraction_threshold=filter_fraction_threshold)
+#
+#     w1 = RES[slope_filters[1]].pivot / 1.e4
+#
+#     if (f0[1] < filter_fraction_threshold) | (f1[1] < filter_fraction_threshold):
+#         return (-1, -1, 0, -1, -1, None)
+#
+#     wrest = spec['wave'] / (1+z)
+#     xdla = (wrest >= wrange[0]/1.e4) & (wrest <= wrange[1]/1.e4) & (spec['valid'])
+#     if xdla.sum() <= 2:
+#         return (-1, -1, xdla.sum(), -1, -1, None)
+#
+#     x = wrest[xdla]
+#
+#     # UV slope and uncertainty
+#     beta = (np.log(f0[2]) - 2*np.log(w0) - np.log(f1[2]) + 2*np.log(w1)) / np.log(w0/w1)
+#     vbeta = ((f0[4]/f0[2])**2 + (f1[4]/f1[2])**2) / np.abs(np.log(w0/w1))
+#     beta_unc = np.sqrt(vbeta)
+#
+#     # Continuum fit and uncertainty
+#     log_fuv = (beta+2) * np.log(wrest/w0) + np.log(f0[2])
+#     vlog_fuv = (vbeta) * np.abs(np.log(wrest/w0)) + (f0[4]/f0[2])**2
+#
+#     fcont = np.exp(log_fuv)[xdla]
+#     econt = (np.sqrt(vlog_fuv)*np.exp(log_fuv))[xdla]
+#
+#     dx = utils.trapz_dx(x)*1.e4
+#     sx = spec[xdla]
+#     ydata = 1 - sx['flux'] / fcont
+#     vdata = (sx['flux'] / fcont)**2 * ( (sx['full_err'] / sx['flux'])**2 +
+#                                          (econt/fcont)**2 )
+#
+#     # Do trapezoid rule integration and propagation of uncertainty
+#     dla_value = (ydata*dx).sum()
+#     dla_unc = np.sqrt((vdata*dx).sum())
+#
+#     if make_plot:
+#         fig, ax = plt.subplots(1, 1, figsize=(7,4))
+#
+#         ax.errorbar(wrest, spec['flux'], spec['full_err'], color='k',
+#                     marker='.',
+#                     linestyle='None',
+#                     alpha=0.5)
+#         ax.step(wrest, spec['flux'], where='mid', color='k', alpha=0.5)
+#
+#         ax.errorbar(w0, f0[2], f0[4], color='r', zorder=100, marker='o', alpha=0.4)
+#         ax.errorbar(w1, f1[2], f1[4], color='r', zorder=100, marker='o', alpha=0.4)
+#
+#         if dla_value < 0:
+#             y0 = 2*np.interp(0.1216, x, fcont)
+#         else:
+#             y0 = 0.
+#
+#         ax.vlines(0.1216 + np.array([-1,1])*dla_value/2.e4, y0,
+#                   np.interp(0.1216, x, fcont), color='magenta',
+#                   label=f'EW_DLA = {dla_value:.1f} ({dla_unc:.1f})')
+#
+#         ax.fill_between(x, fcont-econt, fcont+econt, color='red', alpha=0.1)
+#         ax.plot(x, fcont, color='r', alpha=0.2,
+#                 label=f'Beta = {beta:5.2f} ({beta_unc:.2f})')
+#
+#         ymax = np.maximum(f0[2]+f0[4], f1[2]+f1[4])*2
+#         ax.set_ylim(-0.1*ymax, ymax)
+#         ax.set_xlim(0.11, w1 + 0.2*(w1-w0))
+#         ax.grid()
+#         ax.set_xlabel(r'$\lambda_\mathrm{rest}$')
+#         ax.set_ylabel(r'$f_\nu$')
+#         leg = ax.legend(loc='upper right')
+#         leg.set_title(f"{spec.meta['SRCNAME']}\nz = {z:.4f}")
+#         # ax.set_title(spec.meta['FILENAME'])
+#
+#         fig.tight_layout(pad=1)
+#     else:
+#         fig = None
+#
+#     return beta, beta_unc, xdla.sum(), dla_value, dla_unc, fig
+
+
+def measure_uv_slope(spec, z, wrange=((0.14, 0.1860), (0.1955, 0.2580)), ref_wave=0.1550, dla_wrange=(0.1180, 0.1350), fit_restart=False, make_plot=False):
     """
-    Measure DLA parameter (Heintz+24)
-    
-    >>> DLA = Integrate(1 - Fobs/Fcont, dlam)
-    
-    over a limited range near Ly-alpha
+    Measure UV slope beta and absolute magnitude
     
     Parameters
     ----------
@@ -2490,128 +2642,261 @@ def measure_dla_eqw(spec, z=0, wrange=[1180., 1350], slope_filters=[270,271], fi
     z : float
         Redshift
     
-    wrange : (float, float)
-        Wavelength range for the integral
+    wrange : list of (float, float)
+        Wavelength ranges for the UV slope fit, microns. The default excludes potential 
+        contribution from CIII]1909.
     
-    slope_filters : (int, int)
-        Filter indices of two filters to define the UV slope.  The default values of
-        ``slope_filters = (270, 271)`` fits the UV slope beta between rest-frame 
-        1400--1700 Angstroms.
-    
-    RES : `eazy.filters.FilterFile`
-        Container of filter bandpasses
+    ref_wave : float
+        Reference wavelength, microns
 
+    dla_wrange : (float, float)
+        Wavelength range for the DLA equivalent width parameter, which is the integral 
+        of ``(1 - Fobs/Fcont)`` near Ly-alpha where ``Fobs`` is the observed spectrum
+        and ``Fcont`` is the continuum spectrum extrapolated with the derived UV slope
+        beta
+
+    fit_restart : bool
+        Redo fit after perturbing initial parameters.  Seems to help make the fit
+        covariance more reasonable in some cases.
+    
     make_plot : bool
         Make a diagnostic plot
     
     Returns
     -------
-    beta : float
-        Derived UV slope ``flam = lam**beta``
-    
-    beta_unc : float
-        Propagated uncertainty on ``beta``
-    
-    ndla : int
-        Number of wavelength pixels satisfying ``wrange``
-    
-    dla_value : float
-        Integrated DLA parameter
-    
-    dla_unc : float
-        Propagated uncertainty on ``dla_value``
-
-    fig : `~matplotlib.Figure`, None
-        Figure if ``make_plot=True``.
-    
+    res : dict
+        - ``beta`` = Derived UV slope ``flam = lam**beta``
+        - ``beta_ref_flux`` = Flux density at redshifted ``ref_wave``
+        - ``beta_cov`` = 2x2 covariance matrix for the fit for ``beta``, ``flux_ref``
+        - ``beta_npix`` = Number of wavelength pixels satisfying ``wrange``
+        - ``beta_wlo, beta_whi`` = Minimum and maximum of rest-frame wavelengths within
+           ``wrange``
+        - ``beta_nmad`` = NMAD of the power-law beta fit
+        - ``dla_npix`` = Number of spectral bins for DLA parameter estimate
+        - ``dla_value`` = DLA equivalent width, Angstroms
+        - ``dla_unc`` = Uncertainty on the DLA EQW
+        - ``fig`` = `matplotlib.Figure` object if requested with make_plot
     """
-    if RES is None:
-        RES = eazy.filters.FilterFile(path=None)
+    from scipy.optimize import minimize
+
+    # Force fit beta slope to linear flux densities
+    fit_linear = True
     
-    f0 = integrate_spectrum_filter(spec,
-                                   RES[slope_filters[0]],
-                                   z=z,
-                                   filter_fraction_threshold=filter_fraction_threshold)
+    wrest = spec['wave']/(1+z)
+
+    blim = np.zeros(len(spec), dtype=bool)
+    for wr in wrange:
+        blim |= (wrest >= wr[0]) & (wrest <= wr[1])
+
+    pos = spec['flux'].data > 0
+    blim &= spec['flux'] > -spec['full_err']
+
+    npix = blim.sum()
     
-    w0 = RES[slope_filters[0]].pivot / 1.e4
+    if npix < 3:
+        beta = mag_uv = wlo = whi = np.nan
+        cov = np.ones((2,2))*np.nan
+        res = {'beta':np.nan,
+               'beta_ref_flux':np.nan, 
+               'beta_cov':np.ones((2,2))*np.nan,
+               'beta_npix':npix,
+               'beta_wlo':np.nan, 'beta_wlo':np.nan}
+        return res
+
+    wlo = wrest[blim].min()
+    whi = wrest[blim].max()
+    scale_err = 1.
+
+    # Objective function for beta fit
+    def _objfun_beta(theta, x, flux, err, ret):
+        m = theta[1]*x**(theta[0]+2)
+        if ret == 1:
+            return m
+            
+        chi2 = ((flux - m)**2/err**2).sum()
+        # Penalize very blue
+        if theta[0] < -2:
+            chi2 += (theta[0] - -2)**2/2/1.**2
+            
+        return chi2
+
+    # Guess from log-linear fit mag = beta * ln(wave) + mag(ref_wave)
+    lnf = 23.9 - 2.5*np.log10((spec['flux'].data))
+    lnfe = (2.5/np.log(10)*spec['full_err']/scale_err/spec['flux']).data
+    x = np.log(wrest/ref_wave)
+    A = np.array([-x, x**0])
+    AxT = (A/lnfe).T
+    c = np.linalg.lstsq(AxT[blim & pos,:], (lnf/lnfe)[blim & pos], rcond=None)
     
-    f1 = integrate_spectrum_filter(spec,
-                                   RES[slope_filters[1]],
-                                   z=z,
-                                   filter_fraction_threshold=filter_fraction_threshold)
+    beta = c[0][0] - 2
+    ref_flux = 10**(-0.4*(c[0][1]-23.9))
+    theta = c[0]
     
-    w1 = RES[slope_filters[1]].pivot / 1.e4
+    np.random.seed(fit_restart*1)
     
-    if (f0[1] < filter_fraction_threshold) | (f1[1] < filter_fraction_threshold):
-        return (-1, -1, 0, -1, -1, None)
+    nmad = -1
     
-    wrest = spec['wave'] / (1+z)
-    xdla = (wrest >= wrange[0]/1.e4) & (wrest <= wrange[1]/1.e4) & (spec['valid'])
-    if xdla.sum() <= 2:
-        return (-1, -1, xdla.sum(), -1, -1, None)
+    if fit_linear:
+        # Now fit in linear flux densities
+        x0 = np.array([c[0][0]-2, 10**(-0.4*(c[0][1]-23.9))])
+        xargs = (wrest[blim]/ref_wave,
+                 spec['flux'].data[blim],
+                 spec['full_err'].data[blim])
         
-    x = wrest[xdla]
+        _x = minimize(_objfun_beta, x0=x0, method='bfgs', args=(*xargs, 0))
+        
+        best_model = _objfun_beta(_x.x, *xargs, 1)
+        resid = (xargs[1] - best_model)/xargs[2]
+        
+        # Rescale  Uncertainties
+        nmad = utils.nmad(resid)
+        
+        if fit_restart > 0:
+            # Restart
+            print('nmad: ', nmad, fit_restart)
+            xargs = (wrest[blim]/ref_wave,
+                     spec['flux'].data[blim], 
+                     spec['full_err'].data[blim]*nmad)
+            
+            if fit_restart > 1:
+                _x = minimize(_objfun_beta,
+                          x0=_x.x + np.random.normal(size=2)*np.array([0.1, 0.03]),
+                          method='bfgs', args=(*xargs, 0)) #, tol=1.e-6)
+            else:
+                _x = minimize(_objfun_beta,
+                          x0=x0,
+                          method='bfgs', args=(*xargs, 0)) #, tol=1.e-6)
+
+        theta = _x.x
+        beta, ref_flux = theta
+
+        # Covariance is hess_inv from the BFGS optimization
+        cov = _x.hess_inv
+    else:
+        cov = utils.safe_invert(np.dot(AxT[blim & pos,:].T, AxT[blim & pos,:]))
+        nmad = -1
     
-    # UV slope and uncertainty
-    beta = (np.log(f0[2]) - 2*np.log(w0) - np.log(f1[2]) + 2*np.log(w1)) / np.log(w0/w1)
-    vbeta = ((f0[4]/f0[2])**2 + (f1[4]/f1[2])**2) / np.abs(np.log(w0/w1))
-    beta_unc = np.sqrt(vbeta)
-    
-    # Continuum fit and uncertainty
-    log_fuv = (beta+2) * np.log(wrest/w0) + np.log(f0[2])
-    vlog_fuv = (vbeta) * np.abs(np.log(wrest/w0)) + (f0[4]/f0[2])**2
-    
-    fcont = np.exp(log_fuv)[xdla]
-    econt = (np.sqrt(vlog_fuv)*np.exp(log_fuv))[xdla]
-    
-    dx = utils.trapz_dx(x)*1.e4
-    sx = spec[xdla]
-    ydata = 1 - sx['flux'] / fcont
-    vdata = (sx['flux'] / fcont)**2 * ( (sx['full_err'] / sx['flux'])**2 +
-                                         (econt/fcont)**2 )
-    
-    # Do trapezoid rule integration and propagation of uncertainty
-    dla_value = (ydata*dx).sum()
-    dla_unc = np.sqrt((vdata*dx).sum())
-    
+    res = {'beta': beta,
+           'beta_ref_flux':ref_flux,
+           'beta_cov':cov,
+           'beta_npix':npix,
+           'beta_wlo':wlo,
+           'beta_whi':whi,
+           'beta_nmad':nmad,
+           }
+
+    # DLA equivalent width parameter
+    if fit_linear:
+
+        xdla = (wrest >= dla_wrange[0]) & (wrest <= dla_wrange[1]) & (spec['valid'])
+        res['dla_npix'] = xdla.sum()
+
+        if xdla.sum() < 3:
+            dla_value = -1
+            dla_unc = -1
+
+            res['dla_value'] = -1
+            res['dla_unc'] = -1
+        else:
+            draws = np.random.multivariate_normal(theta, cov, 1000)
+            xargs = (wrest[xdla]/ref_wave,
+                     spec['flux'].data[xdla], 
+                     spec['full_err'].data[xdla])
+
+            dla_continuum = _objfun_beta(_x.x, *xargs, 1)
+            dla_draws = np.array([_objfun_beta(xi, *xargs, 1) for xi in draws]).T
+            dla_continuum_unc = np.std(dla_draws, axis=1)
+
+            dx = utils.trapz_dx(wrest[xdla])*1.e4
+            sx = spec[xdla]
+            ydata = 1 - sx['flux'] / dla_continuum
+            vdata = ((sx['flux'] / dla_continuum)**2 * 
+                     ( (sx['full_err'] / sx['flux'])**2 +
+                                                 (dla_continuum_unc/dla_continuum)**2 ))
+
+            # Do trapezoid rule integration and propagation of uncertainty
+            dla_value = (ydata*dx).sum()
+            dla_unc = np.sqrt((vdata*dx**2).sum())
+
+            res['dla_value'] = dla_value
+            res['dla_unc'] = dla_unc
+    else:
+        res['dla_npix'] = 0
+        res['dla_value'] = dla_value = -1
+        res['dla_unc'] = dla_unc = -1
+
+    # Make a diagnostic plot
     if make_plot:
-        fig, ax = plt.subplots(1, 1, figsize=(8,5))
-        
-        ax.errorbar(wrest, spec['flux'], spec['full_err'], color='k',
+        fig, ax = plt.subplots(1,1,figsize=(7,4))
+        draws = np.random.multivariate_normal(theta, cov, 100)
+
+        if fit_linear:
+            xargs = (wrest/ref_wave, spec['flux'].data, spec['full_err'].data)
+            best_model = _objfun_beta(_x.x, *xargs, 1)
+            flux_draws = np.array([_objfun_beta(xi, *xargs, 1) for xi in draws]).T
+
+            mag = 23.9 - 2.5*np.log10(ref_flux)
+            emag = 2.5/np.log(10)*np.sqrt(cov[1][1])/ref_flux
+
+        else:
+            best_model = 10**(-0.4*(A.T.dot(c[0]) - 23.9))
+            flux_draws = 10**(-0.4*(A.T.dot(draws.T) - 23.9))
+
+            mag = c[0][1]
+            emag = np.sqrt(cov[1][1])
+
+        ok = ~blim
+        ax.errorbar(wrest[ok], spec['flux'][ok], spec['full_err'][ok]/scale_err,
+                    color='k',
                     marker='.',
                     linestyle='None',
                     alpha=0.5)
-        ax.step(wrest, spec['flux'], where='mid', color='k', alpha=0.5)
         
-        ax.errorbar(w0, f0[2], f0[4], color='r', zorder=100, marker='o', alpha=0.4)
-        ax.errorbar(w1, f1[2], f1[4], color='r', zorder=100, marker='o', alpha=0.4)
-        
+        ax.errorbar(wrest[blim], spec['flux'][blim], spec['full_err'][blim]/scale_err,
+                    color='magenta',
+                    marker='o',
+                    linestyle='None',
+                    alpha=0.5)
+
+        # plot labels
+        lab = r'$\beta = bbv \pm bbe$'
+        lab += '\n' + r'$m_{rr} = mmv \pm mme$'
+
+        lab = lab.replace('bbv', f'{beta:5.2f}')
+        lab = lab.replace('bbe', f'{np.sqrt(cov[0][0]):5.2f}')
+        lab = lab.replace('rr', f'{ref_wave*1e4:.0f}')
+        lab = lab.replace('mmv', f'{mag:5.2f}')
+        lab = lab.replace('mme', f'{emag:4.2f}')
+
+        ax.plot(wrest, best_model, color='tomato', label=lab)
+
         if dla_value < 0:
-            y0 = 2*np.interp(0.1216, x, fcont)
+            y0 = 2*np.interp(0.1216, wrest[xdla], dla_continuum)
         else:
             y0 = 0.
-            
+
         ax.vlines(0.1216 + np.array([-1,1])*dla_value/2.e4, y0,
-                  np.interp(0.1216, x, fcont), color='magenta',
+                  np.interp(0.1216, wrest[xdla], dla_continuum), color='orange',
                   label=f'EW_DLA = {dla_value:.1f} ({dla_unc:.1f})')
 
-        ax.fill_between(x, fcont-econt, fcont+econt, color='red', alpha=0.1)
-        ax.plot(x, fcont, color='r', alpha=0.2,
-                label=f'Beta = {beta:5.2f} ({beta_unc:.2f})')
+        _ = ax.plot(wrest, flux_draws, color='pink', alpha=0.1)
+        ax.set_xlim(0.1, 0.39)
+        ymax = flux_draws[blim,:].max() + spec['full_err'][blim].max()
+        for wr in wrange:
+            ax.vlines(wr, -0.5*ymax, 10*ymax, color='purple', lw=3, alpha=0.4)
 
-        ymax = np.maximum(f0[2]+f0[4], f1[2]+f1[4])*2
-        ax.set_ylim(-0.1*ymax, ymax)
-        ax.set_xlim(0.11, w1 + 0.2*(w1-w0))
-        ax.grid()
-        ax.set_xlabel(r'$\lambda_\mathrm{rest}$')
-        ax.set_ylabel(r'$f_\nu$')
         leg = ax.legend(loc='upper right')
         leg.set_title(f"{spec.meta['SRCNAME']}\nz = {z:.4f}")
-        # ax.set_title(spec.meta['FILENAME'])
-        
-        fig.tight_layout(pad=1)
-    else:
-        fig = None
-        
-    return beta, beta_unc, xdla.sum(), dla_value, dla_unc, fig
 
+        ax.set_ylim(-0.5*ymax, 2*ymax)
+
+        ax.errorbar(wrest[xdla], dla_continuum, dla_continuum_unc, color='orange')
+
+        ax.set_xlabel(r'$\lambda_\mathrm{rest}$')
+        ax.set_ylabel(r'$f_\nu$')
+        ax.grid()
+
+        fig.tight_layout(pad=1)
+        res['fig'] = fig
+
+    return res
