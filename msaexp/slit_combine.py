@@ -1763,6 +1763,31 @@ def average_path_loss(spec, header=None):
         spec['path_corr'].description = 'Average path loss correction already applied'
 
 
+def get_spectrum_path_loss(spec):
+    """
+    Calculate the path loss correction that was applied to a spectrum
+
+    Parameters
+    ----------
+    spec : Table
+        Table with metadata including ``SRCXPOS`` (intra-shutter position, arcsec)
+        and ``SIGMA`` (source gaussian width, pixels) keywords
+    
+    Returns
+    -------
+    path_corr : array-like
+        Wavelength-dependent path loss correction
+    
+    """
+    path_loss = slit_prf_fraction(spec['wave'].astype(float),
+                                  sigma=spec.meta['SIGMA'],
+                                  x_pos=spec.meta['SRCXPOS'],
+                                  slit_width=0.2,
+                                  pixel_scale=PIX_SCALE,
+                                  verbose=False)
+    return 1./path_loss
+
+
 def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], split_uncover=True, stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='trace', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
     """
     Spectral combination workflow
