@@ -1768,7 +1768,7 @@ def set_spec_sys_err(spec, sys_err=0.02):
     spec.meta['sys_err'] = sys_err
 
 
-def read_spectrum(inp, spectrum_extension='SPEC1D', sys_err=0.02, err_mask=(10,0.5), err_median_filter=[11, 0.8], **kwargs):
+def read_spectrum(inp, spectrum_extension='SPEC1D', sys_err=0.02, err_mask=(5,0.5), err_median_filter=[11, 0.2], **kwargs):
     """
     Read a spectrum and apply flux and/or uncertainty scaling
     
