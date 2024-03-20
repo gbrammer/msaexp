@@ -39,7 +39,7 @@ DETECTORS = ['nrs1','nrs2']
 __all__ = ["query_program", "exposure_groups", "NirspecPipeline"]
 
 
-def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d'], product='rate', extra_filters=[]):
+def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATINGS, filters=FILTERS, extensions=['s2d'], product='rate', extra_filters=[], levels=['2','2a','2b']):
     """
     Query and download MSA exposures for a given program from MAST
     
@@ -72,6 +72,9 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
     extra_filters : list
         Additional query filters from, e.g., `mastquery.jwst.make_query_filter`
     
+    levels : list
+        List of ``productLevel`` entries to include in the query
+    
     Returns
     -------
     res : `~astropy.table.Table`
@@ -83,7 +86,7 @@ def query_program(prog=2767, download=True, detectors=DETECTORS, gratings=GRATIN
     
     query = []
     query += mastquery.jwst.make_query_filter('productLevel', 
-                                                values=['2','2a','2b'])
+                                                values=levels)
     query += mastquery.jwst.make_program_filter([prog])
     
     if detectors is not None:
