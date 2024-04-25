@@ -1,5 +1,9 @@
 import os
 import glob
+import inspect
+import time
+
+import yaml
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -2017,7 +2021,7 @@ def get_spectrum_path_loss(spec):
     return 1./path_loss
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], split_uncover=True, stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='trace', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_xpos=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], split_uncover=True, stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='trace', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_xpos=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True, **kwargs):
     """
     Spectral combination workflow
     
@@ -2078,9 +2082,17 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
     
     """
     global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR
+    frame = inspect.currentframe()
     
+    # Log function arguments
     utils.LOGFILE = f'{root}_{target}.extract.log'
-    
+    args = utils.log_function_arguments(utils.LOGFILE, frame,
+                                        'slit_combine.extract_spectra')
+    if isinstance(args, dict):
+        with open(f'{root}_{target}.extract.yml', 'w') as fp:
+            fp.write(f'# {time.ctime()}\n# {os.getcwd()}\n')
+            yaml.dump(args, stream=fp, Dumper=yaml.Dumper)
+        
     if files is None:
         files = glob.glob(os.path.join(path_to_files, f'*phot*{target}.fits'))
         

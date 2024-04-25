@@ -641,8 +641,11 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         h['BUNIT'] = 'micron'
         hdul.append(pyfits.ImageHDU(data=waves, header=h))
         
+        # output_key = f'{output}-{id}-{gr}'
+        output_key = f'{output}_{gr}_{id}' # match spec.fits
+        
         if output is not None:
-            hdul.writeto(f'{output}-{id}-{gr}.d2d.fits', overwrite=True,
+            hdul.writeto(f'{output_key}.d2d.fits', overwrite=True,
                          output_verify='fix')
         
         if imshow_kws['vmax'] is None:
@@ -658,7 +661,7 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
         if (show_drizzled):
             dfig = show_drizzled_product(hdul, imshow_kws=imshow_kws)
             if output is not None:
-                dfig.savefig(f'{output}-{id}-{gr}.d2d.png')
+                dfig.savefig(f'{output_key}.d2d.png')
         else:
             dfig = None
 
@@ -667,7 +670,7 @@ def drizzle_slitlets(id, wildcard='*phot', files=None, output=None, verbose=True
                                        imshow_kws=imshow_kws,
                                        with_background=(show_slits > 1))
             if output is not None:
-                sfig.savefig(f'{output}-{id}-{gr}.slit2d.png')
+                sfig.savefig(f'{output_key}.slit2d.png')
         else:
             sfig = None
         

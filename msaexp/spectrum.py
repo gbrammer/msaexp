@@ -5,6 +5,13 @@ Fits, etc. to extracted spectra
 import os
 import time
 import warnings
+import inspect
+import yaml
+def float_representer(dumper, value):
+    text = '{0:.6f}'.format(value)
+    return dumper.represent_scalar(u'tag:yaml.org,2002:float', text)
+
+yaml.add_representer(float, float_representer)
 
 import numpy as np
 
@@ -791,22 +798,37 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
         Fit metadata
     
     """
-    import yaml
-    def float_representer(dumper, value):
-        text = '{0:.6f}'.format(value)
-        return dumper.represent_scalar(u'tag:yaml.org,2002:float', text)
-    
-    yaml.add_representer(float, float_representer)
-    
-    #is_prism |= ('clear' in file)
-    spec = read_spectrum(file, sys_err=sys_err, **kwargs)
-    is_prism |= spec.grating in ['prism']
+    frame = inspect.currentframe()
     
     if 'spec.fits' in file:
         froot = file.split('.spec.fits')[0]
     else:
         froot = file.split('.fits')[0]
     
+    # Log function arguments
+    utils.LOGFILE = f'{froot}.zfit.log'
+    if os.path.exists(utils.LOGFILE):
+        os.remove(utils.LOGFILE)
+    
+    # Log arguments
+    args = utils.log_function_arguments(utils.LOGFILE, frame,
+                                        'spectrum.fit_redshift',
+                                        ignore=['eazy_templates'])
+    if isinstance(args, dict):
+        with open(f'{froot}.zfit.call.yml', 'w') as fp:
+            fp.write(f'# {time.ctime()}\n# {os.getcwd()}\n')
+            if eazy_templates is not None:
+                for i, t in enumerate(eazy_templates):
+                    msg = f'# eazy_templates[{i}] = \"{t.__str__()}\"'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=False)
+                    fp.write(msg+'\n')
+            
+            yaml.dump(args, stream=fp, Dumper=yaml.Dumper)
+    
+    #is_prism |= ('clear' in file)
+    spec = read_spectrum(file, sys_err=sys_err, **kwargs)
+    is_prism |= spec.grating in ['prism']
+        
     if zstep is None:
         if (is_prism):
             step0 = 0.002
@@ -1689,10 +1711,10 @@ def calc_uncertainty_scale(file=None, data=None, order=0, initial_mask=(0.2, 5),
             _resid = (spec['flux'] - _model)[ok] / _full_err[ok]
             chi2 = np.log(utils.nmad(_resid))**2
         
-        if verbose > 1:
-            cstr = ' '.join([f'{ci:6.2f}' for ci in c])
-            print(f"{cstr}: {chi2:.6e}")
-    
+        cstr = ' '.join([f'{ci:6.2f}' for ci in c])
+        msg = f"{cstr}: {chi2:.6e}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=(verbose > 1))
+
         return chi2
 
     if fit_sys_err:
@@ -2064,11 +2086,11 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
         N = len(templates)
         covar = np.eye(N, N)
     
-    print(f'\n# line flux err\n# flux x 10^-20 erg/s/cm2')
+    msg = f'\n# line flux err\n# flux x 10^-20 erg/s/cm2\n'
     if label is not None:
-        print(f'# {label}')
+        msg += f'# {label}\n'
     
-    print(f'# z = {z:.5f}\n# {time.ctime()}')
+    msg += f'# z = {z:.5f}\n# {time.ctime()}\n'
     
     cdict = {}
     eqwidth = {}
@@ -2093,9 +2115,10 @@ def plot_spectrum(inp='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
             
             eqwidth[t] = [float(eqwi)]
             
-            print(f'{t:>20}   {coeffs[i]:8.1f} ± {covard[i]:8.1f} (EW={eqwi:9.1f})')
-            
-            
+            msg += f'{t:>20}   {coeffs[i]:8.1f} ± {covard[i]:8.1f} (EW={eqwi:9.1f})\n'
+    
+    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+    
     if 'srcra' not in spec.meta:
         spec.meta['srcra'] = 0.0
         spec.meta['srcdec'] = 0.0
