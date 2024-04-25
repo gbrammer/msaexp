@@ -30,6 +30,11 @@ HUBER_ALPHA = 7
 
 MAX_VALID_DATA = 100
 
+WING_SIGMA = 2.0
+SCALE_FWHM = 1.0
+DEFAULT_WINGS = None
+WINGS_XOFF = None
+
 def split_visit_groups(files, join=[0, 3], gratings=['PRISM'], split_uncover=True, verbose=True):
     """
     Compute groupings of `SlitModel` files based on exposure, visit, detector, slit_id
@@ -116,9 +121,10 @@ def slit_prf_fraction(wave, sigma=0., x_pos=0., slit_width=0.2, pixel_scale=PIX_
     
     """
     from msaexp.resample_numba import pixel_integrated_gaussian_numba as PRF
+    global SCALE_FWHM
     
     # Tabulated PSF FWHM, pix
-    psf_fw = msautils.get_nirspec_psf_fwhm(wave)
+    psf_fw = msautils.get_nirspec_psf_fwhm(wave)*SCALE_FWHM
     
     pix_center = np.zeros_like(wave)
     pix_mu = x_pos * slit_width / pixel_scale
@@ -145,16 +151,51 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
     global CENTER_WIDTH
     global CENTER_PRIOR
     global SIGMA_PRIOR
+    global SCALE_FWHM
+    global WING_SIGMA
+    global DEFAULT_WINGS
+    global WINGS_XOFF
     
     EVAL_COUNT += 1
-
+    
+    wings = DEFAULT_WINGS
+        
     if fix_sigma > 0:
         sigma = fix_sigma/10.
         i0 = 0
+    elif WINGS_XOFF is not None:
+        sigma = theta[0]/10.
+        wings = theta[1:len(WINGS_XOFF)+1]
+        i0 = len(WINGS_XOFF)+1
+        
+    elif len(theta) == 4:
+        sigma = WING_SIGMA/10
+        wings = np.append(theta[:2], 0) #[theta[1], 3.]
+        i0 = 2
+        if DEFAULT_WINGS is not None:
+            sigma = theta[0]/10.
+            wings = DEFAULT_WINGS
+            i0 = 1
+            
+    elif len(theta) >= 5:
+        sigma = WING_SIGMA/10
+        wings = theta[:3]
+        i0 = 3
+
+        if DEFAULT_WINGS is not None:
+            sigma = theta[0]/10.
+            wings = DEFAULT_WINGS
+            i0 = 1
+
     else:
+        if DEFAULT_WINGS is not None:
+            sigma = theta[0]/10.
+            wings = DEFAULT_WINGS
+
         sigma = theta[0]/10.
         i0 = 1
-        
+    
+    # print('xxx', sigma, wings, theta[i0:])
     yslit = yslit0*1.
     for j in np.where(ipos)[0]:
         xj = (xpix[j,:] - sh[1]/2) / sh[1]
@@ -162,15 +203,39 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
         _ytr += np.polyval(base_coeffs, xj)
         yslit[j,:] = ypix[j,:] - _ytr
     
-    psf_fw = msautils.get_nirspec_psf_fwhm(wave)
+    psf_fw = msautils.get_nirspec_psf_fwhm(wave)*SCALE_FWHM
     
+    # sig2 = np.sqrt((psf_fw / 2.35)**2 + sigma**2)
     sig2 = np.sqrt((psf_fw / 2.35)**2 + sigma**2)
     
+    # wings = (0.05, 2)
+    
     ppos = PRF(yslit[ipos,:].flatten(), 0., sig2[ipos,:].flatten(), dx=1)
+    if WINGS_XOFF is not None:
+        for wx, wn in zip(WINGS_XOFF, wings):
+            ppos += wn*PRF(yslit[ipos,:].flatten() + wx,
+                             0.,
+                             sig2[ipos,:].flatten(), dx=1)
+            
+    elif wings is not None:
+        ppos += wings[0]*PRF(yslit[ipos,:].flatten() + wings[2],
+                             0.,
+                             sig2[ipos,:].flatten()*wings[1], dx=1)
+        
     ppos = ppos.reshape(yslit[ipos,:].shape)
         
     if ineg.sum() > 0:
         pneg = PRF(yslit[ineg,:].flatten(), 0., sig2[ineg,:].flatten(), dx=1)
+        if WINGS_XOFF is not None:
+            for wx, wn in zip(WINGS_XOFF, wings):
+                pneg += wn*PRF(yslit[ineg,:].flatten() + wx,
+                                 0.,
+                                 sig2[ineg,:].flatten(), dx=1)
+        elif wings is not None:
+            pneg += wings[0]*PRF(yslit[ineg,:].flatten() + wings[2],
+                                 0.,
+                                 sig2[ineg,:].flatten()*wings[1], dx=1)
+        
         pneg = pneg.reshape(yslit[ineg,:].shape)
     else:
         pneg = np.zeros_like(ppos)
@@ -244,7 +309,7 @@ def objfun_prof_trace(theta, base_coeffs, wave, xpix, ypix, yslit0, diff, vdiff,
 
 
 class SlitGroup():
-    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_ypos=True, trace_from_yoffset=False, nod_offset=0.5/PIX_SCALE, pad_border=2, reference_exposure='auto'):
+    def __init__(self, files, name, position_key='position_number', diffs=True, stuck_min_sn=0.9, undo_barshadow=False, sky_arrays=None, undo_pathloss=True, trace_with_xpos=False, trace_with_ypos=True, trace_from_yoffset=False, nod_offset=0.5/PIX_SCALE, pad_border=2, reference_exposure='auto'):
         """
         Container for a list of 2D extracted ``SlitModel`` files
         
@@ -347,6 +412,7 @@ class SlitGroup():
         self.slits = []
         keep_files = []
         
+        self.trace_with_xpos = trace_with_xpos
         self.trace_with_ypos = trace_with_ypos
         self.trace_from_yoffset = trace_from_yoffset
         
@@ -435,20 +501,25 @@ class SlitGroup():
         """
         Expected relative y pixel location of the source
         """
-        sl = self.slits[0]
-        #return(sl.source_ypos)
-        wcs = sl.meta.wcs
-        s2d = wcs.get_transform('slit_frame', 'detector')
-    
-        central_wave = np.nanmedian(self.wtr[0,:])*1.e-6
-        # central_wave = 4.e-6
+        for j, slit in enumerate(self.slits[:1]):
 
-        x0 = s2d(0.0, 0, central_wave)
-        x1 = s2d(0.0, 1, central_wave)
-        dpdy = np.sqrt(((np.array(x0)-np.array(x1))**2).sum())
+            _res = msautils.slit_trace_center(slit, 
+                                  with_source_ypos=False,
+                                  index_offset=0.0)
     
-        source_ypix = 0.5 - sl.source_ypos*dpdy
-        return source_ypix
+            _xtr, _ytr0, _wtr0, slit_ra, slit_dec = _res
+
+            _res = msautils.slit_trace_center(slit, 
+                                  with_source_ypos=True,
+                                  index_offset=0.0)
+    
+            _xtr, _ytr1, _wtr1, slit_ra, slit_dec = _res
+
+            # plt.plot(_ytr1 - _ytr0)
+            trace_yoffset = np.nanmedian(_ytr1 - _ytr0)
+            break
+        
+        return trace_yoffset
 
 
     @property
@@ -489,6 +560,83 @@ class SlitGroup():
         return y0 - np.median(y0)
     
     
+    def slit_metadata(self):
+        """
+        Make a table of the slit metadata
+        """
+        rows = []
+        pscale = self.slit_pixel_scale*1
+        source_ypixel_position = self.source_ypixel_position*1
+        
+        for i, sl in enumerate(self.slits):
+            row = {'filename': sl.meta.filename,
+                   'nx': self.sh[1],
+                   'ny': self.sh[0],
+                   }
+                   
+            for j in range(3):
+                row[f'trace_c{j}'] = self.base_coeffs[i][j]
+            
+            row['slit_pixel_scale'] = pscale
+            row['source_ypixel_position'] = source_ypixel_position
+            
+            for att in ['is_extended',
+                        'source_id',
+                        'source_name',
+                        'source_ra',
+                        'source_dec',
+                        'source_type',
+                        'source_xpos',
+                        'source_ypos',
+                        'shutter_state',
+                        'shutter_id',
+                        'slitlet_id',
+                        'slit_ymin',
+                        'slit_ymax',
+                        'quadrant',
+                        'xcen',
+                        'ycen',
+                        'xstart',
+                        'xsize',
+                        'ystart',
+                        'ysize',
+                        ]:
+                row[att] = sl.__getattr__(att)
+                
+            inst = sl.meta.instrument.instance
+            for k in ['detector',
+                      'grating',
+                      'filter',
+                      'msa_metadata_file',
+                      'msa_configuration_id',
+                      'msa_metadata_id'
+                     ]:
+                row[k] = inst[k]
+            
+            _exp = sl.meta.exposure.instance
+            for k in ['exposure_time',
+                      'nframes',
+                      'ngroups',
+                      'nints',
+                      'readpatt',
+                      'start_time',
+                     ]:
+                row[k] = _exp[k]
+            
+            _point = sl.meta.pointing.instance
+            for k in _point:
+                row[k] = _point[k]
+
+            _dith = sl.meta.dither.instance
+            for k in _dith:
+                row[k] = _dith[k]
+            
+            rows.append(row)
+        
+        tab = utils.GTable(rows)
+        return tab
+
+
     def parse_metadata(self, verbose=True):
         """
         Generate the `info` metadata attribute from the `slits` data
@@ -582,7 +730,8 @@ class SlitGroup():
             #     d2w = wcs.get_transform('detector', 'world')
             #     slit.meta.wcs = wcs
 
-            _res = msautils.slit_trace_center(slit, 
+            _res = msautils.slit_trace_center(slit,
+                                  with_source_xpos=False,
                                   with_source_ypos=self.trace_with_ypos,
                                   index_offset=0.0)
             
@@ -591,16 +740,47 @@ class SlitGroup():
             xslit.append(xp[sl].flatten())
             yslit.append((yp[sl] - (_ytr[sl[1]])).flatten())
             ypix.append(yp[sl].flatten())
+                        
+            wcs = slit.meta.wcs
+            d2w = wcs.get_transform('detector', 'world')
+            # _wave = slit.wavelength*1
+            _ypi, _xpi = np.indices(slit.data.shape)
+            _ras, _des, _wave = d2w(_xpi, _ypi)
             
+            if self.trace_with_xpos & (slit.source_xpos is not None):
+                _xres = msautils.slit_trace_center(slit,
+                                  with_source_xpos=True,
+                                  with_source_ypos=self.trace_with_ypos,
+                                  index_offset=0.0)
+                _xwtr = _xres[2]
+                dwave = (_xwtr - _wtr)
+                dwave_step = np.nanpercentile(dwave / np.gradient(_wtr), [5, 50, 95])
+                
+                # Signs of source_xpos and dwave_step should be opposite
+                sign = slit.source_xpos*dwave_step[0]
+                if sign > 0:
+                    dwave *= -1
+                    dwave_step *= -1
+                    _note = '(flipped)'
+                else:
+                    _note = ''
+                
+                msg = ('  Apply wavelength correction for '
+                       f'source_xpos = {slit.source_xpos:.2f}: {_note}'
+                       f'dx = {dwave_step[0]:.2f} to {dwave_step[2]:.2f} pixels')
+                
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                
+                _wave += np.interp(_xpi, _xtr, dwave)
+                _wtr = _xwtr
+                
             xtr.append(_xtr[sl[1]])
             ytr.append(_ytr[sl[1]])
             wtr.append(_wtr[sl[1]])
-            
-            wcs = slit.meta.wcs
-            d2w = wcs.get_transform('detector', 'world')
-            _ypi, _xpi = np.indices(slit.data.shape)
-            _ras, _des, _wave = d2w(_xpi, _ypi)
+                
             wave.append(_wave[sl].flatten())
+            
+            # wtr_i = [np.interp(0., ysl[:,j], _wave[:,j]) for j in range(self.sh[1])]
             
             for k in attr_keys:
                 self.info[k][j] = getattr(slit, k)
@@ -1389,6 +1569,8 @@ def obj_header(obj):
     header['NCOMBINE'] = 0
     header['BUNIT'] = 'microJansky'
     
+    header['WAVECORR'] = (obj.trace_with_xpos, 'Wavelength corrected for xpos')
+    
     for i, sl in enumerate(obj.slits):
         fbase = sl.meta.filename.split('_nrs')[0]
         if fbase in files:
@@ -1440,7 +1622,7 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     import astropy.units as u
     
     _ = drizzle_grating_group(xobj, grating_keys, **drizzle_kws)
-    wave_bin, xbin, ybin, header, arrays, parrays = _
+    wave_bin, xbin, ybin, header, slit_info, arrays, parrays = _
     
     num, den = arrays
     mnum, mden = parrays
@@ -1535,6 +1717,8 @@ def combine_grating_group(xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_k
     hdul.append(pyfits.ImageHDU(data=wht2d, header=header, name='WHT'))
     hdul.append(pyfits.ImageHDU(data=profile2d, header=header, name='PROFILE'))
     hdul.append(pyfits.BinTableHDU(data=prof, name='PROF1D'))
+    if slit_info is not None:
+        hdul.append(pyfits.BinTableHDU(data=slit_info, name='SLITS'))
     
     for k in hdul['SCI'].header:
         if k not in hdul['SPEC1D'].header:
@@ -1589,6 +1773,9 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
     header : `~astropy.io.fits.Header`
         Header for the combination
     
+    slit_info : `~astropy.table.Table` 
+        Table of slit metadata
+    
     arrays : (array-like, array-like)
         2D `sci2d` and `wht2d` arrays of the resampled data
     
@@ -1599,6 +1786,7 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
     
     import scipy.stats
     import astropy.io.fits as pyfits
+    import astropy.table
     
     obj = xobj[grating_keys[0]]['obj']
 
@@ -1619,6 +1807,7 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
     parrays = None
 
     header = None
+    slit_info = []
     
     for k in grating_keys:
         obj = xobj[k]['obj']
@@ -1680,6 +1869,15 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
                                           slit_width=0.2,
                                           pixel_scale=PIX_SCALE,
                                           verbose=False)
+
+                prf_0 = slit_prf_fraction(obj.wave[ip,:][ok],
+                                          sigma=0.01,
+                                          x_pos=0.0,
+                                          slit_width=0.2,
+                                          pixel_scale=PIX_SCALE,
+                                          verbose=False)
+                prf_i /= prf_0
+            
             else:
                 # print('WithOUT PRF pathloss')
                 prf_i = 1.
@@ -1701,8 +1899,21 @@ def drizzle_grating_group(xobj, grating_keys, step=1, with_pathloss=True, wave_s
 
             else:
                 mnum = num*0.
-
-    return wave_bin, xbin, ybin, header, arrays, parrays
+        
+        _meta = obj.slit_metadata()
+        _meta_nlines = len(_meta)
+        for c in list(_meta.colnames):
+            if np.isin(_meta[c], [None]).sum() == _meta_nlines:
+                _meta.remove_column(c)
+        
+        slit_info.append(_meta)
+    
+    if len(slit_info) > 0:
+        slit_info = astropy.table.vstack(slit_info)
+    else:
+        slit_info = None
+        
+    return wave_bin, xbin, ybin, header, slit_info, arrays, parrays
 
 FIT_PARAMS_SN_KWARGS = dict(sn_percentile=80,
                             sigma_threshold=5,
@@ -1754,7 +1965,16 @@ def average_path_loss(spec, header=None):
                                       slit_width=0.2,
                                       pixel_scale=PIX_SCALE,
                                       verbose=False)
-            prf_list.append(prf_i)
+            
+            # Path loss is relative to a centered point source
+            prf_0 = slit_prf_fraction(spec['wave'].astype(float),
+                                      sigma=0.01,
+                                      x_pos=0.0,
+                                      slit_width=0.2,
+                                      pixel_scale=PIX_SCALE,
+                                      verbose=False)
+            
+            prf_list.append(prf_i / prf_0)
     
     if len(prf_list) > 0:
         print('Added path_corr column to spec')
@@ -1785,10 +2005,19 @@ def get_spectrum_path_loss(spec):
                                   slit_width=0.2,
                                   pixel_scale=PIX_SCALE,
                                   verbose=False)
+
+    path_loss_ref = slit_prf_fraction(spec['wave'].astype(float),
+                                  sigma=0.01,
+                                  x_pos=0.0,
+                                  slit_width=0.2,
+                                  pixel_scale=PIX_SCALE,
+                                  verbose=False)
+                                  
+    path_loss /= path_loss_ref
     return 1./path_loss
 
 
-def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], split_uncover=True, stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='trace', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
+def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', files=None, do_gratings=['PRISM','G395H','G395M','G235M','G140M'], join=[0,3,5], split_uncover=True, stuck_min_sn=0.0, pad_border=2, sort_by_sn=False, position_key='y_index', mask_cross_dispersion=None, cross_dispersion_mask_type='trace', trace_from_yoffset=False, reference_exposure='auto', trace_niter=4, offset_degree=0, degree_kwargs={}, recenter_all=False, nod_offset=None, initial_sigma=7, fit_type=1, initial_theta=None, fix_params=False, input_fix_sigma=None, fit_params_kwargs=None, diffs=True, undo_pathloss=True, undo_barshadow=False, drizzle_kws=DRIZZLE_KWS, get_xobj=False, trace_with_xpos=False, trace_with_ypos='auto', get_background=False, make_2d_plots=True):
     """
     Spectral combination workflow
     
@@ -1914,6 +2143,7 @@ def extract_spectra(target='1208_5110240', root='nirspec', path_to_files='./', f
                         undo_barshadow=undo_barshadow,
                         undo_pathloss=undo_pathloss,
                         # sky_arrays=(wsky, fsky),
+                        trace_with_xpos=trace_with_xpos,
                         trace_with_ypos=trace_with_ypos,
                         trace_from_yoffset=trace_from_yoffset,
                         nod_offset=nod_offset,
