@@ -819,7 +819,10 @@ def fit_redshift(file='jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits', 
             fp.write(f'# {time.ctime()}\n# {os.getcwd()}\n')
             if eazy_templates is not None:
                 for i, t in enumerate(eazy_templates):
-                    fp.write(f'# eazy_templates[{i}] = \"{t.__str__()}\"\n')
+                    msg = f'# eazy_templates[{i}] = \"{t.__str__()}\"'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=False)
+                    fp.write(msg+'\n')
+            
             yaml.dump(args, stream=fp, Dumper=yaml.Dumper)
     
     #is_prism |= ('clear' in file)
