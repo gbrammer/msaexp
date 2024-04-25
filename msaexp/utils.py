@@ -491,16 +491,60 @@ def slit_metadata_to_header(slit, key='', header=None):
     return h
 
 
-def slit_trace_center(slit, with_source_ypos=True, index_offset=0.):
+def slit_trace_center(slit, with_source_xpos=False, with_source_ypos=True, index_offset=0.):
     """
     Get detector coordinates along the center of a slit
+    
+    Parameters
+    slit : `~stdatamodels.jwst.datamodels.slit.SlitModel` 
+        Slit object
+    
+    with_source_xpos : bool
+        Apply wavelength correction based on source centering within the shutter
+    
+    with_source_ypos : bool
+        Get center of trace accounting for source y offset in the shutter
+    
+    index_offset : float
+        Index offset applied to the trace center
+    
+    Returns
+    -------
+    x : array-like
+        x pixel along trace
+    
+    ytr : array-like
+        y pixel along trace
+    
+    wtr : array-like
+        wavelength along trace, microns
+    
+    rs, ds : float
+        Expected sky coordinates at center of the trace
     """
+    from jwst.wavecorr import WavecorrStep
     from gwcs import wcstools
     
     sh = slit.data.shape
     
-    _wcs = slit.meta.wcs
-    
+    if with_source_xpos:
+        # Get wavelength offset for off-center source, 
+        # assuming source_type = POINT
+        step = WavecorrStep()
+        
+        orig_srctype = slit.source_type
+        slit.source_type = 'POINT'
+        
+        wavecorr = step.process(slit)
+        
+        slit.source_type = orig_srctype
+        
+        _wcs = wavecorr.meta.wcs
+        swave = wavecorr.wavelength*1
+    else:
+        _wcs = slit.meta.wcs
+        swave = slit.wavelength*1
+        
     s2d = _wcs.get_transform('slit_frame', 'detector')
     d2s = _wcs.get_transform('detector', 'slit_frame')
     s2w = _wcs.get_transform('slit_frame', 'world')
@@ -508,27 +552,40 @@ def slit_trace_center(slit, with_source_ypos=True, index_offset=0.):
 
     bbox = _wcs.bounding_box
     grid = wcstools.grid_from_bounding_box(bbox)
-    _, sy, slam = np.array(d2s(*grid))
     
-    smi = np.nanmin(sy)
-    sma = np.nanmax(sy)
+    # Slit coordinates
+    sx, sy, slam = np.array(d2s(*grid))
     
-    x = np.arange(sh[1], dtype=float)
-    xd, yd = x, x*0.+sh[0]//2
+    # Direction of increasing sy shutter coordinate needed for interpolation
+    dy = sy - np.roll(sy, 1, axis=0)
+    ydir = 1 if np.nanmedian(dy) > 0 else -1
 
-    for _iter in range(3):
-        xs, ys, ls = d2s(xd, yd)
-        xd, yd = s2d(x*0, x*0. + slit.source_ypos*with_source_ypos, ls)
-        yd = np.interp(x, xd, yd)
-        xd = x
+    x = np.arange(sh[1], dtype=float)
+    yarr = np.arange(sy.shape[0])
     
-    yd += index_offset
-    _ra, _dec, lam = d2w(xd, yd)
+    ok = np.isfinite(sy)
     
-    rs, ds, _ = d2w(xd[sh[1]//2], yd[sh[1]//2])
+    # Interpolate 2D shutter and wavelength arrays at the desired trace center
+    trace_center = 0.
+    if with_source_ypos & (slit.source_ypos is not None):
+        trace_center += slit.source_ypos
     
-    return xd, yd, lam, rs, ds
+    ytr = np.array([np.interp(trace_center,
+                              sy[ok[:,i],i][::ydir],
+                              yarr[ok[:,i]][::ydir])
+                    for i in range(sy.shape[1])])
     
+    wtr = np.array([np.interp(trace_center,
+                              sy[ok[:,i],i][::ydir],
+                              swave[ok[:,i],i][::ydir])
+                    for i in range(sy.shape[1])])
+    
+    ytr += index_offset
+    
+    rs, ds, _ = d2w(x[sh[1]//2], ytr[sh[1]//2])
+    
+    return x, ytr, wtr, rs, ds
+
 
 def get_slit_corners(slit, wave=None, verbose=False):
     """
@@ -2233,52 +2290,7 @@ def get_nirspec_psf_fwhm(wave):
         Wavelength in microns
     
     """
-    
-    # nspec = webbpsf.NIRSpec()
-    # nspec.image_mask = 'S200A1' # 0.2 arcsec slit
-    
-    fwhm_data = """# wave fwhm_pix
-    0.6 1.04
-    0.7 0.80
-    0.8 0.67
-    0.9 0.63
-    1.0 0.62
-   1.25 0.68
-    1.5 0.79
-    2.0 0.89
-    2.5 0.95
-    3.0 1.08
-    4.0 1.41
-    5.0 1.78
-    5.5 1.94"""
-    
-    # nspec.image_mask = 'MSA all open'
-    fwhm_data = """# wave fwhm_pix
-    0.60  1.347
-    0.65  1.119
-    0.70  1.074
-    0.75  0.935
-    0.80  0.857
-    0.85  0.807
-    0.90  0.796
-    0.95  0.775
-    1.00  0.772
-    1.08  0.823
-    1.16  0.872
-    1.25  0.907
-    1.50  0.978
-    1.75  1.056
-    2.00  1.114
-    2.25  1.111
-    2.50  1.193
-    2.75  1.199
-    3.00  1.299
-    3.50  1.430
-    4.00  1.567
-    4.50  1.885
-    5.00  2.058
-    5.25  2.271
-    5.50  2.357"""
+    from .data.fwhm_data import fwhm_data
     
     fwhm_table = grizli.utils.read_catalog(fwhm_data)
     
