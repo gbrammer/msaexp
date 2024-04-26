@@ -68,7 +68,7 @@ def pad_msa_metafile(
 
             source_ids = np.unique(msa.shutter_table["source_id"][six])
 
-            msg = f"msaexp.utils.pad_msa_metafile: Trim slitlet_ids in "
+            msg = "msaexp.utils.pad_msa_metafile: Trim slitlet_ids in "
             msg += f"{metafile} to "
             msg += f"{list(slitlet_ids)} (N={len(source_ids)} source_ids)\n"
             grizli.utils.log_comment(
@@ -250,8 +250,9 @@ class MSAMetafile:
         Parameters
         ----------
         filename : str
-            Filename of an `_msa.fits` metadata file or a FITS file with a keyword
-            `MSAMETFL` in the primary header, e.g., a `_rate.fits` file.
+            Filename of an `_msa.fits` metadata file or a FITS file with a
+            keyword `MSAMETFL` in the primary header, e.g., a `_rate.fits`
+            file.
 
         Attributes
         ----------
@@ -259,7 +260,8 @@ class MSAMetafile:
             Input filename
 
         metafile : str
-            Filename of the MSAMETFL, either ``filename`` itself or derived from it
+            Filename of the MSAMETFL, either ``filename`` itself or derived
+            from it
 
         shutter_table : `~astropy.table.Table`
             Table of shutter metadata
@@ -285,7 +287,8 @@ class MSAMetafile:
             uri = 'https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/'
             meta = msa.MSAMetafile(uri+'jw02756001001_01_msa.fits')
 
-            fig, axes = plt.subplots(1,3,figsize=(9,2.6), sharex=True, sharey=True)
+            fig, axes = plt.subplots(1, 3, figsize=(9, 2.6),
+                                     sharex=True, sharey=True)
             cosd = np.cos(np.median(meta.src_table['dec'])/180*np.pi)
 
             # Show offset slitlets from three dithered exposures
@@ -294,7 +297,8 @@ class MSAMetafile:
                 ax.scatter(meta.src_table['ra'], meta.src_table['dec'],
                            marker='.', color='k', alpha=0.5)
                 slits = meta.regions_from_metafile(dither_point_index=i+1,
-                                                   as_string=False, with_bars=True)
+                                                   as_string=False,
+                                                   with_bars=True)
                 for s in slits:
                     if s.meta['is_source']:
                         if s.meta['source_id'] in [110003, 410044, 410045]:
@@ -305,7 +309,8 @@ class MSAMetafile:
                     else:
                         fc = 'pink'
 
-                    for patch in s.get_patch(fc=fc, ec='None', alpha=0.8, zorder=100):
+                    for patch in s.get_patch(fc=fc, ec='None', alpha=0.8,
+                                             zorder=100):
                         ax.add_patch(patch)
 
                 ax.set_aspect(1./cosd)
@@ -323,7 +328,8 @@ class MSAMetafile:
             ax.set_yticks(np.array([-5, 0, 5])/3600. + y0)
             axes[0].set_yticklabels(['-5"', 'Dec.', '+5"'])
             axes[1].scatter(x0, y0, marker='x', c='b')
-            axes[1].text(0.5, 0.45, f'({x0:.6f}, {y0:.6f})', ha='left', va='top',
+            axes[1].text(0.5, 0.45, f'({x0:.6f}, {y0:.6f})',
+                         ha='left', va='top',
                          transform=axes[1].transAxes, fontsize=6,
                          color='b')
 
@@ -413,7 +419,8 @@ class MSAMetafile:
     @property
     def mast_key_pairs(self):
         """
-        List of unique ``msametid, exposure`` pairs from the ``mast`` metadata table
+        List of unique ``msametid, exposure`` pairs from the ``mast``
+        metadata table
 
         Returns
         -------
@@ -438,8 +445,8 @@ class MSAMetafile:
         ----------
         force : bool
             Running the query with this method stores the result in the `mast`
-            attribute.  If the attribute is `None` or if ``force==True`` then run/redo
-            the query.
+            attribute.  If the attribute is `None` or if ``force==True`` then
+            run/redo the query.
 
         Returns
         -------
@@ -508,8 +515,8 @@ class MSAMetafile:
         **kwargs,
     ):
         """
-        Fit for `~astropy.modeling.models.Polynomial2D` transforms between slit ``(row, col)``
-        and ``(ra, dec)``.
+        Fit for `~astropy.modeling.models.Polynomial2D` transforms between
+        slit ``(row, col)`` and ``(ra, dec)``.
 
         Parameters
         ----------
@@ -534,8 +541,8 @@ class MSAMetafile:
             Boolean mask of ``shutter_table`` matching ``msa_metadata_id``
 
         coeffs : dict
-            `~astropy.modeling.models.Polynomial2D` transformations to sky coordinates in
-            each of 4 MSA quadrants
+            `~astropy.modeling.models.Polynomial2D` transformations to sky
+            coordinates in each of 4 MSA quadrants
 
             >>> quadrant = 1
             >>> pra, pdec = coeffs[quadrant]
@@ -543,8 +550,8 @@ class MSAMetafile:
             >>> dec = pdec(shutter_row, shutter_column)
 
         inv_coeffs : dict
-            Inverse `~astropy.modeling.models.Polynomial2D` transformations from sky to
-            shutters:
+            Inverse `~astropy.modeling.models.Polynomial2D` transformations
+            from sky to shutters:
 
             >>> quadrant = 1
             >>> prow, pcol = inv_coeffs[quadrant]
@@ -554,7 +561,6 @@ class MSAMetafile:
         """
         from astropy.modeling.models import Polynomial2D
         from astropy.modeling.fitting import LinearLSQFitter
-        import grizli.utils
 
         p2 = Polynomial2D(degree=fit_degree)
         fitter = LinearLSQFitter()
@@ -620,7 +626,8 @@ class MSAMetafile:
 
             if verbose:
                 print(
-                    f"# Q{qi} N={q.sum()}  rms= {pra.rms:.1f}, {pdec.rms:.1f} mas"
+                    f"# Q{qi} N={q.sum()}  "
+                    + f"rms= {pra.rms:.1f}, {pdec.rms:.1f} mas"
                 )
 
             coeffs[qi] = pra, pdec
@@ -648,7 +655,8 @@ class MSAMetafile:
 
         Returns
         -------
-            String or a list of `grizli.utils.SRegion` objects, depending on ``as_string``
+            String or a list of `grizli.utils.SRegion` objects, depending on
+            ``as_string``
 
         Examples
         --------
@@ -690,9 +698,6 @@ class MSAMetafile:
         has_offset = np.isfinite(_shut["estimated_source_in_shutter_x"])
         has_offset &= np.isfinite(_shut["estimated_source_in_shutter_y"])
 
-        is_src = (_shut["source_id"] > 0) & (has_offset)
-        si = _shut[exp & is_src]
-
         # Regions for a particular exposure
         se = _shut[exp]
 
@@ -705,7 +710,6 @@ class MSAMetafile:
 
         row = se["shutter_row"]
         col = se["shutter_column"]
-        ra, dec = se["ra"], se["dec"]
 
         regions = []
 
@@ -755,7 +759,8 @@ class MSAMetafile:
 
             for qi in coeffs:
                 pra, pdec = coeffs[qi]
-                output += f"# Q{qi} N={pra.N}  rms= {pra.rms:.1f}, {pdec.rms:.1f} mas\n"
+                output += f"# Q{qi} N={pra.N}  "
+                output += f"rms= {pra.rms:.1f}, {pdec.rms:.1f} mas\n"
 
             output += "icrs\n"
             for sr in regions:
@@ -810,8 +815,8 @@ class MSAMetafile:
             Place to mark axis labels, defaults to ``floor(cutout_size)``
 
         rgb_filters : list, None
-            List of filters to use for an RGB cutout.  Will be grayscale if just one item
-            specified.
+            List of filters to use for an RGB cutout.  Will be grayscale if
+            just one item specified.
 
         rgb_scale : float
             Scaling of the image thumbnail if ``rgb_filters`` specified
@@ -924,7 +929,7 @@ class MSAMetafile:
             url = (
                 f"https://grizli-cutout.herokuapp.com/thumb?coords={ra},{dec}"
             )
-            url += f"&filters=" + ",".join(rgb_filters)
+            url += "&filters=" + ",".join(rgb_filters)
             url += f"&size={cutout_size}&scl={rgb_scale}&invert={rgb_invert}"
 
             # url = cutout.format(ra=ra, dec=dec, cutout_size=cutout_size)
@@ -1240,7 +1245,9 @@ class MSAMetafile:
 
     def get_siaf_transforms(
         self,
-        prefix="https://github.com/spacetelescope/pysiaf/raw/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData/",
+        prefix=("https://github.com/spacetelescope/pysiaf/raw/"
+                + "master/pysiaf/source_data/NIRSpec/delivery/"
+                + "test_data/apertures_testData/"),
         check_rms=True,
     ):
         """
@@ -1299,7 +1306,8 @@ class MSAMetafile:
         ix &= mast["msametid"] == msa_metadata_id
         ix &= mast["patt_num"] == dither_point_index
         if ix.sum() == 0:
-            msg = f"msametid = {msa_metadata_id}, exposure = {dither_point_index}"
+            msg = f"msametid = {msa_metadata_id}, "
+            msg += f"exposure = {dither_point_index}"
             msg += " not found in MAST table"
             raise ValueError(msg)
 
@@ -1331,12 +1339,12 @@ class MSAMetafile:
             ``ROLL_REF`` in the science headers
 
         ra_ref, dec_ref, roll_ref : None, float
-            Specify a reference parameters aperture attitude, e.g., taken from the
-            ``ROLL_REF`` science header keywords
+            Specify a reference parameters aperture attitude, e.g., taken from
+            the ``ROLL_REF`` science header keywords
 
         use_ref_columns : bool
-            Use "ref" columns in `mast` metadata table if found, e.g., generated from
-            `~msaexp.msa.MSAMetafile.fit_mast_pointing_offset`
+            Use "ref" columns in `mast` metadata table if found, e.g.,
+            generated from `~msaexp.msa.MSAMetafile.fit_mast_pointing_offset`
 
         Returns
         -------
@@ -1344,8 +1352,8 @@ class MSAMetafile:
             The V2/V3 reference ra, dec, roll used for the aperture attitude
 
         ap : `pysiaf.aperture.NirspecAperture`
-            Aperture object with attitude set based on database pointing keywords and
-            with various coordinate transformation methods
+            Aperture object with attitude set based on database pointing
+            keywords and with various coordinate transformation methods
 
         """
         import pysiaf
@@ -1456,7 +1464,8 @@ class MSAMetafile:
 
         rows = []
 
-        msg = "{0} {1:>.0f} {2:>.0f} {2:.6f} {3:.6f} {4:.3f}  {5:>5.0f}  {6:.6f} {7:.6f} {8:.3f}"
+        msg = "{0} {1:>.0f} {2:>.0f} {2:.6f} {3:.6f} {4:.3f}  {5:>5.0f}  "
+        msg += "{6:.6f} {7:.6f} {8:.3f}"
 
         for key in self.mast_key_pairs:
             msa_metadata_id, dither_point_index = key
@@ -1540,8 +1549,6 @@ class MSAMetafile:
                     max_trials=100,
                 )
 
-                pred = tf((output - x0) * cosd)
-
                 if 1:
                     _ = self.get_siaf_aperture(
                         msa_metadata_id=msa_metadata_id,
@@ -1618,7 +1625,8 @@ class MSAMetafile:
 
             if verbose:
                 print(
-                    f"Apply offset to metadata: {dra*3600:.2f}  {dde*3600:.2f}  {dro:>.2f}"
+                    f"Apply offset to metadata: {dra*3600:.2f}"
+                    + f"  {dde*3600:.2f}  {dro:>.2f}"
                 )
 
         return res
@@ -1645,7 +1653,8 @@ class MSAMetafile:
         **kwargs,
     ):
         """
-        MSA shutter regions using pointing info and SIAF shutter transformations
+        MSA shutter regions using pointing info and SIAF shutter
+        transformations
 
         Parameters
         ----------
@@ -1660,7 +1669,8 @@ class MSAMetafile:
 
         Returns
         -------
-            String or a list of `grizli.utils.SRegion` objects, depending on ``as_string``
+            String or a list of `grizli.utils.SRegion` objects, depending on
+            ``as_string``
 
         """
         import grizli.utils
@@ -1699,8 +1709,6 @@ class MSAMetafile:
         has_offset = np.isfinite(_shut["estimated_source_in_shutter_x"])
         has_offset &= np.isfinite(_shut["estimated_source_in_shutter_y"])
 
-        is_src = (_shut["source_id"] > 0) & (has_offset)
-
         # Regions for a particular exposure
         se = _shut[exp]
 
@@ -1713,7 +1721,6 @@ class MSAMetafile:
 
         row = se["shutter_row"]
         col = se["shutter_column"]
-        ra, dec = se["ra"], se["dec"]
 
         regions = []
 
@@ -1907,7 +1914,8 @@ def fit_siaf_shutter_transforms(
 
             transforms["rms"][quadrant] = [float(stdx), float(stdy)]
 
-            msg = f"Q{quadrant} rms = {stdx:.2e} {stdy:.2e}    arcsec (i,j > v2,v3)"
+            msg = f"Q{quadrant} rms = {stdx:.2e} {stdy:.2e}"
+            msg += "    arcsec (i,j > v2,v3)"
 
             ix = v23_to_i(fpa["XPOSSKY"] * 3600.0, fpa["YPOSSKY"] * 3600.0)
 
@@ -2039,8 +2047,8 @@ def msa_shutter_catalog(
         Pointing definition
 
     ap : `pysiaf.aperture.NirspecAperture`
-        Aperture object with attitude set based on database pointing keywords and
-        with various coordinate transformation methods
+        Aperture object with attitude set based on database pointing keywords
+        and with various coordinate transformation methods
 
     inv : dict
         Inverse shutter transformations from
@@ -2099,82 +2107,5 @@ def msa_shutter_catalog(
 
     tab["di"] = tab["row_i"] - np.floor(tab["row_i"]) - 0.5
     tab["dj"] = tab["col_j"] - np.floor(tab["col_j"]) - 0.5
-
-    return tab
-
-
-def test_msa_shutter_catalog(rate_file):
-    """ """
-
-    # metafl = 'jw01210001001_01_msa.fits'
-    # metafl = 'jw01208047001_01_msa.fits'
-    #
-    # rate_file = 'jw01208047001_03101_00001_nrs1_rate.fits'
-    # rate_file = 'jw01208047001_03101_00002_nrs1_rate.fits'
-
-    import pysiaf
-    from pysiaf.utils import rotations
-
-    im = pyfits.open(rate_file)
-
-    metafl = im[0].header["MSAMETFL"]
-    mid = im[0].header["MSAMETID"]
-    dith = int(im[0].header["PATT_NUM"])
-
-    pref = (
-        im[1].header["RA_REF"],
-        im[1].header["DEC_REF"],
-        im[1].header["ROLL_REF"],
-    )
-    siaf = pysiaf.siaf.Siaf("NIRSPEC")
-    apref = siaf["NRS_FULL_MSA"]
-    att = rotations.attitude(apref.V2Ref, apref.V3Ref, *pref)
-
-    apref.set_attitude_matrix(att)
-
-    msa = MSAMetafile(metafl)
-    msa.fit_mast_pointing_offset()
-
-    r0, d0, roll, ap = msa.get_siaf_aperture(
-        msa_metadata_id=mid, dither_point_index=dith
-    )
-    apc = ap
-
-    shut = msa.shutter_table
-    sub = (shut["msa_metadata_id"] == mid) & (
-        shut["dither_point_index"] == dith
-    )
-    sub &= shut["estimated_source_in_shutter_y"] > 0
-    t = shut[sub]
-    ra, dec = t["ra"], t["dec"]
-
-    # What is transform between ra_ref, dec_ref, roll_ref and calculated?
-    yp, xp = np.indices((10, 10)) / 10 * 20 - 10
-    v23i = xp.flatten() + ap.V2Ref, yp.flatten() + ap.V3Ref
-    rd = ap.tel_to_sky(*v23i)
-    v23o = apref.sky_to_tel(*rd)
-
-    import skimage.transform
-    from skimage.measure import ransac
-    import grizli.utils
-
-    transform = skimage.transform.EuclideanTransform
-
-    tf = transform()
-    tf.estimate(np.array(v23i).T, np.array(v23o).T)
-    print(tf.translation, tf.rotation / np.pi * 180)
-
-    tab = msa_shutter_catalog(ra, dec, ap=ap, inv=None, verbose=True)
-
-    tab["q"] = t["shutter_quadrant"]
-    tab["row_in"] = t["shutter_row"]
-    tab["col_in"] = t["shutter_column"]
-    tab["dx"] = t["estimated_source_in_shutter_x"]
-    tab["dy"] = t["estimated_source_in_shutter_y"]
-
-    tab["i_off"] = tab["row_i"] - (tab["row_in"] + tab["dx"])
-    tab["j_off"] = tab["col_j"] - (tab["col_in"] + tab["dy"])
-
-    # plt.scatter(tab['i_off'], tab['j_off'], c=tab['quadrant'])
 
     return tab
