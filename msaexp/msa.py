@@ -439,11 +439,15 @@ class MSAMetafile():
 
         filters += make_query_filter('grating', 
                       values=['PRISM','G140M','G235M','G395M','G140H','G235H','G395H'])
-        filters += make_query_filter('effexptm', range=[300, 5.e5])
+        filters += make_query_filter('effexptm', range=[30, 5.e5])
         filters += make_query_filter('productLevel', values=['2b'])
-        filters += make_query_filter('apername', values=['NRS_FULL_MSA'])
+        filters += make_query_filter('apername',
+                                     values=['NRS_FULL_MSA',
+                                             'NRS_FIELD1_MSA4',
+                                             'NRS_FIELD2_MSA4',
+                                             'NRS_FULL_MSA1'])
         filters += make_query_filter('category', 
-                                     values=['COM','DD','ERS','GTO','GO'])
+                                     values=['COM','DD','ERS','GTO','GO','CAL'])
                 
         filters += make_query_filter('detector', values=['NRS1'])
         filters += make_query_filter('msametfl', 
