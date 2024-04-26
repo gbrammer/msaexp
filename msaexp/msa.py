@@ -131,7 +131,10 @@ def pad_msa_metafile(
             shutters = np.unique(shut["shutter_column"][slix])
             for eid in np.unique(shut["dither_point_index"][slix]):
                 for p in range(pad):
-                    for s in [shutters.min() - (p + 1), shutters.max() + (p + 1)]:
+                    for s in [
+                        shutters.min() - (p + 1),
+                        shutters.max() + (p + 1),
+                    ]:
 
                         row["msa_metadata_id"] = mid
                         row["dither_point_index"] = eid
@@ -170,7 +173,9 @@ def pad_msa_metafile(
     im.close()
 
     if verbose:
-        msg = f"msaexp.utils.pad_msa_metafile: Trim source_id in {metafile} to "
+        msg = (
+            f"msaexp.utils.pad_msa_metafile: Trim source_id in {metafile} to "
+        )
         msg += f"{list(this_source_ids)}\n"
         msg += f"msaexp.utils.pad_msa_metafile: pad = {pad}"
         grizli.utils.log_comment(
@@ -451,7 +456,15 @@ class MSAMetafile:
 
         filters += make_query_filter(
             "grating",
-            values=["PRISM", "G140M", "G235M", "G395M", "G140H", "G235H", "G395H"],
+            values=[
+                "PRISM",
+                "G140M",
+                "G235M",
+                "G395M",
+                "G140H",
+                "G235H",
+                "G395H",
+            ],
         )
         filters += make_query_filter("effexptm", range=[30, 5.0e5])
         filters += make_query_filter("productLevel", values=["2b"])
@@ -581,8 +594,12 @@ class MSAMetafile:
             q = si["shutter_quadrant"] == qi
             # print(qi, q.sum())
 
-            row = si["shutter_row"] + (si["estimated_source_in_shutter_x"] - 0.5)
-            col = si["shutter_column"] + (si["estimated_source_in_shutter_y"] - 0.5)
+            row = si["shutter_row"] + (
+                si["estimated_source_in_shutter_x"] - 0.5
+            )
+            col = si["shutter_column"] + (
+                si["estimated_source_in_shutter_y"] - 0.5
+            )
 
             pra = fitter(p2, row[q], col[q], si["ra"][q])
             pdec = fitter(p2, row[q], col[q], si["dec"][q])
@@ -590,14 +607,21 @@ class MSAMetafile:
             # RMS of the fit
             xra = pra(row[q], col[q])
             xdec = pdec(row[q], col[q])
-            dra = (si["ra"][q] - xra) * np.cos(si["dec"][q] / 180 * np.pi) * 3600 * 1000
+            dra = (
+                (si["ra"][q] - xra)
+                * np.cos(si["dec"][q] / 180 * np.pi)
+                * 3600
+                * 1000
+            )
             dde = (si["dec"][q] - xdec) * 3600 * 1000
             pra.rms = np.std(dra)
             pdec.rms = np.std(dde)
             pra.N = q.sum()
 
             if verbose:
-                print(f"# Q{qi} N={q.sum()}  rms= {pra.rms:.1f}, {pdec.rms:.1f} mas")
+                print(
+                    f"# Q{qi} N={q.sum()}  rms= {pra.rms:.1f}, {pdec.rms:.1f} mas"
+                )
 
             coeffs[qi] = pra, pdec
 
@@ -672,8 +696,12 @@ class MSAMetafile:
         # Regions for a particular exposure
         se = _shut[exp]
 
-        sx = (np.array([-0.5, 0.5, 0.5, -0.5])) * (1 - 0.07 / 0.27 * with_bars / 2)
-        sy = (np.array([-0.5, -0.5, 0.5, 0.5])) * (1 - 0.07 / 0.53 * with_bars / 2)
+        sx = (np.array([-0.5, 0.5, 0.5, -0.5])) * (
+            1 - 0.07 / 0.27 * with_bars / 2
+        )
+        sy = (np.array([-0.5, -0.5, 0.5, 0.5])) * (
+            1 - 0.07 / 0.53 * with_bars / 2
+        )
 
         row = se["shutter_row"]
         col = se["shutter_column"]
@@ -706,7 +734,9 @@ class MSAMetafile:
             ]:
                 sr.meta[k] = se[k][i]
 
-            sr.meta["is_source"] = np.isfinite(se["estimated_source_in_shutter_x"][i])
+            sr.meta["is_source"] = np.isfinite(
+                se["estimated_source_in_shutter_x"][i]
+            )
 
             if sr.meta["is_source"]:
                 sr.ds9_properties = "color=cyan"
@@ -891,7 +921,9 @@ class MSAMetafile:
 
         # cutout_size = 2.5 # arcsec
         if rgb_filters is not None:
-            url = f"https://grizli-cutout.herokuapp.com/thumb?coords={ra},{dec}"
+            url = (
+                f"https://grizli-cutout.herokuapp.com/thumb?coords={ra},{dec}"
+            )
             url += f"&filters=" + ",".join(rgb_filters)
             url += f"&size={cutout_size}&scl={rgb_scale}&invert={rgb_invert}"
 
@@ -1124,7 +1156,9 @@ class MSAMetafile:
             for s in tab["source_id"]:
                 if s in exp_ids:
                     ix = sources[s] & (shut["dither_point_index"] == exp)
-                    so = np.argsort(shut["shutter_column", "primary_source"][ix])
+                    so = np.argsort(
+                        shut["shutter_column", "primary_source"][ix]
+                    )
                     ss = ""
                     # ss = f'{ix.sum()} '
                     for p in shut["primary_source"][ix][so]:
@@ -1148,7 +1182,9 @@ class MSAMetafile:
             print(f"Make {len(tab)} slit thumbnail images:")
 
             for src, ra in tqdm(zip(tab["source_id"], tab["ra"])):
-                slit_image = os.path.join(image_path, f"{mroot}_{src}_slit.png")
+                slit_image = os.path.join(
+                    image_path, f"{mroot}_{src}_slit.png"
+                )
                 slit_image = slit_image.replace("_-", "_m")
                 slit_images.append(slit_image)
 
@@ -1173,7 +1209,11 @@ class MSAMetafile:
                     kwargs = dict(
                         cutout_size=1.5,
                         step=None,
-                        rgb_filters=["f200w-clear", "f150w-clear", "f115w-clear"],
+                        rgb_filters=[
+                            "f200w-clear",
+                            "f150w-clear",
+                            "f115w-clear",
+                        ],
                         rgb_scale=5,
                         rgb_invert=False,
                         figsize=(4, 4),
@@ -1182,7 +1222,9 @@ class MSAMetafile:
                         set_axis_labels=True,
                     )
 
-            tab["thumb"] = [f'<img src="{im}" height=200px />' for im in slit_images]
+            tab["thumb"] = [
+                f'<img src="{im}" height=200px />' for im in slit_images
+            ]
 
         if write_tables:
             tab.write_sortable_html(
@@ -1213,7 +1255,9 @@ class MSAMetafile:
         transforms = {}
 
         for quadrant in [1, 2, 3, 4]:
-            ref_file = os.path.join(prefix, f"sky_fpa_projectionMSA_Q{quadrant}.fits")
+            ref_file = os.path.join(
+                prefix, f"sky_fpa_projectionMSA_Q{quadrant}.fits"
+            )
             fpa = grizli.utils.read_catalog(ref_file)
             # i, j transformations
             ij_to_v2 = LinearLSQFitter()(
@@ -1316,8 +1360,14 @@ class MSAMetafile:
 
         # Input is fully specified
         # -------------------------
-        if (ra_ref is not None) & (dec_ref is not None) & (roll_ref is not None):
-            att = rotations.attitude(ap.V2Ref, ap.V3Ref, ra_ref, dec_ref, roll_ref)
+        if (
+            (ra_ref is not None)
+            & (dec_ref is not None)
+            & (roll_ref is not None)
+        ):
+            att = rotations.attitude(
+                ap.V2Ref, ap.V3Ref, ra_ref, dec_ref, roll_ref
+            )
 
             ap.set_attitude_matrix(att)
 
@@ -1335,7 +1385,9 @@ class MSAMetafile:
             dec_ref = row["dec_ref"]
             roll_ref = row["roll_ref"]
 
-            att = rotations.attitude(ap.V2Ref, ap.V3Ref, ra_ref, dec_ref, roll_ref)
+            att = rotations.attitude(
+                ap.V2Ref, ap.V3Ref, ra_ref, dec_ref, roll_ref
+            )
 
             ap.set_attitude_matrix(att)
 
@@ -1417,10 +1469,18 @@ class MSAMetafile:
             )
             _ra, _dec, _roll, ap = _
 
-            xrow = [msa_metadata_id, dither_point_index, _ra * 1.0, _dec * 1, _roll * 1]
+            xrow = [
+                msa_metadata_id,
+                dither_point_index,
+                _ra * 1.0,
+                _dec * 1,
+                _roll * 1,
+            ]
 
             exp = self.shutter_table["msa_metadata_id"] == msa_metadata_id
-            exp &= self.shutter_table["dither_point_index"] == dither_point_index
+            exp &= (
+                self.shutter_table["dither_point_index"] == dither_point_index
+            )
 
             # _shut[is_src]['msa_metadata_id','dither_point_index']
 
@@ -1436,8 +1496,12 @@ class MSAMetafile:
 
             se = _shut[exp & is_src]
 
-            row = se["shutter_row"] + (se["estimated_source_in_shutter_x"] - 0.5)
-            col = se["shutter_column"] + (se["estimated_source_in_shutter_y"] - 0.5)
+            row = se["shutter_row"] + (
+                se["estimated_source_in_shutter_x"] - 0.5
+            )
+            col = se["shutter_column"] + (
+                se["estimated_source_in_shutter_y"] - 0.5
+            )
             ra, dec = se["ra"], se["dec"]
 
             for _iter in range(iterations):
@@ -1461,7 +1525,9 @@ class MSAMetafile:
                 output = np.array(output)
 
                 x0 = np.mean(input, axis=0)
-                cosd = np.array([[np.cos(inp[1] / 180 * np.pi), 1] for inp in input])
+                cosd = np.array(
+                    [[np.cos(inp[1] / 180 * np.pi), 1] for inp in input]
+                )
 
                 tf = transform()
                 tf.estimate((output - x0) * cosd, (input - x0) * cosd)
@@ -1494,7 +1560,17 @@ class MSAMetafile:
 
         res = grizli.utils.GTable(
             rows=rows,
-            names=["id", "dith", "ra0", "dec0", "roll0", "Nsrc", "ra", "dec", "roll"],
+            names=[
+                "id",
+                "dith",
+                "ra0",
+                "dec0",
+                "roll0",
+                "Nsrc",
+                "ra",
+                "dec",
+                "roll",
+            ],
         )
 
         cosd = np.cos(res["dec0"] / 180 * np.pi)
@@ -1529,7 +1605,8 @@ class MSAMetafile:
                 # print('xxx', _ra, _dec, _roll)
 
                 ix = np.where(
-                    (self.mast["msametid"] == id) & (self.mast["patt_num"] == dith)
+                    (self.mast["msametid"] == id)
+                    & (self.mast["patt_num"] == dith)
                 )[0][0]
 
                 self.mast["ra_ref"][ix] = _ra + dra
@@ -1627,8 +1704,12 @@ class MSAMetafile:
         # Regions for a particular exposure
         se = _shut[exp]
 
-        sx = (np.array([-0.5, 0.5, 0.5, -0.5])) * (1 - 0.07 / 0.27 * with_bars / 2)
-        sy = (np.array([-0.5, -0.5, 0.5, 0.5])) * (1 - 0.07 / 0.53 * with_bars / 2)
+        sx = (np.array([-0.5, 0.5, 0.5, -0.5])) * (
+            1 - 0.07 / 0.27 * with_bars / 2
+        )
+        sy = (np.array([-0.5, -0.5, 0.5, 0.5])) * (
+            1 - 0.07 / 0.53 * with_bars / 2
+        )
 
         row = se["shutter_row"]
         col = se["shutter_column"]
@@ -1666,7 +1747,9 @@ class MSAMetafile:
             ]:
                 sr.meta[k] = se[k][i]
 
-            sr.meta["is_source"] = np.isfinite(se["estimated_source_in_shutter_x"][i])
+            sr.meta["is_source"] = np.isfinite(
+                se["estimated_source_in_shutter_x"][i]
+            )
 
             if sr.meta["is_source"]:
                 sr.ds9_properties = "color=cyan"
@@ -1771,11 +1854,19 @@ def fit_siaf_shutter_transforms(
         transforms["rms"] = {}
 
     for quadrant in [1, 2, 3, 4]:
-        ref_file = os.path.join(prefix, f"sky_fpa_projectionMSA_Q{quadrant}.fits")
+        ref_file = os.path.join(
+            prefix, f"sky_fpa_projectionMSA_Q{quadrant}.fits"
+        )
         fpa = grizli.utils.read_catalog(ref_file)
 
-        transforms["irange"][quadrant] = [int(fpa["I"].min()), int(fpa["I"].max())]
-        transforms["jrange"][quadrant] = [int(fpa["J"].min()), int(fpa["J"].max())]
+        transforms["irange"][quadrant] = [
+            int(fpa["I"].min()),
+            int(fpa["I"].max()),
+        ]
+        transforms["jrange"][quadrant] = [
+            int(fpa["J"].min()),
+            int(fpa["J"].max()),
+        ]
 
         # Transformation (i,j) to (v2,v3)
         ij_to_v2 = LinearLSQFitter()(
@@ -1803,7 +1894,10 @@ def fit_siaf_shutter_transforms(
         icoeffs = _model_to_dict(v23_to_i)
         jcoeffs = _model_to_dict(v23_to_j)
 
-        transforms["inverse"][quadrant] = {"v23_to_i": icoeffs, "v23_to_j": jcoeffs}
+        transforms["inverse"][quadrant] = {
+            "v23_to_i": icoeffs,
+            "v23_to_j": jcoeffs,
+        }
 
         if check_rms:
             ijx = ij_to_v2(fpa["I"] * 1.0, fpa["J"] * 1.0)
@@ -1822,7 +1916,10 @@ def fit_siaf_shutter_transforms(
             stdi = np.std(ix - fpa["I"] * 1.0)
             stdj = np.std(jx - fpa["J"] * 1.0)
 
-            msg += "\n" + f"         {stdi:.2e} {stdj:.2e}   shutter (v2,v3 > i,j)"
+            msg += (
+                "\n"
+                + f"         {stdi:.2e} {stdj:.2e}   shutter (v2,v3 > i,j)"
+            )
 
             print(msg)
 
@@ -1869,7 +1966,9 @@ def load_siaf_shutter_transforms():
     import yaml
     from astropy.modeling.models import Polynomial2D
 
-    tfile = os.path.join(os.path.dirname(__file__), "data/nirspec_msa_transforms.yaml")
+    tfile = os.path.join(
+        os.path.dirname(__file__), "data/nirspec_msa_transforms.yaml"
+    )
 
     with open(tfile) as fp:
         traw = yaml.load(fp, Loader=yaml.Loader)
@@ -1902,7 +2001,9 @@ def load_siaf_inverse_shutter_transforms():
     import yaml
     from astropy.modeling.models import Polynomial2D
 
-    tfile = os.path.join(os.path.dirname(__file__), "data/nirspec_msa_transforms.yaml")
+    tfile = os.path.join(
+        os.path.dirname(__file__), "data/nirspec_msa_transforms.yaml"
+    )
 
     with open(tfile) as fp:
         traw = yaml.load(fp, Loader=yaml.Loader)
@@ -1923,7 +2024,9 @@ def load_siaf_inverse_shutter_transforms():
     return tr
 
 
-def msa_shutter_catalog(ra, dec, pointing=None, ap=None, inv=None, verbose=True):
+def msa_shutter_catalog(
+    ra, dec, pointing=None, ap=None, inv=None, verbose=True
+):
     """
     Compute shutter centering for a list of input coordinates
 
@@ -2018,7 +2121,11 @@ def test_msa_shutter_catalog(rate_file):
     mid = im[0].header["MSAMETID"]
     dith = int(im[0].header["PATT_NUM"])
 
-    pref = im[1].header["RA_REF"], im[1].header["DEC_REF"], im[1].header["ROLL_REF"]
+    pref = (
+        im[1].header["RA_REF"],
+        im[1].header["DEC_REF"],
+        im[1].header["ROLL_REF"],
+    )
     siaf = pysiaf.siaf.Siaf("NIRSPEC")
     apref = siaf["NRS_FULL_MSA"]
     att = rotations.attitude(apref.V2Ref, apref.V3Ref, *pref)
@@ -2034,7 +2141,9 @@ def test_msa_shutter_catalog(rate_file):
     apc = ap
 
     shut = msa.shutter_table
-    sub = (shut["msa_metadata_id"] == mid) & (shut["dither_point_index"] == dith)
+    sub = (shut["msa_metadata_id"] == mid) & (
+        shut["dither_point_index"] == dith
+    )
     sub &= shut["estimated_source_in_shutter_y"] > 0
     t = shut[sub]
     ra, dec = t["ra"], t["dec"]
