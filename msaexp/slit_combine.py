@@ -761,7 +761,7 @@ class SlitGroup():
                 dwave_step = np.nanpercentile(dwave / np.gradient(_wtr), [5, 50, 95])
                 
                 # Signs of source_xpos and dwave_step should be opposite
-                sign = slit.source_xpos*dwave_step[0]
+                sign = slit.source_xpos*dwave_step[1]
                 if sign > 0:
                     dwave *= -1
                     dwave_step *= -1
