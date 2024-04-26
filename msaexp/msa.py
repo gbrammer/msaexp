@@ -1245,9 +1245,11 @@ class MSAMetafile:
 
     def get_siaf_transforms(
         self,
-        prefix=("https://github.com/spacetelescope/pysiaf/raw/"
-                + "master/pysiaf/source_data/NIRSpec/delivery/"
-                + "test_data/apertures_testData/"),
+        prefix=(
+            "https://github.com/spacetelescope/pysiaf/raw/"
+            + "master/pysiaf/source_data/NIRSpec/delivery/"
+            + "test_data/apertures_testData/"
+        ),
         check_rms=True,
     ):
         """

@@ -206,7 +206,7 @@ def objfun_prof_trace(
         i0 = 0
     elif WINGS_XOFF is not None:
         sigma = theta[0] / 10.0
-        wings = theta[1: len(WINGS_XOFF) + 1]
+        wings = theta[1 : len(WINGS_XOFF) + 1]
         i0 = len(WINGS_XOFF) + 1
 
     elif len(theta) == 4:
