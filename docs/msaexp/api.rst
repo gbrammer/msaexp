@@ -9,6 +9,9 @@ Additional API
 .. automodapi:: msaexp.drizzle
     :no-inheritance-diagram:
 
+.. automodapi:: msaexp.slit_combine
+    :no-inheritance-diagram:
+
 .. automodapi:: msaexp.spectrum
     :no-inheritance-diagram:
 
