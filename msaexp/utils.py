@@ -2807,7 +2807,8 @@ def objfun_prf(
     ret,
     verbose,
 ):
-    #TODO: I have used unconventional docstring formatting for the returns to match the code - is this okay?
+    #TODO: I have used unconventional docstring formatting for the returns 
+    # to match the code - is this okay? (K.V.)
     """
     Objective function for fitting the 2D profile
 
