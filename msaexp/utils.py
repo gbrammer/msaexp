@@ -218,7 +218,7 @@ def update_slitlet_filenames(files, script_only=True, verbose=True):
 
 def detector_bounding_box(file):
     """
-    Calculate the bounding box coordinates for slits in a given file.
+    Region files and metadata for slits.
 
     This function reads slit files and metadata for slits and calculates the
     bounding box coordinates for each slit. It uses the `jwst.datamodels.SlitModel`
@@ -359,7 +359,7 @@ def detector_bounding_box(file):
 def update_slit_metadata(slit):
     #TODO: is the "slit" type correct? (K.V.)
     """
-    Update missing slit metadata.
+    Try to update missing slit metadata.
 
     This function tries to update missing metadata for a given slit object.
     - If the slit's lamp mode is 'FIXEDSLIT' and the source name is missing, 
@@ -2117,7 +2117,7 @@ def drizzled_hdu_figure(
     use_aper_columns=False,
     smooth_sigma=None,
 ):
-    #TODO I believe the docstring is correct, but in code-comments would be helpful to have a more detailed explanation of the parameters. (K.V.)
+    #TODO I believe the docstring is correct, but not sure if overkill in this method? (K.V.)
     """
     Figure showing drizzled hdu
     
