@@ -9,17 +9,16 @@ import grizli.utils
 def summary_from_metafiles():
     """
     Generate summary files from metafiles.
-    
-    This function reads in metafiles with the extension '.msa.fits' 
-    and generates summary files in CSV format and 
-    region files in REG format.
-    
+
+    This function reads in metafiles with the extension '.msa.fits'
+    and generates summary files in CSV and DS9 region files
+
     Parameters:
     -----------
     None
-    
+
     Returns:
-    --------        
+    --------
     None
 
     """
@@ -44,7 +43,7 @@ def summary_from_metafiles():
 
 def rename_source(source_name):
     """
-    This function takes a source name as input and returns the adjusted 
+    This function takes a source name as input and returns the adjusted
     name according to the following rules:
 
     - If the source name starts with 'background_', it is replaced with 'b'.
@@ -70,17 +69,17 @@ def update_output_files(mode):
     """
     Rename output slitlet files and metadata with updated target names
 
-    This function renames the output slitlet files and updates the metadata 
-    with the updated target names. It reads a YAML file containing the target 
+    This function renames the output slitlet files and updates the metadata
+    with the updated target names. It reads a YAML file containing the target
     names and their corresponding slit indices, and renames the slitlet files
-    accordingly. The function also updates the YAML file with the new target 
+    accordingly. The function also updates the YAML file with the new target
     names and writes it back to disk.
-    
+
     Parameters:
     -----------
     mode : str
         The mode for which to update the output files.
-    
+
     Returns:
     --------
         False if the YAML file does not exist, else None.
@@ -216,7 +215,7 @@ def update_slitlet_filenames(files, script_only=True, verbose=True):
 def detector_bounding_box(file):
     """
     This function reads slit files and metadata for slits and calculates the
-    bounding box coordinates for each slit. 
+    bounding box coordinates for each slit.
 
     Parameters:
     -----------
@@ -351,7 +350,7 @@ def update_slit_metadata(slit):
     Try to update missing slit metadata.
 
     This function tries to update missing metadata for a given slit object.
-    - If the slit's lamp mode is 'FIXEDSLIT' and the source name is missing, 
+    - If the slit's lamp mode is 'FIXEDSLIT' and the source name is missing,
         it sets the source name based on the target's proposer name and the slit's name.
     - If the slit's source type is missing, it sets it to 'EXTENDED'.
     - If the slit's source type is None, it sets it to 'EXTENDED'.
@@ -741,17 +740,17 @@ def slit_trace_center(
 def get_slit_corners(slit, wave=None, verbose=False):
     """
     Get sky coordinates of slit corners.
-    
+
     Parameters:
     -----------
     slit : `jwst.datamodels.SlitModel`
         The slit object containing the data and WCS information.
     wave : float, optional
-        The wavelength value to use for calculating the corners. If not provided, 
-        the median wavelength value of the slit data will be used.
+        The wavelength value to use for calculating the corners. If not
+        provided, the median wavelength value of the slit data will be used.
     verbose : bool, optional
         If True, print additional information about the slit corners.
-    
+
     Returns:
     --------
     sky_corners : array
@@ -2101,42 +2100,48 @@ def drizzled_hdu_figure(
 ):
     """
     Figure showing drizzled hdu
-    
+
     Parameters:
     ----------
     hdul : `~astropy.io.fits.HDUList`
         The HDUList object containing the data.
     tick_steps : tuple, optional
-        The major and minor tick steps for the x-axis. 
+        The major and minor tick steps for the x-axis.
     xlim : tuple, optional
         The x-axis limits.
     subplot_args : dict, optional
-        Additional arguments for creating the subplots. Default is dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1]).
+        Additional arguments for creating the subplots. Default is
+        ``dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1])``.
     cmap : str, optional
         The colormap for the image. Default is 'plasma_r'.
     ymax : float, optional
         The maximum y-axis value. Default is None.
     ymax_sigma_scale : float, optional
-        The scale factor for setting the maximum y-axis value based on the median error. Default is 7.
+        The scale factor for setting the maximum y-axis value based on the
+        median error. Default is 7.
     vmin : float, optional
         The minimum value for the 2D cutout. Default is -0.2.
     z : float, optional
-        If the redshift is indicated, draw axes with rest-frame wavelengths and indicate some common emission lines
+        If the redshift is indicated, draw axes with rest-frame wavelengths
+        and indicate some common emission lines
     ny : float, optional
         Number of pixels to show on y-axis
     output_root : str, optional
         Rootname of the output file. Default is None.
     unit : str, optional
-        Controls the output flux units: 'fnu' (default) for `microJansky` or `flam` for f-lambda cgs.
+        Controls the output flux units: 'fnu' (default) for `microJansky` or
+        `flam` for f-lambda cgs.
     flam_scale : float, optional
         The scale factor for the flux unit in the y-axis label. Default is -20.
     recenter : bool, optional
-        Whether to recenter the y-axis on the expected source location. Default is True.
+        Whether to recenter the y-axis on the expected source location.
+        Default is True.
     use_aper_columns : bool, optional
-        Whether to use boxcar aperture extraction columns for the 1D spectra. Default is False.
+        Whether to use boxcar aperture extraction columns for the 1D spectra.
+        Default is False.
     smooth_sigma : float, optional
         The sigma value for smoothing the 2D spectra. Default is None.
-    
+
     Returns:
     -------
     fig : `~matplotlib.pyplot.Figure`
@@ -2613,9 +2618,9 @@ def calculate_psf_fwhm():
     Parameters:
     -----------
     None
-    
+
     Returns:
-    --------        
+    --------
     None
 
     """
@@ -2678,11 +2683,12 @@ def get_nirspec_psf_fwhm(wave):
     ----------
     wave : float, array-like
         Wavelength in microns
-    
+
     Returns
     -------
     fwhm : float
-        Full Width at Half Maximum (FWHM) of the Point Spread Function (PSF) in pixels.
+        Full Width at Half Maximum (FWHM) of the Point Spread Function (PSF)
+        in pixels.
 
     """
     from .data.fwhm_data import fwhm_data
@@ -2711,7 +2717,7 @@ def make_nirspec_gaussian_profile(
 ):
     """
     Make a pixel-integrated Gaussian profile
-    
+
     Parameters:
     ----------
     waves : array-like
@@ -2727,8 +2733,9 @@ def make_nirspec_gaussian_profile(
     bkg_offset : int, optional
         Offset for nodded background subtraction. Default is 6.
     bkg_parity : list, optional
-        List of integers specifying the parity of the background nod offsets. Default is [-1, 1].
-    
+        List of integers specifying the parity of the background nod offsets.
+        Default is [-1, 1].
+
     Returns:
     -------
     prf : array-like
@@ -2810,7 +2817,7 @@ def objfun_prf(
         model given ``params``
     verbose : bool
         Print verbose output.
-    
+
     Returns:
     -------
     if ret == 1:
@@ -2893,18 +2900,21 @@ def slit_cutout_region(slitfile, as_text=True, skip=8, verbose=False):
     slitfile : str
         The path to the slit file.
     as_text : bool, optional
-        If True, the region is returned as a text string. 
-        If False, the region is returned as a `grizli.utils.SRegion` object. Default is True.
+        If True, the region is returned as a text string.
+        If False, the region is returned as a `grizli.utils.SRegion` object.
+        Default is True.
     skip : int, optional
-        The number of pixels to skip between each point in the region. Default is 8.
+        The number of pixels to skip between each point in the region. Default
+        is 8.
     verbose : bool, optional
-        Verbose output. 
-    
+        Verbose output.
+
     Returns:
     --------
     str or `grizli.utils.SRegion`
-        If `as_text` is True, the region is returned as a text string. 
-        If `as_text` is False, the region is returned as a `grizli.utils.SRegion` object.
+        If `as_text` is True, the region is returned as a text string.
+        If `as_text` is False, the region is returned as a 
+        `grizli.utils.SRegion` object.
 
     """
     import jwst.datamodels
@@ -2974,27 +2984,29 @@ def slit_cutout_region(slitfile, as_text=True, skip=8, verbose=False):
         return sr
 
 
-def all_slit_cutout_regions(files, output='slits.reg', **kwargs):
+def all_slit_cutout_regions(files, output="slits.reg", **kwargs):
     """
     Generate slit cutout regions for multiple files and save them to a file.
 
     Parameters:
     ----------
     files : list
-        A list of file paths that will be passed to `~msaexp.utils.slit_cutout_region`
+        A list of file paths that will be passed to 
+       `~msaexp.utils.slit_cutout_region`
     output : str, optional
-        The output file path where the slit cutout regions will be saved. Default is 'slits.reg'.
+        The output file path where the slit cutout regions will be saved.
+        Default is 'slits.reg'.
     **kwargs : dict, optional
-        Additional keyword arguments to be passed to the slit_cutout_region function.
+        Additional keyword arguments to be passed to the slit_cutout_region
+        function.
 
     Returns:
     -------
     None
 
-    Note: This documentation is mainly AI-generated and will be reviewed.
     """
-    
-    with open(output, 'w') as fp:
+
+    with open(output, "w") as fp:
         for file in files:
             txt = slit_cutout_region(file, as_text=True, skip=1, verbose=True)
             fp.write(txt)
