@@ -47,7 +47,8 @@ def rename_source(source_name):
     """
     Adjusted source names
 
-    This function takes a source name as input and returns the adjusted name according to the following rules:
+    This function takes a source name as input and returns the adjusted 
+    name according to the following rules:
 
     - If the source name starts with 'background_', it is replaced with 'b'.
     - If the source name contains '_-', it is replaced with '_m'.
@@ -73,10 +74,11 @@ def update_output_files(mode):
     """
     Rename output slitlet files and metadata with updated target names
 
-    This function renames the output slitlet files and updates the metadata with the updated target names.
-    It reads a YAML file containing the target names and their corresponding slit indices, and renames
-    the slitlet files accordingly. The function also updates the YAML file with the new target names and 
-    writes it back to disk.
+    This function renames the output slitlet files and updates the metadata 
+    with the updated target names. It reads a YAML file containing the target 
+    names and their corresponding slit indices, and renames the slitlet files
+    accordingly. The function also updates the YAML file with the new target 
+    names and writes it back to disk.
     
     Parameters:
     -----------
@@ -752,7 +754,7 @@ def slit_trace_center(
 
 def get_slit_corners(slit, wave=None, verbose=False):
     #TODO: is the "slit" type correct? (K.V.)
-    #TODO: is the "wave" type correct? (np.nanmedian can return both arrays and floats) (K.V.)
+    #TODO: is the "wave" type correct (np.nanmedian retval can be both arrays and floats)? (K.V.)
     """
     Get sky coordinates of slit corners.
     
@@ -761,8 +763,8 @@ def get_slit_corners(slit, wave=None, verbose=False):
     slit : `jwst.datamodels.SlitModel`
         The slit object containing the data and WCS information.
     wave : float, optional
-        The wavelength value to use for calculating the corners. If not provided, the median wavelength
-        value of the slit data will be used.
+        The wavelength value to use for calculating the corners. If not provided, 
+        the median wavelength value of the slit data will be used.
     verbose : bool, optional
         If True, print additional information about the slit corners.
     
@@ -2909,6 +2911,7 @@ def objfun_prf(
 
 
 def slit_cutout_region(slitfile, as_text=True, skip=8, verbose=False):
+    # TODO: is ''as_text'' bool interpretation correct in the docstring? (K.V.)
     """
     Generate the region in the original exposure corresponding to a slit cutout
 
@@ -2917,7 +2920,8 @@ def slit_cutout_region(slitfile, as_text=True, skip=8, verbose=False):
     slitfile : str
         The path to the slit file.
     as_text : bool, optional
-        If True, the region is returned as a text string. If False, the region is returned as a `grizli.utils.SRegion` object. Default is True.
+        If True, the region is returned as a text string. 
+        If False, the region is returned as a `grizli.utils.SRegion` object. Default is True.
     skip : int, optional
         The number of pixels to skip between each point in the region. Default is 8.
     verbose : bool, optional
@@ -2926,7 +2930,10 @@ def slit_cutout_region(slitfile, as_text=True, skip=8, verbose=False):
     Returns:
     --------
     str or `grizli.utils.SRegion`
-        If `as_text` is True, the region is returned as a text string. If `as_text` is False, the region is returned as a `grizli.utils.SRegion` object.
+        If `as_text` is True, the region is returned as a text string. 
+        If `as_text` is False, the region is returned as a `grizli.utils.SRegion` object.
+
+    Note: This documentation is mainly AI-generated and will be reviewed.
     """
     import jwst.datamodels
 
