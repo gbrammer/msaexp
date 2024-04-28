@@ -24,7 +24,7 @@ bibliography: paper.bib
 
 # Statement of need
 
-Extend functionality from the standard JWST pipeline `[@jwst_pipeline]`.
+Extend functionality from the standard JWST pipeline [@jwst_pipeline].
 
 # Acknowledgements
 
