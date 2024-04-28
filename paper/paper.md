@@ -1,5 +1,5 @@
 ---
-title: 'msaexp: '
+title: 'msaexp: Tools for extraction and analysis of spectra from JWST NIRSpec'
 tags:
   - Python
   - astronomy
@@ -18,7 +18,13 @@ date: 28 April 2024
 bibliography: paper.bib
 ---
 
+<!-- https://joss.readthedocs.io/en/latest/submitting.html#what-should-my-paper-contain -->
+
 # Summary
+
+# Statement of need
+
+Extend functionality from the standard JWST pipeline `[@jwst_pipeline]`.
 
 # Acknowledgements
 
