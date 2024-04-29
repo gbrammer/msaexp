@@ -622,8 +622,8 @@ def drizzle_slitlets(
                 bkg = master_bkg[0]
                 bkg_w = master_bkg[1]
             elif master_bkg in [0, 0.0]:
-                bkg = np.zeros_like(bkg)
-                bkg_w = np.zeros_like(bkg)
+                bkg = np.zeros_like(avg)
+                bkg_w = np.zeros_like(avg)
         elif bkg_offset < 0:
             bkg = np.zeros_like(avg)
             bkg_w = np.zeros_like(avg)
