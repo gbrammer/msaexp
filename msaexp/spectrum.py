@@ -53,10 +53,16 @@ import astropy.units as u
 
 import eazy.igm
 
-igm = eazy.igm.Inoue14()
-
 from . import drizzle
 from . import utils as msautils
+
+try:
+    from .resample_numba import calculate_igm
+    igm_func = calculate_igm
+
+except ImportError:
+    igm = eazy.igm.Inoue14()
+    igm_func = igm.full_IGM
 
 SCALE_UNCERTAINTY = 1.0
 
@@ -224,11 +230,6 @@ class SpectrumSampler(object):
             wavelengths
 
         """
-        # try:
-        #     from .resample_numba import calculate_igm
-        #     FAST_IGM = True
-        # except ImportError:
-        #     FAST_IGM = False
             
         templ_wobs = template.wave.astype(np.float32) * (1 + z) / 1.0e4
         if fnu:
@@ -236,15 +237,16 @@ class SpectrumSampler(object):
         else:
             templ_flux = template.flux_flam(z=z).astype(np.float32)
 
-        # if FAST_IGM:
-        #     igmz = calculate_igm(z, templ_wobs*1.e4)
-        # else:
-        #     igmz = templ_wobs * 0.0 + 1
-        #     lyman = template.wave < 1300
-        #     igmz[lyman] = igm.full_IGM(z, templ_wobs[lyman] * 1.0e4)
-        
-        # Turn off
-        igmz = 1.
+        # # if FAST_IGM:
+        # #     igmz = calculate_igm(z, templ_wobs*1.e4)
+        # # else:
+        # #     igmz = templ_wobs * 0.0 + 1
+        # #     lyman = template.wave < 1300
+        # #     igmz[lyman] = igm_func(z, templ_wobs[lyman] * 1.0e4)
+        #
+        # # Turn off
+        # igmz = 1.
+        igmz = igm_func(z, templ_wobs*1.e4)
         
         res = self.resample_func(
             self.spec_wobs,
@@ -1249,7 +1251,7 @@ def make_templates(
 
         _A = np.vstack(_A)
 
-        igmz = igm.full_IGM(z, wobs.value * 1.0e4)
+        igmz = igm_func(z, wobs.value * 1.0e4)
 
         _A *= np.maximum(igmz, 0.01)
 
@@ -1300,7 +1302,7 @@ def make_templates(
 
             _A = np.vstack(_A)
 
-            igmz = igm.full_IGM(z, wobs.value * 1.0e4)
+            igmz = igm_func(z, wobs.value * 1.0e4)
             _A *= np.maximum(igmz, 0.01)
 
         elif len(eazy_templates) == 1:
@@ -1321,8 +1323,8 @@ def make_templates(
 
             _A = np.vstack([bspl * tflam])
 
-            igmz = igm.full_IGM(z, wobs.value * 1.0e4)
-            _A *= np.maximum(igmz, 0.01)
+            # igmz = igm_func(z, wobs.value * 1.0e4)
+            # _A *= np.maximum(igmz, 0.01)
 
         else:
             templates = []
@@ -1344,8 +1346,8 @@ def make_templates(
                 tline.append(False)
 
             _A = np.vstack(_A)
-            igmz = igm.full_IGM(z, wobs.value * 1.0e4)
-            _A *= np.maximum(igmz, 0.01)
+            # igmz = igm_func(z, wobs.value * 1.0e4)
+            # _A *= np.maximum(igmz, 0.01)
 
     return templates, np.array(tline), _A
 
@@ -1584,7 +1586,7 @@ def old_make_templates(
             apply_igm=False,
         )
 
-        igmz = igm.full_IGM(z, wobs.value * 1.0e4)
+        igmz = igm_func(z, wobs.value * 1.0e4)
         _A *= np.maximum(igmz, 0.01)
     else:
         templates = {}

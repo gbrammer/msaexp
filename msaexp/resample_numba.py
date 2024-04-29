@@ -339,6 +339,9 @@ def calculate_igm(z, wobs, scale_tau=1.):
     zS = z
     
     for i, wi in enumerate(wobs):
+        if wi > 1300.*(1 + zS):
+            continue
+        
         for j, lsj in enumerate(ALAM):
             # LS LAF
             if wi < lsj*(1 + zS):
