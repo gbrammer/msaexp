@@ -237,17 +237,9 @@ class SpectrumSampler(object):
         else:
             templ_flux = template.flux_flam(z=z).astype(np.float32)
 
-        # # if FAST_IGM:
-        # #     igmz = calculate_igm(z, templ_wobs*1.e4)
-        # # else:
-        # #     igmz = templ_wobs * 0.0 + 1
-        # #     lyman = template.wave < 1300
-        # #     igmz[lyman] = igm_func(z, templ_wobs[lyman] * 1.0e4)
-        #
-        # # Turn off
-        # igmz = 1.
-        igmz = igm_func(z, templ_wobs*1.e4)
-        
+        # Turn off
+        igmz = 1.
+
         res = self.resample_func(
             self.spec_wobs,
             self.spec_R_fwhm * scale_disp,
@@ -1252,8 +1244,7 @@ def make_templates(
         _A = np.vstack(_A)
 
         igmz = igm_func(z, wobs.value * 1.0e4)
-
-        _A *= np.maximum(igmz, 0.01)
+        _A *= np.maximum(igmz, 0.001)
 
     else:
         if isinstance(eazy_templates[0], dict) & (len(eazy_templates) == 2):
@@ -1303,7 +1294,7 @@ def make_templates(
             _A = np.vstack(_A)
 
             igmz = igm_func(z, wobs.value * 1.0e4)
-            _A *= np.maximum(igmz, 0.01)
+            _A *= np.maximum(igmz, 0.001)
 
         elif len(eazy_templates) == 1:
             # Scale single template by spline
@@ -1323,8 +1314,8 @@ def make_templates(
 
             _A = np.vstack([bspl * tflam])
 
-            # igmz = igm_func(z, wobs.value * 1.0e4)
-            # _A *= np.maximum(igmz, 0.01)
+            igmz = igm_func(z, wobs.value * 1.0e4)
+            _A *= np.maximum(igmz, 0.001)
 
         else:
             templates = []
@@ -1346,8 +1337,8 @@ def make_templates(
                 tline.append(False)
 
             _A = np.vstack(_A)
-            # igmz = igm_func(z, wobs.value * 1.0e4)
-            # _A *= np.maximum(igmz, 0.01)
+            igmz = igm_func(z, wobs.value * 1.0e4)
+            _A *= np.maximum(igmz, 0.001)
 
     return templates, np.array(tline), _A
 
