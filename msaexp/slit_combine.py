@@ -678,7 +678,8 @@ class SlitGroup:
                 "msa_configuration_id",
                 "msa_metadata_id",
             ]:
-                row[k] = inst[k]
+                if k in inst:
+                    row[k] = inst[k]
 
             _exp = sl.meta.exposure.instance
             for k in [
@@ -689,7 +690,8 @@ class SlitGroup:
                 "readpatt",
                 "start_time",
             ]:
-                row[k] = _exp[k]
+                if k in _exp:
+                    row[k] = _exp[k]
 
             _point = sl.meta.pointing.instance
             for k in _point:
