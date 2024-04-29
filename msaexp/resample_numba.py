@@ -6,6 +6,7 @@ __all__ = [
     "resample_template_numba",
     "sample_gaussian_line_numba",
     "pixel_integrated_gaussian_numba",
+    "compute_igm"
 ]
 
 
@@ -204,7 +205,7 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.0):
 
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
-def calculate_igm(z, wobs, scale_tau=1.):
+def compute_igm(z, wobs, scale_tau=1.):
     """
     Calculate Inoue+14 IGM transmission
     

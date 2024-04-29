@@ -57,8 +57,8 @@ from . import drizzle
 from . import utils as msautils
 
 try:
-    from .resample_numba import calculate_igm
-    igm_func = calculate_igm
+    from .resample_numba import compute_igm
+    igm_func = compute_igm
 
 except ImportError:
     igm = eazy.igm.Inoue14()
