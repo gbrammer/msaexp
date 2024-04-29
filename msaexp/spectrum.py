@@ -230,11 +230,15 @@ class SpectrumSampler(object):
         else:
             templ_flux = template.flux_flam(z=z).astype(np.float32)
 
+        igmz = templ_wobs * 0.0 + 1
+        lyman = template.wave < 1300
+        igmz[lyman] = igm.full_IGM(z, templ_wobs[lyman] * 1.0e4)
+
         res = self.resample_func(
             self.spec_wobs,
             self.spec_R_fwhm * scale_disp,
             templ_wobs,
-            templ_flux,
+            templ_flux * igmz,
             velocity_sigma=velocity_sigma,
             nsig=nsig,
         )
@@ -1234,6 +1238,7 @@ def make_templates(
         _A = np.vstack(_A)
 
         igmz = igm.full_IGM(z, wobs.value * 1.0e4)
+
         _A *= np.maximum(igmz, 0.01)
 
     else:
