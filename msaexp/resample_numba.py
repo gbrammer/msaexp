@@ -105,7 +105,12 @@ def resample_template_numba(
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
 def sample_gaussian_line_numba(
-    spec_wobs, spec_R_fwhm, line_um, line_flux=1.0, velocity_sigma=100
+    spec_wobs,
+    spec_R_fwhm,
+    line_um,
+    line_flux=1.0,
+    velocity_sigma=100,
+    with_dx=False,
 ):
     """
     Sample a Gaussian emission line on the spectrum wavelength grid accounting
@@ -127,6 +132,9 @@ def sample_gaussian_line_numba(
 
     velocity_sigma : float
         Kinematic velocity width, km/s
+
+    with_dx : bool
+        Supply `dx=np.gradient(spec_wobs)` rather than simple diff
 
     Returns
     -------
@@ -184,7 +192,12 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.0):
     mux = mu * np.ones_like(x)
 
     if dx is None:
-        xdx = x[1:] - x[:-1]
+        # Like np.gradient
+        # https://github.com/numba/numba/issues/6302
+        xdx = np.ones_like(x)
+        xdx[1:-1] = (x[2:] - x[:-2]) / 2.0
+        xdx[0] = x[1] - x[0]
+        xdx[-1] = x[-1] - x[-2]
     else:
         xdx = dx * np.ones_like(x)
 
@@ -345,12 +358,12 @@ def compute_igm(z, wobs, scale_tau=1.0):
 
     tau = np.zeros_like(wobs)
     zS = z
-    
+
     # Explicit iteration should be fast in JIT
     for i, wi in enumerate(wobs):
         if wi > 1300.0 * (1 + zS):
             continue
-        
+
         # Iterate over Lyman series
         for j, lsj in enumerate(ALAM):
             # LS LAF
