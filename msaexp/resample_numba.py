@@ -207,7 +207,9 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.0):
 @jit(nopython=True, fastmath=True, error_model="numpy")
 def compute_igm(z, wobs, scale_tau=1.0):
     """
-    Calculate Inoue+14 IGM transmission
+    Calculate
+    [Inoue+ (2014)](https://ui.adsabs.harvard.edu/abs/2014MNRAS.442.1805I) IGM
+    transmission, reworked from `~eazy.igm.Inoue14`
 
     Parameters
     ----------
@@ -218,12 +220,12 @@ def compute_igm(z, wobs, scale_tau=1.0):
         Observed-frame wavelengths, Angstroms
 
     scale_tau : float
-        Scale factor multiplied to tau_igm
+        Scalar multiplied to tau_igm
 
     Returns
     -------
     igmz : array-like
-        IGM transmission
+        IGM transmission factor
     """
 
     _LAF = np.array(
@@ -322,7 +324,8 @@ def compute_igm(z, wobs, scale_tau=1.0):
     ADLA1 = _DLA[2]
     ADLA2 = _DLA[3]
 
-    _pow = lambda a, b: a**b
+    def _pow(a, b):
+        return a**b
 
     ####
     # Lyman series, Lyman-alpha forest
@@ -342,11 +345,13 @@ def compute_igm(z, wobs, scale_tau=1.0):
 
     tau = np.zeros_like(wobs)
     zS = z
-
+    
+    # Explicit iteration should be fast in JIT
     for i, wi in enumerate(wobs):
         if wi > 1300.0 * (1 + zS):
             continue
-
+        
+        # Iterate over Lyman series
         for j, lsj in enumerate(ALAM):
             # LS LAF
             if wi < lsj * (1 + zS):
@@ -365,8 +370,9 @@ def compute_igm(z, wobs, scale_tau=1.0):
                 else:
                     tau[i] += ADLA2[j] * (wi / lsj) ** 3
 
-        # LC DLA
+        # Lyman Continuum
         if wi < lamL * (1 + zS):
+            # LC DLA
             if zS < z1DLA:
                 tau[i] += (
                     0.2113 * _pow(1 + zS, 2)
@@ -413,7 +419,6 @@ def compute_igm(z, wobs, scale_tau=1.0):
                         - 0.2496 * _pow(wi / lamL, 2.1)
                     )
             else:
-
                 if wi > lamL * (1.0 + z2LAF):
                     tau[i] += 5.221e-4 * (
                         _pow(1 + zS, 3.4) * _pow(wi / lamL, 2.1)
@@ -433,4 +438,5 @@ def compute_igm(z, wobs, scale_tau=1.0):
                     )
 
     igmz = np.exp(-scale_tau * tau)
+
     return igmz
