@@ -110,7 +110,6 @@ def sample_gaussian_line_numba(
     line_um,
     line_flux=1.0,
     velocity_sigma=100,
-    with_dx=False,
 ):
     """
     Sample a Gaussian emission line on the spectrum wavelength grid accounting
@@ -132,9 +131,6 @@ def sample_gaussian_line_numba(
 
     velocity_sigma : float
         Kinematic velocity width, km/s
-
-    with_dx : bool
-        Supply `dx=np.gradient(spec_wobs)` rather than simple diff
 
     Returns
     -------
