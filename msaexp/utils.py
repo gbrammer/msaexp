@@ -2913,7 +2913,7 @@ def slit_cutout_region(slitfile, as_text=True, skip=8, verbose=False):
     --------
     str or `grizli.utils.SRegion`
         If `as_text` is True, the region is returned as a text string.
-        If `as_text` is False, the region is returned as a 
+        If `as_text` is False, the region is returned as a
         `grizli.utils.SRegion` object.
 
     """
@@ -2991,7 +2991,7 @@ def all_slit_cutout_regions(files, output="slits.reg", **kwargs):
     Parameters:
     ----------
     files : list
-        A list of file paths that will be passed to 
+        A list of file paths that will be passed to
        `~msaexp.utils.slit_cutout_region`
     output : str, optional
         The output file path where the slit cutout regions will be saved.
