@@ -1,5 +1,7 @@
 on: [push]
 
+name: Compile Paper
+
 jobs:
   paper:
     runs-on: ubuntu-latest
