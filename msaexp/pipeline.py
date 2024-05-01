@@ -158,6 +158,22 @@ def query_program(
 def download_msa_meta_files(files=None, do_download=True):
     """
     Download ``MSAMETFL`` files indicated in header keywords
+
+    Parameters
+    ----------
+    files : list, optional
+        List of files to consider. If not provided, it will search for all
+        "*rate.fits" and "*cal.fits" files in the current directory.
+
+    do_download : bool, optional
+        Flag indicating whether to download the files. Default is True.
+
+    Returns
+    -------
+    msa : list
+        List of MSA files downloaded from MAST.
+
+    Note: This documentation is mainly AI-generated and will be reviewed.
     """
     import mastquery.utils
 
@@ -182,15 +198,12 @@ def download_msa_meta_files(files=None, do_download=True):
     return msa
 
 
-def exposure_groups(path="./", files=None, split_groups=True, verbose=True):
+def exposure_groups(files=None, split_groups=True, verbose=True):
     """
     Group files by MSAMETFL, grating, filter, detector
 
     Parameters
     ----------
-    path : str
-        Path to ``rate.fits`` files
-
     files : list, None
         Explicit list of ``rate.fits`` files to consider.  Otherwise, `glob` in
         working directory
@@ -313,7 +326,6 @@ class SlitData:
         self,
         file="jw02756001001_03101_00001_nrs1_rate.fits",
         step="phot",
-        verbose=True,
         read=False,
         indices=None,
         targets=None,
@@ -328,9 +340,6 @@ class SlitData:
 
         step : str
             Calibration pipeline processing step of the output slitlet file
-
-        verbose : bool
-            Print status messages
 
         read : bool
             Don't just find the filenames but also read the data
@@ -386,6 +395,11 @@ class SlitData:
     def read_data(self, verbose=True):
         """
         Read files into SlitModel objects in `slits` attribute
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            Prints a statement per read file if True (default).
         """
         from jwst.datamodels import SlitModel
 
@@ -475,7 +489,7 @@ class NirspecPipeline:
         utils.LOGFILE = self.mode + ".log.txt"
 
         if files is None:
-            groups = exposure_groups(verbose=False)
+            groups = exposure_groups(verbose=verbose)
             if mode in groups:
                 self.files = groups[mode]
             else:
@@ -484,12 +498,12 @@ class NirspecPipeline:
             self.files = files
 
         msg = f"msaexp.NirspecPipeline: Initialize {mode}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True, show_date=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose, show_date=True)
 
         for file in self.files:
             msg = f"msaexp.NirspecPipeline: {file}"
             utils.log_comment(
-                utils.LOGFILE, msg, verbose=True, show_date=False
+                utils.LOGFILE, msg, verbose=verbose, show_date=False
             )
 
         self.pipe = OrderedDict()
@@ -611,7 +625,20 @@ class NirspecPipeline:
 
     def slit_index(self, key):
         """
-        Index of ``key`` in ``self.slitlets``
+        Index of ``key`` in ``self.slitlets``.
+
+        Parameters
+        ----------
+        key : str
+            The key to search for in ``self.slitlets``.
+
+        Returns
+        -------
+        int or None
+            The index of ``key`` in ``self.slitlets`` if it exists,
+            otherwise None.
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         if key not in self.slitlets:
             return None
@@ -621,6 +648,21 @@ class NirspecPipeline:
     def initialize_from_cals(self, key="phot", verbose=True):
         """
         Initialize processing object from cal.fits products
+
+        Parameters
+        ----------
+        key : str
+            The key to identify the calibration product to load.
+            Default is "phot".
+
+        verbose : bool, optional
+            If True, print verbose output. Default is True.
+
+        Returns
+        -------
+        None
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         import jwst.datamodels
 
@@ -629,7 +671,9 @@ class NirspecPipeline:
             msg = (
                 f"msaexp.initialize_from_cals : load {file} as MultiSlitModel"
             )
-            utils.log_comment(utils.LOGFILE, msg, verbose=True, show_date=True)
+            utils.log_comment(
+                utils.LOGFILE, msg, verbose=verbose, show_date=True
+            )
             self.pipe[key].append(jwst.datamodels.MultiSlitModel(file))
 
         self.last_step = key
@@ -661,6 +705,9 @@ class NirspecPipeline:
         scale_rnoise : bool
             Calculate rescaling of the ``VAR_RNOISE`` data extension based on
             pixel statistics
+
+        skip_completed : bool
+            Skip steps that have already been completed
 
         Returns
         -------
@@ -926,6 +973,21 @@ class NirspecPipeline:
     def save_slit_data(self, step="phot", verbose=True):
         """
         Save slit data to FITS
+
+        Parameters
+        ----------
+        step : str
+            The step of the pipeline at which the slit data is saved.
+
+        verbose : bool, optional
+            If True, print verbose output. Default is True.
+
+        Returns
+        -------
+        bool
+            True if the slit data is saved successfully.
+
+        Note: This documentation is mainly AI-generated and will be reviewed
         """
         from jwst.datamodels import SlitModel
 
@@ -952,7 +1014,9 @@ class NirspecPipeline:
                     dm = SlitModel(self.pipe[step][j].slits[i].instance)
                     dm.write(slit_file, overwrite=True)
                 except:
-                    utils.log_exception(utils.LOGFILE, traceback, verbose=True)
+                    utils.log_exception(
+                        utils.LOGFILE, traceback, verbose=verbose
+                    )
 
         return True
 
@@ -1117,6 +1181,20 @@ class NirspecPipeline:
         """
         Initialize elements in ``self.pipe['bkg']`` for background-subtracted
         slitlets
+
+        Parameters
+        ----------
+        find_by_id : bool, optional
+            If True, find background slits by source ID.
+            If False, find background slits by slitlet ID.
+            Default is False.
+
+        Returns
+        -------
+        bool
+            True if the initialization is successful.
+
+        Note: This documentation is mainly AI-generated and will be reviewed
         """
         # Get from slitlet_ids
         # indices = [self.slitlets[k]['slitlet_id'] for k in self.slitlets]
@@ -1167,6 +1245,38 @@ class NirspecPipeline:
     ):
         """
         Fit for profile width and offset
+
+        Parameters
+        ----------
+        key : str
+            The key of the slitlet to fit the profile for.
+
+        yoffset : float, optional
+            The initial guess for the cross-dispersion offset. Default is None.
+
+        prof_sigma : float, optional
+            The initial guess for the profile width. Default is None.
+
+        bounds : list, optional
+            The bounds for the fitting parameters.
+            Default is [(-5, 5), (1.4 / 2.35, 3.5 / 2.35)].
+
+        min_delta : float, optional
+            The minimum change in chi-square required to perform the fit.
+            Default is 100.
+
+        use_huber : bool, optional
+            If True, use Huber loss function for fitting. Default is True.
+
+        verbose : bool, optional
+            If True, print verbose output. Default is True.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the fitted profile width and offset.
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         from photutils.psf import IntegratedGaussianPRF
         from scipy.optimize import minimize
@@ -1204,10 +1314,33 @@ class NirspecPipeline:
         ytr = slitlet["ytrace"] * 2 - yd
 
         def _objfun_fit_profile(params, data, ret):
+            # TODO: should the values for "data" be explained in detail? (K.V.)
             """
-            Loss function for fitting profile parameters
+            Loss function for fitting profile parameters.
 
-            params: yoffset, prof_sigma
+            Parameters
+            ----------
+            params : array-like
+                The fitting parameters yoffset and prof_sigma
+                (see 'fit_profile').
+
+            data : tuple
+                A tuple containing the data needed for the fitting.
+
+            ret : int
+                The return value (see 'Returns').
+
+            Returns
+            -------
+            array-like or float
+                The desired output based on the value of `ret`:
+                - 0: return the chi values
+                - 1: return the chi squared value
+                - 2: return the loss value
+                - other: return the fitted profile
+
+            Note: This documentation is mainly AI-generated
+            and will be reviewed.
             """
             from scipy.special import huber
 
@@ -1291,11 +1424,24 @@ class NirspecPipeline:
         """
         Get background-subtracted slitlets
 
+        Parameters
+        ----------
+        key : str
+            The key of the slitlet
+
+        step : str, optional
+            The step in the pipeline to get the slitlets from. Default is "bkg"
+
+        check_background : bool, optional
+            If True, check if the background subtraction has been performed.
+            Default is True.
+
         Returns
         -------
         slits : list
             List of `jwst.datamodels.slit.SlitModel` objects
 
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         if step not in self.pipe:
             return None
@@ -1320,7 +1466,24 @@ class NirspecPipeline:
 
     def drizzle_2d(self, key, drizzle_params={}, **kwargs):
         """
-        not used...
+        Not used
+
+        Drizzle the 2D spectra for a given slitlet.
+
+        Parameters
+        ----------
+        key : str
+            The key of the slitlet to drizzle the spectra for.
+
+        drizzle_params : dict, optional
+            Additional parameters to pass to the `ResampleSpecData` class.
+
+        Returns
+        -------
+        `jwst.datamodels.ModelContainer`
+            The drizzled 2D spectra.
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         from jwst.datamodels import ModelContainer
         from jwst.resample.resample_spec import ResampleSpecData
@@ -1340,7 +1503,18 @@ class NirspecPipeline:
 
     def get_slit_traces(self, verbose=True):
         """
-        Set center of slit traces in `slitlets`
+        Set center of slit traces in `slitlets`.
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            If True, print verbose output. Default is True.
+
+        Returns
+        -------
+        None
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
 
         msg = "msaexp.get_slit_traces: Run"
@@ -1405,8 +1579,90 @@ class NirspecPipeline:
         min_dyoffset=0.2,
         **kwargs,
     ):
+        # TODO: I could not identify correct types of the return values. (K.V.)
         """
         Main function for extracting 2D/1D spectra from individual slitlets
+
+        Parameters
+        ----------
+
+        key: str
+            The key of the slitlet to extract the spectrum from.
+
+        slit_key: str
+            The key of the slit to use for extraction.
+            If None, the last step in the pipeline will be used.
+
+        prof_sigma: float
+            The sigma parameter for the IntegratedGaussianPRF.
+            If None, the value from the slitlet will be used.
+
+        fit_profile_params: dict
+            Additional parameters for fitting the profile.
+            Default is {"min_delta": 100}.
+
+        pstep: float
+            The step size for the running median. Default is 1.0.
+
+        show_sn: bool
+            Whether to show the signal-to-noise ratio. Default is True.
+
+        flux_unit: str
+            The unit of the flux. Default is FNU_UNIT.
+
+        vmax: float
+            The maximum value for the plot. Default is 0.2.
+
+        yoffset: float
+            The y offset for the slit.
+            If None, the value from the slitlet will be used.
+
+        skip: list
+            A list of indices to skip. Default is None.
+
+        bad_dq_bits: int
+            The bad dq bits to mask. Default is (1 | 1024).
+
+        clip_sigma: float
+            The sigma value for clipping. Default is -4.
+
+        ntrim: int
+            The number of points to trim. Default is 5.
+
+        get_slit_data: bool
+            Whether to get the slit data. Default is False.
+
+        verbose: bool
+            Whether to print verbose output. Default is False.
+
+        center2d: bool
+            Whether to center the 2D spectrum. Default is False.
+
+        trace_sign: int
+            The sign of the trace. Default is 1.
+
+        min_dyoffset: float
+            The minimum value for the y offset. Default is 0.2.
+
+        Returns:
+        ----------
+        If 'key' is not found in 'slitlets', returns None.
+
+        Else:
+
+        slitlet: object
+            The slitlet object.
+
+        tabs: list
+            A list of tables containing the extracted spectra.
+
+        full_tab: object
+            The combined table of all extracted spectra.
+
+        fig: object
+            The matplotlib figure object.
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         from photutils.psf import IntegratedGaussianPRF
         import eazy.utils
@@ -1892,6 +2148,25 @@ class NirspecPipeline:
     def extract_all_slits(self, keys=None, verbose=True, close=True, **kwargs):
         """
         Extract all spectra and make diagnostic figures
+
+        Parameters
+        ----------
+        keys : list, optional
+            List of keys corresponding to the slitlets to extract spectra from.
+            If not provided, spectra will be extracted from all slitlets.
+        verbose : bool, optional
+            Print status messages. Default is True.
+        close : bool, optional
+            Close all figures after saving. Default is True.
+        **kwargs : dict, optional
+            Additional keyword arguments to pass to the
+            `extract_spectrum` method.
+
+        Returns
+        -------
+        None
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         slitlets = self.slitlets
 
@@ -2011,6 +2286,7 @@ class NirspecPipeline:
     def load_slit_data(
         self, step="phot", verbose=True, indices=None, targets=None
     ):
+        # TODO: I could not determine the condition for the None return (K.V.)
         """
         Load slitlet data from saved files.  This script runs
         `msaexp.pipeline.SlitData` for each exposure file in the group.
@@ -2029,6 +2305,11 @@ class NirspecPipeline:
         targets : list, None
             Optional target names of specific individual sources
 
+        Returns
+        -------
+        slit_lists : list
+            List of `msaexp.pipeline.SlitData` objects containing the loaded
+            slitlet data.
         """
         slit_lists = [
             SlitData(
@@ -2049,7 +2330,20 @@ class NirspecPipeline:
 
     def parse_slit_info(self, write=True):
         """
-        Parse information from / to ``{mode}.slits.yaml`` file
+        Parse information from / to ``{mode}.slits.yaml`` file.
+
+        Parameters
+        ----------
+        write : bool, optional
+            Whether to write the parsed information back to the YAML file.
+            Default is True.
+
+        Returns
+        -------
+        info : dict
+            A dictionary containing the parsed information from the YAML file.
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         import yaml
 
@@ -2108,6 +2402,47 @@ class NirspecPipeline:
     ):
         """
         Run all steps through extractions
+
+        Parameters
+        ----------
+        load_saved : str, optional
+            The calibration pipeline processing step to load saved data from.
+            If provided, the pipeline will skip the preprocessing
+            and JWST pipeline steps.
+            Default is None.
+
+        run_preprocess : bool, optional
+            Whether to run the preprocessing step. Default is True.
+
+        run_extractions : bool, optional
+            Whether to run the extraction step. Default is True.
+
+        indices : list, optional
+            List of slit indices of specific files to process. Default is None.
+
+        targets : list, optional
+            List of target names of specific individual sources to process.
+            Default is None.
+
+        initialize_bkg : bool, optional
+            Whether to initialize the background slits. Default is True.
+
+        make_regions : bool, optional
+            Whether to create slit source regions. Default is True.
+
+        use_yaml_metadata : bool, optional
+            Whether to use YAML metadata for initializing slit metadata.
+            Default is True.
+
+        **kwargs : dict, optional
+            Additional keyword arguments to pass to the preprocessing and
+            extraction steps.
+
+        Returns
+        -------
+        None
+
+        Note: This documentation is mainly AI-generated and will be reviewed.
         """
 
         if load_saved is not None:
@@ -2163,6 +2498,26 @@ class NirspecPipeline:
 def make_summary_tables(root="msaexp", zout=None):
     """
     Make a summary table of all extracted sources
+
+    Parameters:
+    -----------
+
+    root : str
+        The root directory where the data is stored. Default is "msaexp".
+
+    zout : astropy.table.Table
+        Optional table containing redshift information. Default is None.
+
+    Returns:
+    --------
+    tabs : list
+        List of astropy tables containing the extracted source information.
+
+    full : astropy.table.Table
+
+        Combined astropy table containing all the extracted source information.
+
+    Note: This documentation is mainly AI-generated and will be reviewed.
     """
     import yaml
     import astropy.table
