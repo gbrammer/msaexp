@@ -2706,6 +2706,106 @@ def get_nirspec_psf_fwhm(wave):
     return fwhm
 
 
+def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
+    """
+    Generate the `msaexp` prism bar-shadow correction
+
+    Parameters
+    ----------
+    scaled_yshutter : array-like
+        Cross-dispersion pixel coordinates, scaled by a factor of 1/5 to roughly have
+        units of the MSA shutters
+
+    wrap : bool, str
+        If ``auto``, determine if the bounds of ``scaled_yshutter`` are more than 0.5
+        shutters outside of the (-1.5, 1.5) range used to determine the correction.
+        If so, or if ``wrap=True``, replicate the center shutter to all specified
+        shutters.
+
+    Returns
+    -------
+    bar : array-like
+        The estimated bar throughput.  To correct, divide by ``bar``
+
+    is_wrapped : bool
+        Was the bar profile wrapped using the single central shutter, e.g., from
+        ``wrap='auto'``?
+
+    Examples
+    --------
+    .. plot::
+        :include-source:
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import msaexp.utils
+
+        scaled_yshutter = np.linspace(-1.6, 1.6, 512)
+        fig, ax = plt.subplots(1,1,figsize=(6,4))
+        bar = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
+        ax.plot(scaled_yshutter, bar)
+        ax.grid()
+        ax.set_xlabel('scaled_yshutter = cross-dispersion pixel / 5')
+        ax.set_ylabel('bar shadow correction')
+        fig.tight_layout(pad=1)
+
+    .. code-block:: python
+        :dedent:
+
+        slit_file = 'jw04233006001_03101_00002_nrs2_phot.076.4233_75646.fits'
+        slit = jwst.datamodels.open(slit_file)
+        # get the trace center
+        _trace = msaexp.utils.slit_trace_center(
+            slit,
+            with_source_xpos=False,
+            with_source_ypos=False
+        )
+        # scaled coordinates
+        yp, xp = np.indices(slit.data.shape)
+        scaled_yshutter = (yp - _trace[1]) / 5
+        bar = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
+        plt.imshow(bar, aspect='auto')
+
+    """
+    import yaml
+
+    path_to_ref = os.path.join(
+        os.path.dirname(__file__), "data", "prism_bar_coeffs.yaml"
+    )
+
+    with open(path_to_ref) as fp:
+        bar_data = yaml.load(fp, Loader=yaml.Loader)
+
+    df = len(bar_data["coeffs"])
+
+    if wrap in ["auto"]:
+        is_wrapped = np.nanmin(scaled_yshutter) < bar_data["minmax"][0] - 0.5
+        is_wrapped |= np.nanmin(scaled_yshutter) > bar_data["minmax"][1] + 0.5
+    elif wrap in [True]:
+        is_wrapped = True
+    else:
+        is_wrapped = False
+
+    if is_wrapped:
+        pass_yshutter = ((scaled_yshutter.flatten() + 0.5) % 1) - 0.5
+        mask = False
+    else:
+        pass_yshutter = scaled_yshutter.flatten()
+
+    _spl = grizli.utils.bspline_templates(
+        pass_yshutter,
+        df=df,
+        get_matrix=True,
+        minmax=bar_data["minmax"],
+    )
+
+    bar = _spl.dot(bar_data["coeffs"]).reshape(scaled_yshutter.shape)
+    if mask:
+        bar[scaled_yshutter < bar_data["minmax"][0]] = np.nan
+        bar[scaled_yshutter > bar_data["minmax"][1]] = np.nan
+
+    return bar, is_wrapped
+
+
 def make_nirspec_gaussian_profile(
     waves,
     sigma=0.5,
