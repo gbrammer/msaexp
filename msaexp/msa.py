@@ -457,7 +457,7 @@ class MSAMetafile:
 
         Returns
         -------
-        mat : `~astropy.table.Table`
+        mast : `~astropy.table.Table`
             Query results from `mastquery.jwst.query_jwst`.
 
         """
