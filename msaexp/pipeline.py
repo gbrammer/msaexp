@@ -1573,7 +1573,6 @@ class NirspecPipeline:
         min_dyoffset=0.2,
         **kwargs,
     ):
-        # TODO: I could not identify correct types of the return values. (K.V.)
         """
         Main function for extracting 2D/1D spectra from individual slitlets
 
@@ -2278,7 +2277,6 @@ class NirspecPipeline:
     def load_slit_data(
         self, step="phot", verbose=True, indices=None, targets=None
     ):
-        # TODO: I could not determine the condition for the None return (K.V.)
         """
         Load slitlet data from saved files.  This script runs
         `msaexp.pipeline.SlitData` for each exposure file in the group.
