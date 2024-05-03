@@ -173,7 +173,6 @@ def download_msa_meta_files(files=None, do_download=True):
     msa : list
         List of MSA files downloaded from MAST.
 
-    Note: This documentation is mainly AI-generated and will be reviewed.
     """
     import mastquery.utils
 
@@ -638,7 +637,6 @@ class NirspecPipeline:
             The index of ``key`` in ``self.slitlets`` if it exists,
             otherwise None.
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         if key not in self.slitlets:
             return None
@@ -662,7 +660,6 @@ class NirspecPipeline:
         -------
         None
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         import jwst.datamodels
 
@@ -977,7 +974,7 @@ class NirspecPipeline:
         Parameters
         ----------
         step : str
-            The step of the pipeline at which the slit data is saved.
+            The step of the pipeline from which the slit data is saved.
 
         verbose : bool, optional
             If True, print verbose output. Default is True.
@@ -987,7 +984,6 @@ class NirspecPipeline:
         bool
             True if the slit data is saved successfully.
 
-        Note: This documentation is mainly AI-generated and will be reviewed
         """
         from jwst.datamodels import SlitModel
 
@@ -1194,7 +1190,6 @@ class NirspecPipeline:
         bool
             True if the initialization is successful.
 
-        Note: This documentation is mainly AI-generated and will be reviewed
         """
         # Get from slitlet_ids
         # indices = [self.slitlets[k]['slitlet_id'] for k in self.slitlets]
@@ -1276,7 +1271,6 @@ class NirspecPipeline:
         tuple
             A tuple containing the fitted profile width and offset.
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         from photutils.psf import IntegratedGaussianPRF
         from scipy.optimize import minimize
@@ -1314,7 +1308,6 @@ class NirspecPipeline:
         ytr = slitlet["ytrace"] * 2 - yd
 
         def _objfun_fit_profile(params, data, ret):
-            # TODO: should the values for "data" be explained in detail? (K.V.)
             """
             Loss function for fitting profile parameters.
 
@@ -1326,7 +1319,13 @@ class NirspecPipeline:
 
             data : tuple
                 A tuple containing the data needed for the fitting.
-
+                - xx0 : unused
+                - yp : y pixel
+                - ytr : trace
+                - sh : shape
+                _clean : cleaned array
+                _ivar : inverse variance weight
+                bad : mask
             ret : int
                 The return value (see 'Returns').
 
@@ -1334,13 +1333,11 @@ class NirspecPipeline:
             -------
             array-like or float
                 The desired output based on the value of `ret`:
-                - 0: return the chi values
+                - 0: return the full chi array
                 - 1: return the chi squared value
                 - 2: return the loss value
                 - other: return the fitted profile
 
-            Note: This documentation is mainly AI-generated
-            and will be reviewed.
             """
             from scipy.special import huber
 
@@ -1427,7 +1424,7 @@ class NirspecPipeline:
         Parameters
         ----------
         key : str
-            The key of the slitlet
+            The key identifier of the slitlet
 
         step : str, optional
             The step in the pipeline to get the slitlets from. Default is "bkg"
@@ -1441,7 +1438,6 @@ class NirspecPipeline:
         slits : list
             List of `jwst.datamodels.slit.SlitModel` objects
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         if step not in self.pipe:
             return None
@@ -1483,7 +1479,6 @@ class NirspecPipeline:
         `jwst.datamodels.ModelContainer`
             The drizzled 2D spectra.
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         from jwst.datamodels import ModelContainer
         from jwst.resample.resample_spec import ResampleSpecData
@@ -1514,7 +1509,6 @@ class NirspecPipeline:
         -------
         None
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
 
         msg = "msaexp.get_slit_traces: Run"
@@ -1660,9 +1654,8 @@ class NirspecPipeline:
             The combined table of all extracted spectra.
 
         fig: object
-            The matplotlib figure object.
+            The `matplotlib` figure object.
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         from photutils.psf import IntegratedGaussianPRF
         import eazy.utils
@@ -2166,7 +2159,6 @@ class NirspecPipeline:
         -------
         None
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         slitlets = self.slitlets
 
@@ -2343,7 +2335,6 @@ class NirspecPipeline:
         info : dict
             A dictionary containing the parsed information from the YAML file.
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         import yaml
 
@@ -2442,7 +2433,6 @@ class NirspecPipeline:
         -------
         None
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
 
         if load_saved is not None:
@@ -2506,7 +2496,7 @@ def make_summary_tables(root="msaexp", zout=None):
         The root directory where the data is stored. Default is "msaexp".
 
     zout : astropy.table.Table
-        Optional table containing redshift information. Default is None.
+        Optional table containing photometric redshift information. Default is None.
 
     Returns:
     --------
@@ -2517,7 +2507,6 @@ def make_summary_tables(root="msaexp", zout=None):
 
         Combined astropy table containing all the extracted source information.
 
-    Note: This documentation is mainly AI-generated and will be reviewed.
     """
     import yaml
     import astropy.table
