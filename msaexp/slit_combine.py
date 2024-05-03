@@ -535,7 +535,7 @@ class SlitGroup:
             "trace_from_yoffset": "Trace derived from yoffsets",
             "stuck_threshold": "Stuck shutter threshold",
             # 'bad_shutter_names': bad_shutter_names,
-            "undo_barshadow": "Bar shaddow update behavior",
+            "undo_barshadow": "Bar shadow update behavior",
             "wrapped_barshadow": "Bar shadow was wrapped for central shutter",
             "own_barshadow": "Internal bar shadow correction applied",
             "nod_offset": "Nod offset size, pixels",

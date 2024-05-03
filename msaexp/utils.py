@@ -2740,13 +2740,17 @@ def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
         import msaexp.utils
 
         scaled_yshutter = np.linspace(-1.6, 1.6, 512)
+
         fig, ax = plt.subplots(1,1,figsize=(6,4))
-        bar = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
+        bar, _wrapped = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
         ax.plot(scaled_yshutter, bar)
         ax.grid()
+
         ax.set_xlabel('scaled_yshutter = cross-dispersion pixel / 5')
         ax.set_ylabel('bar shadow correction')
+
         fig.tight_layout(pad=1)
+        fig.show()
 
     .. code-block:: python
         :dedent:
@@ -2762,7 +2766,8 @@ def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
         # scaled coordinates
         yp, xp = np.indices(slit.data.shape)
         scaled_yshutter = (yp - _trace[1]) / 5
-        bar = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
+        bar, _wrapped = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
+
         plt.imshow(bar, aspect='auto')
 
     """
