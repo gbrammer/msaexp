@@ -2735,6 +2735,7 @@ def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
     --------
     .. plot::
         :include-source:
+
         import numpy as np
         import matplotlib.pyplot as plt
         import msaexp.utils
@@ -2745,6 +2746,28 @@ def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
         bar, _wrapped = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
         ax.plot(scaled_yshutter, bar)
         ax.grid()
+
+        ax.set_xlabel('scaled_yshutter = cross-dispersion pixel / 5')
+        ax.set_ylabel('bar shadow correction')
+
+        fig.tight_layout(pad=1)
+        fig.show()
+
+    .. plot::
+        :include-source:
+
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import msaexp.utils
+
+        # 5-shutter slitlet
+        scaled_yshutter = np.linspace(-2.51, 2.51, 1024)
+
+        fig, ax = plt.subplots(1,1,figsize=(6,4))
+        bar, _wrapped = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
+        ax.plot(scaled_yshutter, bar, label=f'wrapped: {_wrapped}')
+        ax.grid()
+        ax.legend()
 
         ax.set_xlabel('scaled_yshutter = cross-dispersion pixel / 5')
         ax.set_ylabel('bar shadow correction')
