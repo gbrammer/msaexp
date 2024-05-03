@@ -43,6 +43,12 @@ def pad_msa_metafile(
     prefix : str
         Prefix of new file to create (``prefix + metafile``)
 
+    verbose : bool
+        Print verbose output
+
+    primary_sources : bool
+        Include only primary sources
+
     Returns
     -------
 
@@ -401,7 +407,8 @@ class MSAMetafile:
     @property
     def key_pairs(self):
         """
-        List of unique ``msa_metadata_id, dither_point_index`` pairs from the ``shutter_table``
+        List of unique ``msa_metadata_id, dither_point_index`` pairs 
+        from the ``shutter_table``
 
         Returns
         -------
@@ -450,7 +457,7 @@ class MSAMetafile:
 
         Returns
         -------
-        mat : `~astropy.table.Table`
+        mast : `~astropy.table.Table`
             Query results from `mastquery.jwst.query_jwst`.
 
         """
@@ -511,7 +518,6 @@ class MSAMetafile:
         msa_metadata_id=None,
         fit_degree=2,
         verbose=False,
-        min_source_id=0,
         **kwargs,
     ):
         """
@@ -832,6 +838,9 @@ class MSAMetafile:
 
         add_labels : bool
             Add plot labels
+
+        set_axis_labels : bool
+            Set axis labels
 
         Returns
         -------
@@ -1253,7 +1262,26 @@ class MSAMetafile:
         check_rms=True,
     ):
         """
-        Read shutter (i,j) > (v2,v3) transformations from the files at https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+        Read shutter (i,j) > (v2,v3) transformations from the files at
+        https://github.com/spacetelescope/pysiaf/tree/master/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+
+        Parameters
+        ----------
+        prefix : str, optional
+            URL prefix for the files containing the transformations.
+
+        check_rms : bool, optional
+            If True, calculate and print the root mean square (RMS) of the
+            transformations.
+
+        Returns
+        -------
+
+        transforms : dict
+
+            A dictionary containing the (i,j) > (v2,v3) transformations for each
+            quadrant of the MSA.
+
         """
         from astropy.modeling.models import Polynomial2D
         from astropy.modeling.fitting import LinearLSQFitter
@@ -1669,6 +1697,12 @@ class MSAMetafile:
         msa_metadata_id, dither_point_index : int
             Exposure definition
 
+        meta_keys : list of str, optional
+            List of metadata keys to include in the output
+
+        verbose : bool, optional
+            Print verbose messages
+
         Returns
         -------
             String or a list of `grizli.utils.SRegion` objects, depending on
@@ -1798,7 +1832,8 @@ class MSAMetafile:
 
     def all_regions_from_metafile_siaf(self, **kwargs):
         """
-        Run `~msaexp.msa.MSAMetafile.regions_from_metafile_siaf` for all exposures
+        Run `~msaexp.msa.MSAMetafile.regions_from_metafile_siaf` 
+        for all exposures
 
         Parameters
         ----------
@@ -1834,7 +1869,47 @@ def fit_siaf_shutter_transforms(
     prefix=PYSIAF_GITHUB, degree=3, inverse_degree=2, check_rms=True
 ):
     """
-    Fit shutter (i,j) > (v2,v3) transformations from the files at https://github.com/spacetelescope/pysiaf/tree/main/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+    Fit shutter (i,j) > (v2,v3) transformations from the files at
+    https://github.com/spacetelescope/pysiaf/tree/main/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData
+
+    Parameters
+    ----------
+    prefix : str, optional
+        The URL prefix for the files containing the transformations.
+    degree : int, optional
+        The degree of the polynomial fit for the transformations. Default is 3.
+    inverse_degree : int, optional
+        The degree of the polynomial fit for the inverse transformations.
+        Default is 2.
+    check_rms : bool, optional
+        Whether to calculate and print the RMS of the transformations.
+        Default is True.
+
+    Returns
+    -------
+    transforms : dict
+        A dictionary containing the fitted transformations. The keys are:
+
+        - "degree": the degree of the polynomial fit
+
+        - "coeffs": a nested dictionary containing the coefficients of the
+            transformations for each quadrant
+
+        - "irange": a nested dictionary containing the range of valid "i"
+            values for each quadrant
+
+        - "jrange": a nested dictionary containing the range of valid "j"
+            values for each quadrant
+
+        - "inverse_degree": the degree of the polynomial fit for the inverse
+            transformations
+
+        - "inverse": a nested dictionary containing the coefficients of the
+            inverse transformations for each quadrant
+
+        - "rms" (optional): a nested dictionary containing the RMS of the
+            transformations for each quadrant
+
     """
     from astropy.modeling.models import Polynomial2D
     from astropy.modeling.fitting import LinearLSQFitter
@@ -2034,9 +2109,7 @@ def load_siaf_inverse_shutter_transforms():
     return tr
 
 
-def msa_shutter_catalog(
-    ra, dec, pointing=None, ap=None, inv=None, verbose=True
-):
+def msa_shutter_catalog(ra, dec, pointing=None, ap=None, inv=None):
     """
     Compute shutter centering for a list of input coordinates
 
@@ -2055,9 +2128,6 @@ def msa_shutter_catalog(
     inv : dict
         Inverse shutter transformations from
         `msaexp.msa.load_siaf_inverse_shutter_transforms`
-
-    verbose : bool
-        Messaging
 
     Returns
     -------
