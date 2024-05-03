@@ -23,6 +23,9 @@ utils.LOGFILE = "/tmp/msaexp_slit_combine.log.txt"
 # Cross-dispersion pixel scale computed from one of the fixed slits
 PIX_SCALE = 0.10544
 
+# Default MSA nod offset
+MSA_NOD_ARCSEC = 0.529
+
 EVAL_COUNT = 0
 CHI2_MASK = None
 SKIP_COUNT = 10000
@@ -32,7 +35,17 @@ SIGMA_PRIOR = 0.6
 
 HUBER_ALPHA = 7
 
-MAX_VALID_DATA = 100
+PRISM_MAX_VALID = 10000
+PRISM_MIN_VALID_SN = -3
+SPLINE_BAR_GRATINGS = [
+    "PRISM",
+    "G395M",
+    "G235M",
+    "G140M",
+    "G395H",
+    "G235H",
+    "G140H",
+]
 
 WING_SIGMA = 2.0
 SCALE_FWHM = 1.0
@@ -375,16 +388,18 @@ class SlitGroup:
         name,
         position_key="position_number",
         diffs=True,
-        stuck_min_sn=0.9,
+        stuck_threshold=0.5,
+        bad_shutter_names=None,
         undo_barshadow=False,
         sky_arrays=None,
         undo_pathloss=True,
         trace_with_xpos=False,
         trace_with_ypos=True,
         trace_from_yoffset=False,
-        nod_offset=0.5 / PIX_SCALE,
+        nod_offset=None,
         pad_border=2,
         reference_exposure="auto",
+        **kwargs,
     ):
         """
         Container for a list of 2D extracted ``SlitModel`` files
@@ -403,8 +418,13 @@ class SlitGroup:
         diffs : bool
             Compute nod differences
 
-        stuck_min_sn : float
-            Parameter to try to identify stuck-closed shutters in prism spectra
+        stuck_threshold : float
+            Parameter for identifying stuck-closed shutters in prism spectra in
+            `~msaexp.slit_combine.SlitGroup.mask_stuck_closed_shutters`
+
+        bad_shutter_names : list, None
+            List of integer shutter indices (e.g., among ``[-1, 0, 1]`` for a
+            3-shutter slitlet) to mask as bad, e.g., from stuck shutters
 
         undo_barshadow : bool
             Undo the ``BarShadow`` correction if an extension found in the
@@ -420,10 +440,11 @@ class SlitGroup:
         trace_with_ypos : bool
             Compute traces including the predicted source center
 
-        nod_offset : float
+        nod_offset : float, None
             Nod offset size (pixels) to use if the slit model traces don't
             already account for it, e.g., in background-indicated slits
-            without explicit catalog sources
+            without explicit catalog sources.  If not provided (None), then set
+            to `MSA_NOD_ARCSEC / slit_pixel_scale`.
 
         reference_exposure : int, 'auto'
             Define a reference nod position. If ``'auto'``, then will use the
@@ -483,23 +504,46 @@ class SlitGroup:
         """
         self.name = name
 
-        self.diffs = diffs
-
         self.slits = []
         keep_files = []
 
-        self.trace_with_xpos = trace_with_xpos
-        self.trace_with_ypos = trace_with_ypos
-        self.trace_from_yoffset = trace_from_yoffset
-
-        self.stuck_min_sn = stuck_min_sn
-        self.undo_barshadow = undo_barshadow
-        self.nod_offset = nod_offset
-
         self.sky_arrays = sky_arrays
-        self.undo_pathloss = undo_pathloss
-        self.reference_exposure = reference_exposure
-        self.pad_border = pad_border
+
+        # kwargs to meta dictionary
+        self.meta = {
+            "diffs": diffs,
+            "trace_with_xpos": trace_with_xpos,
+            "trace_with_ypos": trace_with_ypos,
+            "trace_from_yoffset": trace_from_yoffset,
+            "stuck_threshold": stuck_threshold,
+            "bad_shutter_names": bad_shutter_names,
+            "undo_barshadow": undo_barshadow,
+            "wrapped_barshadow": False,
+            "own_barshadow": False,
+            "nod_offset": nod_offset,
+            "undo_pathloss": undo_pathloss,
+            "reference_exposure": reference_exposure,
+            "pad_border": pad_border,
+            "position_key": position_key,
+        }
+
+        # Comments on meta for header keywords
+        self.meta_comment = {
+            "diffs": "Calculated with exposure differences",
+            "trace_with_xpos": "Trace includes x offset in shutter",
+            "trace_with_ypos": "Trace includes y offset in shutter",
+            "trace_from_yoffset": "Trace derived from yoffsets",
+            "stuck_threshold": "Stuck shutter threshold",
+            # 'bad_shutter_names': bad_shutter_names,
+            "undo_barshadow": "Bar shaddow update behavior",
+            "wrapped_barshadow": "Bar shadow was wrapped for central shutter",
+            "own_barshadow": "Internal bar shadow correction applied",
+            "nod_offset": "Nod offset size, pixels",
+            "undo_pathloss": "Remove pipeline pathloss correction",
+            "reference_exposure": "Reference exposure argument",
+            "pad_border": "Border padding",
+            "position_key": "Method for determining offset groups",
+        }
 
         self.shapes = []
 
@@ -513,8 +557,6 @@ class SlitGroup:
         self.files = keep_files
         self.info = self.parse_metadata()
         self.sh = np.min(np.array(self.shapes), axis=0)
-
-        self.position_key = position_key
 
         self.parse_data()
 
@@ -544,7 +586,9 @@ class SlitGroup:
         """
         `grizli.utils.Unique` object for the different nod positions
         """
-        return utils.Unique(self.info[self.position_key], verbose=False)
+        return utils.Unique(
+            self.info[self.meta["position_key"]], verbose=False
+        )
 
     @property
     def calc_reference_exposure(self):
@@ -553,15 +597,17 @@ class SlitGroup:
         """
         # if reference_exposure in ['auto']:
         #     reference_exposure = 1 if obj.N == 1 else 2 - ('bluejay' in root)
-        if self.reference_exposure in ["auto"]:
+        if self.meta["reference_exposure"] in ["auto"]:
             if self.N < 3:
                 ix = 0
             else:
                 ix = np.nanargmin(np.abs(self.relative_nod_offset))
 
-            return self.info[self.position_key][ix]
+            ref_exp = self.info[self.meta["position_key"]][ix]
         else:
-            return self.reference_exposure
+            ref_exp = self.meta["reference_exposure"]
+
+        return ref_exp
 
     @property
     def source_ypixel_position(self):
@@ -623,6 +669,18 @@ class SlitGroup:
 
         y0 = np.array([c[-1] for c in self.base_coeffs])
         return y0 - np.median(y0)
+
+    @property
+    def fixed_yshutter(self):
+        """
+        Fixed cross-dispersion shutter coordinates
+        """
+        if self.meta["position_key"] == "manual_position":
+            shutter_y = (self.yshutter + self.source_ypixel_position - 1.0) / 5
+        else:
+            shutter_y = (self.yshutter + self.source_ypixel_position) / 5
+
+        return shutter_y
 
     def slit_metadata(self):
         """
@@ -753,9 +811,12 @@ class SlitGroup:
         """
         import scipy.ndimage as nd
 
-        global MAX_VALID_DATA
+        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN
 
         slits = self.slits
+
+        if self.meta["nod_offset"] is None:
+            self.meta["nod_offset"] = MSA_NOD_ARCSEC / self.slit_pixel_scale
 
         sl = (slice(0, self.sh[0]), slice(0, self.sh[1]))
 
@@ -765,7 +826,7 @@ class SlitGroup:
                 [slit.barshadow[sl].flatten() * 1 for slit in slits]
             )
         except:
-            bar = None
+            bar = np.ones_like(sci)
 
         dq = np.array([slit.dq[sl].flatten() * 1 for slit in slits])
         var = np.array(
@@ -820,7 +881,7 @@ class SlitGroup:
             _res = msautils.slit_trace_center(
                 slit,
                 with_source_xpos=False,
-                with_source_ypos=self.trace_with_ypos,
+                with_source_ypos=self.meta["trace_with_ypos"],
                 index_offset=0.0,
             )
 
@@ -836,11 +897,11 @@ class SlitGroup:
             _ypi, _xpi = np.indices(slit.data.shape)
             _ras, _des, _wave = d2w(_xpi, _ypi)
 
-            if self.trace_with_xpos & (slit.source_xpos is not None):
+            if self.meta["trace_with_xpos"] & (slit.source_xpos is not None):
                 _xres = msautils.slit_trace_center(
                     slit,
                     with_source_xpos=True,
-                    with_source_ypos=self.trace_with_ypos,
+                    with_source_ypos=self.meta["trace_with_ypos"],
                     index_offset=0.0,
                 )
                 _xwtr = _xres[2]
@@ -875,14 +936,8 @@ class SlitGroup:
 
             wave.append(_wave[sl].flatten())
 
-            # wtr_i = [np.interp(0., ysl[:,j], _wave[:,j]) for j in range(self.sh[1])]
-
             for k in attr_keys:
                 self.info[k][j] = getattr(slit, k)
-
-            # _ras, _des, ws = d2w(_xtr, _ytr)
-            #
-            # wave.append((xp[sl]*0. + ws[sl[1]]).flatten())
 
         xslit = np.array(xslit)
         yslit = np.array(yslit)
@@ -893,37 +948,19 @@ class SlitGroup:
         ytr = np.array(ytr)
         wtr = np.array(wtr)
 
-        self.bad_exposures = np.zeros(self.N, dtype=bool)
-
         bad = (dq & 1025) > 0
+        bad |= ~np.isfinite(sci) | (sci == 0)
+
         if self.grating in ["PRISM"]:
-            low = sci / np.sqrt(var) < self.stuck_min_sn
-            nlow = low.sum(axis=1)
-            bad_exposures = nlow > 0.33 * (np.isfinite(sci) & (sci != 0)).sum(
-                axis=1
-            )
-            msg = (
-                f"  Prism exposures with stuck shutters: {bad_exposures.sum()}"
-            )
-            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            bad |= sci > PRISM_MAX_VALID
+            bad |= sci < PRISM_MIN_VALID_SN * np.sqrt(var)
 
-            for j in np.where(bad_exposures)[0]:
-                bad_j = nd.binary_dilation(
-                    low[j, :].reshape(self.sh), iterations=2
-                )
-                bad[j, :] |= bad_j.flatten()
-
-            self.bad_exposures = bad_exposures
-
-            bad |= sci > MAX_VALID_DATA
-            bad |= sci == 0
-
-        if self.pad_border > 0:
+        if self.meta["pad_border"] > 0:
             # grow mask around edges
             for i in range(len(slits)):
                 ysl_i = wave[i, :].reshape(self.sh)
                 msk = nd.binary_dilation(
-                    ~np.isfinite(ysl_i), iterations=self.pad_border
+                    ~np.isfinite(ysl_i), iterations=self.meta["pad_border"]
                 )
                 bad[i, :] |= (msk).flatten()
 
@@ -942,7 +979,7 @@ class SlitGroup:
             phot_scl = slit.meta.photometry.pixelarea_steradians * 1.0e12
             # phot_scl *= (slit.pathloss_uniform / slit.pathloss_point)[sl].flatten()
             # Remove pathloss correction
-            if self.undo_pathloss:
+            if self.meta["undo_pathloss"]:
                 if slit.source_type is None:
                     pl_ext = "PATHLOSS_UN"
                 else:
@@ -958,6 +995,7 @@ class SlitGroup:
                         phot_scl *= (
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
                         )
+                        self.meta["removed_pathloss"] = pl_ext
 
             self.sci[j, :] *= phot_scl
             self.var[j, :] *= phot_scl**2
@@ -970,24 +1008,6 @@ class SlitGroup:
         self.wave = wave
 
         self.bar = bar
-        if os.path.exists("bar_correction.fits") & self.undo_barshadow:
-            print("bar_correction.fits")
-            _bar = utils.read_catalog("bar_correction.fits")
-            self.bcorr = np.interp(
-                self.yslit,
-                _bar["xshutter"],
-                _bar["bar_correction"],
-                left=1,
-                right=1,
-            )
-
-            self.bar /= np.interp(
-                self.yslit,
-                _bar["xshutter"],
-                _bar["bar_correction"],
-                left=1,
-                right=1,
-            )
 
         self.xtr = xtr
         self.ytr = ytr
@@ -996,22 +1016,23 @@ class SlitGroup:
         if (self.info["source_ra"] < 0.0001).sum() == self.N:
             if self.N == -3:
                 msg = "Seems to be a background slit.  "
-                msg += f"Force [0, {self.nod_offset}, -{self.nod_offset}] "
+                msg += "Force [0, {0}, -{0}]".format(self.meta["nod_offset"])
                 msg += "pix offsets"
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
                 self.ytr[0, :] -= 1.0
-                self.ytr[1, :] += -1 + self.nod_offset
-                self.ytr[2, :] -= 1 + self.nod_offset
+                self.ytr[1, :] += -1 + self.meta["nod_offset"]
+                self.ytr[2, :] -= 1 + self.meta["nod_offset"]
 
                 self.info["manual_position"] = [2, 3, 1]
-                self.position_key = "manual_position"
+                self.meta["position_key"] = "manual_position"
             else:
 
-                offsets = self.info["y_position"] - self.info["y_position"][0]
+                # offsets = self.info["y_position"] - self.info["y_position"][0]
+                offsets = self.info["y_offset"] - self.info["y_offset"][0]
                 offsets /= self.slit_pixel_scale
 
-                offsets = np.round(offsets / 5) * 5
+                # offsets = np.round(offsets / 5) * 5
 
                 offstr = ", ".join(
                     [f"{_off:5.1f}" for _off in np.unique(offsets)]
@@ -1022,7 +1043,7 @@ class SlitGroup:
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
                 self.info["manual_position"] = offsets
-                self.position_key = "manual_position"
+                self.meta["position_key"] = "manual_position"
 
                 for i, _off in enumerate(offsets):
                     self.ytr[i, :] += _off - 1
@@ -1043,7 +1064,7 @@ class SlitGroup:
             for i, _dyi in enumerate(_dy):
                 self.ytr[i, :] += 1 + _dyi
 
-        elif self.trace_from_yoffset:
+        elif self.meta["trace_from_yoffset"]:
 
             _dy = self.info["y_offset"] - self.info["y_offset"][0]
             _dy /= self.slit_pixel_scale
@@ -1058,6 +1079,15 @@ class SlitGroup:
                 self.ytr[i, :] = self.ytr[0, :] + _dyi
 
         self.set_trace_coeffs(degree=2)
+
+        if self.meta["undo_barshadow"] == 2:
+            self.apply_spline_bar_correction()
+            self.meta["undo_barshadow"] = False
+
+        if self.meta["bad_shutter_names"] is None:
+            self.mask_stuck_closed_shutters()
+        else:
+            self._apply_bad_shutter_mask()
 
     def set_trace_coeffs(self, degree=2):
         """
@@ -1108,6 +1138,128 @@ class SlitGroup:
         self.yslit = np.array(yslit)
         self.yshutter = np.array(yshutter)
 
+    def apply_spline_bar_correction(self, verbose=True):
+        """
+        Own bar shadow correction for PRISM derived from empty background shutters
+        and implemented as a flexible bspline
+
+        See `msaexp.utils.get_prism_bar_correction`.
+
+        Parameters
+        ----------
+        verbose : bool
+            Messaging
+
+        Returns
+        -------
+        Rescales the ``sci`` data array and updates the ``mask``
+        """
+        global SPLINE_BAR_GRATINGS
+        if self.grating.upper() not in SPLINE_BAR_GRATINGS:
+            utils.log_comment(
+                utils.LOGFILE,
+                (
+                    " apply_spline_bar_correction: "
+                    + f" grating {self.grating.upper()} not in {SPLINE_BAR_GRATINGS}"
+                ),
+                verbose=verbose,
+            )
+            return None
+
+        utils.log_comment(
+            utils.LOGFILE,
+            f" Run apply_spline_bar_correction",
+            verbose=verbose,
+        )
+
+        bar, bar_wrapped = msautils.get_prism_bar_correction(
+            self.fixed_yshutter,
+            wrap="auto",
+        )
+        self.meta["wrapped_barshadow"] = bar_wrapped
+        self.meta["own_barshadow"] = True
+
+        self.sci *= self.bar / bar
+        self.var *= 1.0 / bar**2
+        self.orig_bar = self.bar * 1
+        self.bar = bar * 1
+        self.mask &= np.isfinite(self.sci)
+
+    def mask_stuck_closed_shutters(self, stuck_threshold=0.3, min_bar=0.6):
+        """
+        Identify stuck-closed shutters in prism spectra
+
+        Parameters
+        ----------
+        stuck_threshold : float
+            1. Compute the median S/N of all pixels in each shutter of the slitlet
+            2. If the slitlet is more than one shutter, mask shutters where
+               ``sn_shutter < stuck_threshold * max(sn_shutters)``
+            3. If the slitlet is a single shutter, mask the shutter if the absolute
+               S/N is less than ``bad_shutter_names``
+
+        min_bar : float
+            Minimum value of the bar shadow mask to treat as valid pixels within a
+            shutter
+
+        Returns
+        -------
+        Updates ``bad_shutter_names`` attribute and runs
+        `~msaexp.slit_combine.SlitGroup._apply_bad_shutter_mask`
+
+        """
+        if self.grating.upper() != "PRISM":
+            self.meta["bad_shutter_names"] = []
+            return None
+
+        shutter_y = self.fixed_yshutter
+
+        sn = self.sci / np.sqrt(self.var)
+
+        bar_mask = self.mask & (self.bar > min_bar)
+        if bar_mask.sum() == 0:
+            self.meta["bad_shutter_names"] = []
+            return None
+
+        un = utils.Unique(
+            np.cast[int](np.round(shutter_y[bar_mask])), verbose=False
+        )
+        sn_shutters = np.zeros(un.N, dtype=float)
+        for i, v in enumerate(un.values):
+            sn_shutters[i] = np.nanmedian(sn[bar_mask][un[v]])
+
+        if un.N == 1:
+            bad_shutter = sn_shutters < stuck_threshold
+        else:
+            bad_shutter = sn_shutters < stuck_threshold * sn_shutters.max()
+
+        if bad_shutter.sum() > 0:
+            bad_list = [un.values[i] for i in np.where(bad_shutter)[0]]
+
+            self.meta["bad_shutter_names"] = bad_list
+        else:
+            self.meta["bad_shutter_names"] = []
+
+        self._apply_bad_shutter_mask()
+
+    def _apply_bad_shutter_mask(self, verbose=True):
+        """
+        Mask ``sci`` array for ``bad_shutter_names`` shutters
+        """
+        if len(self.meta["bad_shutter_names"]) == 0:
+            return None
+
+        utils.log_comment(
+            utils.LOGFILE,
+            f""" PRISM: stuck bad shutters {self.meta["bad_shutter_names"]}""",
+            verbose=verbose,
+        )
+
+        for i in self.meta["bad_shutter_names"]:
+            shutter_mask = np.abs(self.fixed_yshutter - i) < 0.5
+            self.sci[shutter_mask] = np.nan
+            self.mask &= np.isfinite(self.sci)
+
     @property
     def sky_background(self):
         """
@@ -1140,7 +1292,7 @@ class SlitGroup:
         """
         sky = self.sky_background
 
-        if self.undo_barshadow:
+        if self.meta["undo_barshadow"]:
             return (self.sci - sky) * self.bar
         else:
             return self.sci - sky
@@ -1180,8 +1332,8 @@ class SlitGroup:
             np.nansum(self.var[ipos, :], axis=0)
             / np.nansum(self.mask[ipos, :], axis=0) ** 2
         )
-
-        if self.diffs:
+        #
+        if self.meta["diffs"]:
             ineg = ~self.unp[exp]
             neg = np.nansum(self.data[ineg, :], axis=0) / np.nansum(
                 self.bkg_mask[ineg, :], axis=0
@@ -1766,7 +1918,39 @@ def obj_header(obj):
     header["NCOMBINE"] = 0
     header["BUNIT"] = "microJansky"
 
-    header["WAVECORR"] = (obj.trace_with_xpos, "Wavelength corrected for xpos")
+    header["WAVECORR"] = (
+        obj.meta["trace_with_xpos"],
+        "Wavelength corrected for xpos",
+    )
+
+    header["YPIXTRA"] = (
+        obj.source_ypixel_position,
+        "Y pixel position in 2D cutouts",
+    )
+    header["YPIXSCL"] = (
+        obj.slit_pixel_scale,
+        "Cross dispersion pixel scale, arcsec",
+    )
+    header["CALCREF"] = (
+        obj.calc_reference_exposure,
+        "Derived reference exposure",
+    )
+
+    for k in obj.meta:
+        if k == "bad_shutter_names":
+            header["NBADSHUT"] = (
+                len(obj.meta[k]),
+                "Number of flagged bad shutters",
+            )
+            for i, ki in enumerate(obj.meta[k]):
+                header[f"BADSHUT{i}"] = ki, "Bad shutter name"
+        else:
+            if k in obj.meta_comment:
+                key = (obj.meta[k], obj.meta_comment[k])
+            else:
+                key = obj.meta[k]
+
+            header[k.upper()] = key
 
     for i, sl in enumerate(obj.slits):
         fbase = sl.meta.filename.split("_nrs")[0]
@@ -1851,7 +2035,7 @@ def combine_grating_group(
     kwargs = {}
 
     for k in xobj:
-        bkg_offset = xobj[k]["obj"].nod_offset
+        bkg_offset = int(np.round(xobj[k]["obj"].meta["nod_offset"]))
         break
 
     _data = msaexp.drizzle.make_optimal_extraction(
@@ -2277,7 +2461,7 @@ def extract_spectra(
     do_gratings=["PRISM", "G395H", "G395M", "G235M", "G140M"],
     join=[0, 3, 5],
     split_uncover=True,
-    stuck_min_sn=0.0,
+    stuck_threshold=0.0,
     pad_border=2,
     sort_by_sn=False,
     position_key="y_index",
@@ -2334,7 +2518,7 @@ def extract_spectra(
     split_uncover : bool
         Split sub-pixel dithers from UNCOVER when defining exposure groups
 
-    stuck_min_sn, pad_border, position_key:
+    stuck_threshold, pad_border, position_key:
         See `msaexp.slit_combine.SlitGroup`
 
     sort_by_sn : bool
@@ -2367,7 +2551,7 @@ def extract_spectra(
         See `msaexp.slit_combine.SlitGroup`
 
     """
-    global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR
+    global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR, MSA_NOD_ARCSEC
     frame = inspect.currentframe()
 
     # Log function arguments
@@ -2425,9 +2609,10 @@ def extract_spectra(
 
         if nod_offset is None:
             if ("glazebrook" in root) | ("suspense" in root):
-                nod_offset = 10
+                # nod_offset = 10
+                MSA_NOD_ARCSEC = 0.529 * 2
             else:
-                nod_offset = 5
+                MSA_NOD_ARCSEC = 0.529 * 1
 
         if trace_with_ypos in ["auto"]:
             trace_with_ypos = ("b" not in target) & (not get_background)
@@ -2453,8 +2638,7 @@ def extract_spectra(
             g,
             position_key=position_key,
             diffs=diffs,  # (True & (~isinstance(id, str))),
-            stuck_min_sn=stuck_min_sn,
-            # stuck_min_sn=-100,
+            stuck_threshold=stuck_threshold,
             undo_barshadow=undo_barshadow,
             undo_pathloss=undo_pathloss,
             # sky_arrays=(wsky, fsky),
@@ -2474,7 +2658,7 @@ def extract_spectra(
                 utils.log_comment(utils.LOGFILE, msg, verbose=True)
                 continue
 
-        if obj.diffs:
+        if obj.meta["diffs"]:
             valid_frac = obj.mask.sum() / obj.mask.size
 
             if obj.N == 1:
@@ -2485,7 +2669,7 @@ def extract_spectra(
                 )
                 continue
 
-            elif obj.bad_exposures.sum() == obj.N:
+            elif len(obj.meta["bad_shutter_names"]) == obj.N:
                 utils.log_comment(
                     utils.LOGFILE,
                     f"\n    skip all bad {obj.grating}\n",
@@ -2493,7 +2677,7 @@ def extract_spectra(
                 )
                 continue
 
-            elif (len(obj.unp.values) == 1) & (obj.diffs):
+            elif (len(obj.unp.values) == 1) & (obj.meta["diffs"]):
                 utils.log_comment(
                     utils.LOGFILE,
                     f"\n    one position {obj.grating}\n",
