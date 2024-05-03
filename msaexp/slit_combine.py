@@ -680,6 +680,8 @@ class SlitGroup:
         else:
             shutter_y = (self.yshutter + self.source_ypixel_position) / 5
 
+        shutter_y[~self.mask] = np.nan
+
         return shutter_y
 
     def slit_metadata(self):
