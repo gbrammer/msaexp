@@ -1282,7 +1282,6 @@ class MSAMetafile:
             A dictionary containing the (i,j) > (v2,v3) transformations for each
             quadrant of the MSA.
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         from astropy.modeling.models import Polynomial2D
         from astropy.modeling.fitting import LinearLSQFitter
@@ -1709,7 +1708,6 @@ class MSAMetafile:
             String or a list of `grizli.utils.SRegion` objects, depending on
             ``as_string``
 
-        Note: This documentation is partially AI-generated and will be reviewed.
         """
         import grizli.utils
 
@@ -1912,7 +1910,6 @@ def fit_siaf_shutter_transforms(
         - "rms" (optional): a nested dictionary containing the RMS of the
             transformations for each quadrant
 
-    Note: This documentation is mainly AI-generated and will be reviewed.
     """
     from astropy.modeling.models import Polynomial2D
     from astropy.modeling.fitting import LinearLSQFitter
