@@ -2085,8 +2085,11 @@ def drizzled_hdu_figure(
     subplot_args=dict(
         figsize=(10, 4), height_ratios=[1, 3], width_ratios=[10, 1]
     ),
-    cmap="plasma_r",
+    cmap="bone_r",
+    interpolation="nearest",
     ymax=None,
+    ymax_percentile=90,
+    ymax_scale=1.5,
     ymax_sigma_scale=7,
     vmin=-0.2,
     z=None,
@@ -2195,7 +2198,7 @@ def drizzled_hdu_figure(
         if _msk.sum() == 0:
             ymax = 1.0
         else:
-            ymax = np.nanpercentile(flux[_msk], 90) * 2
+            ymax = np.nanpercentile(flux[_msk], ymax_percentile) * ymax_scale
             ymax = np.maximum(ymax, ymax_sigma_scale * np.nanmedian(err[_msk]))
 
     yscl = hdul["PROFILE"].data.max() * ap_corr
@@ -2222,7 +2225,7 @@ def drizzled_hdu_figure(
         vmax=ymax,
         aspect="auto",
         cmap=cmap,
-        interpolation="nearest",
+        interpolation=interpolation,
     )
 
     axes[0].set_yticklabels([])
@@ -2347,7 +2350,10 @@ def drizzled_hdu_figure(
     elif major >= 1:
         xtl = [f"{v:.0f}" for v in xt]
     else:
-        xtl = [f"{v:.1f}" for v in xt]
+        xtl = [
+            f"{v:.1f}" if (np.round(v * 10) == v * 10) else f"{v:.2f}"
+            for v in xt
+        ]
 
     xtm = xtm[(xtm > sp["wave"].min()) & (xtm < sp["wave"].max())]
     xvm = np.interp(xtm, sp["wave"], np.arange(len(sp)))
@@ -2706,7 +2712,9 @@ def get_nirspec_psf_fwhm(wave):
     return fwhm
 
 
-def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
+def get_prism_bar_correction(
+    scaled_yshutter, num_shutters=3, wrap="auto", wrap_pad=0.2, mask=True
+):
     """
     Generate the `msaexp` prism bar-shadow correction
 
@@ -2797,7 +2805,9 @@ def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
     import yaml
 
     path_to_ref = os.path.join(
-        os.path.dirname(__file__), "data", "prism_bar_coeffs.yaml"
+        os.path.dirname(__file__),
+        "data",
+        f"prism_{num_shutters}_bar_coeffs.yaml",
     )
 
     with open(path_to_ref) as fp:
@@ -2826,12 +2836,228 @@ def get_prism_bar_correction(scaled_yshutter, wrap="auto", mask=True):
         minmax=bar_data["minmax"],
     )
 
-    bar = _spl.dot(bar_data["coeffs"]).reshape(scaled_yshutter.shape)
+    sh = scaled_yshutter.shape
+    bar = _spl.dot(bar_data["coeffs"]).reshape(sh)
+
     if mask:
-        bar[scaled_yshutter < bar_data["minmax"][0]] = np.nan
-        bar[scaled_yshutter > bar_data["minmax"][1]] = np.nan
+        bar[pass_yshutter.reshape(sh) < (bar_data["minmax"][0])] = np.nan
+        bar[pass_yshutter.reshape(sh) > (bar_data["minmax"][1])] = np.nan
+
+        if is_wrapped:
+            extra_mask = scaled_yshutter < (
+                np.nanmin(scaled_yshutter) + wrap_pad
+            )
+            extra_mask |= scaled_yshutter > (
+                np.nanmin(scaled_yshutter) - wrap_pad
+            )
+            bar[extra_mask] = np.nan
 
     return bar, is_wrapped
+
+
+def get_prism_wave_bar_correction(
+    scaled_yshutter,
+    wavelengths,
+    num_shutters=3,
+    wrap="auto",
+    wrap_pad=0.2,
+    mask=True,
+):
+    """
+    Generate the `msaexp` prism bar-shadow correction including wavelength dependence
+
+    Parameters
+    ----------
+    scaled_yshutter : array-like
+        Cross-dispersion pixel coordinates, scaled by a factor of 1/5 to roughly have
+        units of the MSA shutters
+
+    wavelengths : array-like
+        Wavelength of the pixel samples, microns
+
+    wrap : bool, str
+        If ``auto``, determine if the bounds of ``scaled_yshutter`` are more than 0.5
+        shutters outside of the (-1.5, 1.5) range used to determine the correction.
+        If so, or if ``wrap=True``, replicate the center shutter to all specified
+        shutters.
+
+    wrap_pad : float
+        If ``wrap``, pad the outer edge that won't be correctly calibrated
+
+    Returns
+    -------
+    bar : array-like
+        The estimated bar throughput.  To correct, divide by ``bar``
+
+    is_wrapped : bool
+        Was the bar profile wrapped using the single central shutter, e.g., from
+        ``wrap='auto'``?
+
+    """
+    import yaml
+
+    path_to_ref = os.path.join(
+        os.path.dirname(__file__),
+        "data",
+        f"prism_{num_shutters}_bar_coeffs_wave.yaml",
+    )
+
+    with open(path_to_ref) as fp:
+        bar_data = yaml.load(fp, Loader=yaml.Loader)
+
+    df = len(bar_data["coeffs"])
+
+    if wrap in ["auto"]:
+        is_wrapped = np.nanmin(scaled_yshutter) < bar_data["minmax"][0] - 0.5
+        is_wrapped |= np.nanmin(scaled_yshutter) > bar_data["minmax"][1] + 0.5
+    elif wrap in [True]:
+        is_wrapped = True
+    else:
+        is_wrapped = False
+
+    if is_wrapped:
+        pass_yshutter = ((scaled_yshutter.flatten() + 0.5) % 1) - 0.5
+        mask = False
+    else:
+        pass_yshutter = scaled_yshutter.flatten()
+
+    _spl = grizli.utils.bspline_templates(
+        pass_yshutter,
+        df=df,
+        get_matrix=True,
+        minmax=bar_data["minmax"],
+    ).T
+
+    wave_coeffs = np.array(
+        [
+            np.interp(
+                wavelengths.flatten(),
+                bar_data["wavelengths"],
+                c_i,
+                left=c_i[0],
+                right=c_i[-1],
+            )
+            for c_i in bar_data["coeffs"]
+        ]
+    )
+
+    sh = scaled_yshutter.shape
+    bar = (wave_coeffs * _spl).sum(axis=0).reshape(sh)
+
+    if mask:
+        bar[pass_yshutter.reshape(sh) < (bar_data["minmax"][0])] = np.nan
+        bar[pass_yshutter.reshape(sh) > (bar_data["minmax"][1])] = np.nan
+
+        if is_wrapped:
+            extra_mask = scaled_yshutter < (
+                np.nanmin(scaled_yshutter) + wrap_pad
+            )
+            extra_mask |= scaled_yshutter > (
+                np.nanmin(scaled_yshutter) - wrap_pad
+            )
+            bar[extra_mask] = np.nan
+
+    return bar, is_wrapped
+
+
+def get_normalization_correction(
+    wavelengths, quadrant, xcen, ycen, grating="PRISM", verbose=True
+):
+    """
+    Normalization correction derived from empty sky slits, analagous to a correction
+    to the SFLAT calibration
+
+    Parameters
+    ----------
+    wavelengths : array-like
+        Sample wavelengths
+
+    quadrant : [1,2,3,4]
+        MSA quadrant
+
+    xcen : int
+        MSA column, 1-365
+
+    ycen : int
+        MSA row, 1-171
+
+    grating : str
+        Grating name (just ``'PRISM'`` implemented so far)
+
+    Returns
+    -------
+    corr : array-like
+        Correction to apply to slit data, i.e., ``corrected = slit.data * corr``
+
+    """
+
+    import yaml
+
+    if grating not in ["PRISM"]:
+        return np.ones_like(wavelengths)
+
+    if quadrant not in [1, 2, 3, 4]:
+        msg = "msaexp.utils.get_normalization_correction: "
+        msg += f"quadrant={quadrant} must be one of [1,2,3,4]"
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE,
+            msg,
+            verbose=verbose,
+        )
+        return np.ones_like(wavelengths)
+
+    path_to_ref = os.path.join(
+        os.path.dirname(__file__),
+        "data",
+        f"{grating.lower()}_slit_renormalize.yaml",
+    )
+
+    if not os.path.exists(path_to_ref):
+        msg = f"msaexp.utils.get_normalization_correction: {path_to_ref} not found"
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE,
+            msg,
+            verbose=verbose,
+        )
+        return np.ones_like(wavelengths)
+
+    msg = f" get_normalization_correction: {os.path.basename(path_to_ref)}"
+    msg += f" quadrant={quadrant} xcen={xcen} ycen={ycen}"
+    grizli.utils.log_comment(
+        grizli.utils.LOGFILE,
+        msg,
+        verbose=verbose,
+    )
+
+    with open(path_to_ref) as fp:
+        norm_data = yaml.load(fp, Loader=yaml.Loader)
+
+    cdata = np.array(norm_data["coeffs"])
+
+    iq = quadrant - 1
+    coeffs = cdata[:, iq, 0] + cdata[:, iq, 1] * xcen + cdata[:, iq, 2] * ycen
+
+    ref_wave = np.array(norm_data["reference_wavelengths"])
+
+    nbin = len(ref_wave)
+    xbin = np.interp(
+        wavelengths,
+        ref_wave,
+        np.arange(nbin) / nbin,
+        left=np.nan,
+        right=np.nan,
+    )
+
+    spl_full = grizli.utils.bspline_templates(
+        xbin.flatten(),
+        df=norm_data["df"],
+        minmax=(0, 1),
+        get_matrix=True,
+    )
+
+    corr = 1.0 / spl_full.dot(coeffs)
+
+    return corr.reshape(wavelengths.shape)
 
 
 def make_nirspec_gaussian_profile(
