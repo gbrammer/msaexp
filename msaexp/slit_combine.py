@@ -52,6 +52,13 @@ SCALE_FWHM = 1.0
 DEFAULT_WINGS = None
 WINGS_XOFF = None
 
+__all__ = [
+    "split_visit_groups",
+    "SlitGroup",
+    "pseudo_drizzle",
+    "extract_spectra",
+]
+
 
 def split_visit_groups(
     files, join=[0, 3], gratings=["PRISM"], split_uncover=True, verbose=True
@@ -101,24 +108,33 @@ def split_visit_groups(
             keys.append(key.lower())
             all_files.append(file)
 
+    all_files = np.array(all_files)
+
     keys = np.array(keys)
     un = utils.Unique(keys, verbose=False)
     groups = {}
     for k in np.unique(keys):
-        if split_uncover & (un[k].sum() % 6 == 0) & ("jw02561" in files[0]):
+        test_field = (un[k].sum() % 6 == 0) & ("jw02561" in files[0])
+        test_field |= (un[k].sum() % 4 == 0) & ("jw01810" in files[0])
+        test_field &= split_uncover > 0
+        if test_field:
             msg = "split_visit_groups: split UNCOVER sub groups "
             msg += f"{k} N={un[k].sum()}"
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
             ksp = k.split("-")
 
-            groups[ksp[0] + "a-" + ksp[1]] = np.array(all_files)[un[k]][
-                0::2
-            ].tolist()
+            set1 = all_files[un[k]][0::2].tolist()
+            set2 = all_files[un[k]][1::2].tolist()
 
-            groups[ksp[0] + "b-" + ksp[1]] = np.array(all_files)[un[k]][
-                1::2
-            ].tolist()
+            if (split_uncover == 2) & ("jw02561" in files[0]):
+                # outer nods for spatial information
+                set1 = set1[1::3] + set1[2::3]
+                set2 = set2[1::3] + set2[2::3]
+
+            groups[ksp[0] + "a-" + ksp[1]] = set1
+            groups[ksp[0] + "b-" + ksp[1]] = set2
+
         else:
             groups[k] = np.array(all_files)[un[k]].tolist()
 
@@ -193,6 +209,7 @@ def objfun_prof_trace(
     wave,
     xpix,
     ypix,
+    bar,
     yslit0,
     diff,
     vdiff,
@@ -376,6 +393,8 @@ def objfun_prof_trace(
         )
 
     ppos = ppos.reshape(yslit[ipos, :].shape)
+    # Don't scale profile by bar because *data* are corrected
+    # ppos *= bar[ipos,:]
 
     if ineg.sum() > 0:
         pneg = PRF(
@@ -398,6 +417,7 @@ def objfun_prof_trace(
             )
 
         pneg = pneg.reshape(yslit[ineg, :].shape)
+        # pneg *= bar[ineg,:]
     else:
         pneg = np.zeros_like(ppos)
 
@@ -482,15 +502,23 @@ class SlitGroup:
         position_key="position_number",
         diffs=True,
         stuck_threshold=0.5,
+        hot_cold_kwargs=None,
         bad_shutter_names=None,
         undo_barshadow=False,
+        bar_corr_mode="wave",
+        fix_prism_norm=True,
         sky_arrays=None,
+        estimate_sky_kwargs=None,
+        flag_profile_kwargs={},
+        scale_sky=1.0,
         undo_pathloss=True,
         trace_with_xpos=False,
         trace_with_ypos=True,
         trace_from_yoffset=False,
+        fixed_offset=0.0,
         nod_offset=None,
         pad_border=2,
+        weight_type="ivm_bar",
         reference_exposure="auto",
         **kwargs,
     ):
@@ -521,12 +549,25 @@ class SlitGroup:
             List of integer shutter indices (e.g., among ``[-1, 0, 1]`` for a
             3-shutter slitlet) to mask as bad, e.g., from stuck shutters
 
-        undo_barshadow : bool
+        undo_barshadow : bool, 2
             Undo the ``BarShadow`` correction if an extension found in the
-            slit model files
+            slit model files.  If ``2``, then apply internal barshadow correction
+            with `msaexp.slit_combine`.
+
+        bar_corr_mode : str
+            Internal barshadow correction type
+            - ``flat``: monochromatic `~msaexp.utils.get_prism_bar_correction`
+            - ``wave``: wave-dependent `~msaexp.utils.get_prism_wave_bar_correction`
+
+        fix_prism_norm : bool
+            Apply prism normalization correction
 
         sky_arrays : array-like
             Optional sky data (in progress)
+
+        estimate_sky_kwargs : None, dict
+            Arguments to pass to `msaexp.slit_combine.SlitGroup.estimate_sky` to
+            estimate sky directly from the slit data
 
         undo_pathloss : bool
             Remove the pathloss correction if the extensions found in the slit
@@ -554,8 +595,24 @@ class SlitGroup:
             Define a reference nod position. If ``'auto'``, then will use the
             exposure in the middle of the nod offset distribution
 
+        weight_type : str
+            Weighting scheme for 2D resampling
+            - ``ivm`` : Use weights from ``var_rnoise``, like
+                        [jwst.resample](https://github.com/spacetelescope/jwst/blob/4342988027ee0811b57d3641bda4c8486d7da1f5/jwst/resample/resample_utils.py#L168)
+            - ``ivm_bar`` : Use a modified weight
+                            ``VAR_RNOISE / BARSHADOW**2``
+            - ``poisson`` : Weight with ``var_poisson``, msaexp extractions v1 and v2
+            - ``exptime`` : Use ``slit.meta.exposure.exposure_time * mask``
+            - ``mask`` : Just use the bad pixel mask
+
+        pad_border : int
+            Grow mask around edges of 2D cutouts
+
         Attributes
         ----------
+        meta : dict
+            Metadata about the processing status
+
         sh : (int, int)
             Dimensions of the 2D slit data
 
@@ -571,8 +628,11 @@ class SlitGroup:
         var : array-like (float)
             Variance data
 
-        var_flat: array-like (float)
-            VAR_FLAT variance data
+        var_rnoise: array-like (float)
+            RNOISE variance data
+
+        var_poisson: array-like (float)
+            POISSON variance data
 
         xslit : array-like (float)
             Array of x slit coordinates
@@ -608,7 +668,21 @@ class SlitGroup:
         self.slits = []
         keep_files = []
 
-        self.sky_arrays = sky_arrays
+        if sky_arrays is None:
+            self.sky_arrays = None
+        else:
+            self.sky_arrays = [sky_arrays[0] * 1, sky_arrays[1] * 1]
+
+        if weight_type not in [
+            "poisson",
+            "mask",
+            "ivm",
+            "ivm_bar",
+            "exptime",
+            "exptime_bar",
+        ]:
+            msg = "weight_type {0} not recognized".format(weight_type)
+            raise ValueError(msg)
 
         # kwargs to meta dictionary
         self.meta = {
@@ -616,9 +690,12 @@ class SlitGroup:
             "trace_with_xpos": trace_with_xpos,
             "trace_with_ypos": trace_with_ypos,
             "trace_from_yoffset": trace_from_yoffset,
+            "fixed_offset": fixed_offset,
             "stuck_threshold": stuck_threshold,
             "bad_shutter_names": bad_shutter_names,
             "undo_barshadow": undo_barshadow,
+            "bar_corr_mode": bar_corr_mode,
+            "fix_prism_norm": fix_prism_norm,
             "wrapped_barshadow": False,
             "own_barshadow": False,
             "nod_offset": nod_offset,
@@ -626,6 +703,11 @@ class SlitGroup:
             "reference_exposure": reference_exposure,
             "pad_border": pad_border,
             "position_key": position_key,
+            "nhot": 0,
+            "ncold": 0,
+            "has_sky_arrays": (sky_arrays is not None),
+            "scale_sky": scale_sky,
+            "weight_type": weight_type,
         }
 
         # Comments on meta for header keywords
@@ -634,9 +716,11 @@ class SlitGroup:
             "trace_with_xpos": "Trace includes x offset in shutter",
             "trace_with_ypos": "Trace includes y offset in shutter",
             "trace_from_yoffset": "Trace derived from yoffsets",
+            "fixed_offset": "Global offset to fixed shutter coordinate",
             "stuck_threshold": "Stuck shutter threshold",
-            # 'bad_shutter_names': bad_shutter_names,
             "undo_barshadow": "Bar shadow update behavior",
+            "bar_corr_mode": "Bar shadow correction type",
+            "fix_prism_norm": "Apply prism scale correction",
             "wrapped_barshadow": "Bar shadow was wrapped for central shutter",
             "own_barshadow": "Internal bar shadow correction applied",
             "nod_offset": "Nod offset size, pixels",
@@ -644,6 +728,11 @@ class SlitGroup:
             "reference_exposure": "Reference exposure argument",
             "pad_border": "Border padding",
             "position_key": "Method for determining offset groups",
+            "nhot": "Number of flagged hot pixels",
+            "ncold": "Number of flagged cold pixels",
+            "has_sky_arrays": "sky arrays specified",
+            "scale_sky": "Scaling of sky arrays",
+            "weight_type": "Weighting scheme for 2D combination",
         }
 
         self.shapes = []
@@ -660,6 +749,37 @@ class SlitGroup:
         self.sh = np.min(np.array(self.shapes), axis=0)
 
         self.parse_data()
+
+        if fix_prism_norm:
+            self.apply_normalization_correction()
+
+        if 0:
+            perc = np.nanpercentile(self.sci[self.mask], [95, 99])
+            hi = self.sci > perc[1] + (perc[1] - perc[0]) * 4
+            print("xxx hi pixels", hi.sum())
+            self.mask &= ~hi
+
+        if hot_cold_kwargs is not None:
+            nhot, ncold, flag = self.flag_hot_cold_pixels(**hot_cold_kwargs)
+            for i in range(self.N):
+                self.mask[i, :] &= flag == 0
+
+            self.meta["nhot"] = nhot
+            self.meta["ncold"] = ncold
+
+        if estimate_sky_kwargs is not None:
+            try:
+                self.estimate_sky(**estimate_sky_kwargs)
+            except ValueError:
+                pass
+
+        if flag_profile_kwargs is not None:
+            try:
+                self.flag_from_profile(**flag_profile_kwargs)
+            except ValueError:
+                pass
+
+        self.compute_sky_scale()
 
     @property
     def N(self):
@@ -781,9 +901,19 @@ class SlitGroup:
         else:
             shutter_y = (self.yshutter + self.source_ypixel_position) / 5
 
+        shutter_y += self.meta["fixed_offset"]
         shutter_y[~self.mask] = np.nan
 
         return shutter_y
+
+    @property
+    def exptime(self):
+        """
+        Get exposure time of individual slits
+        """
+        return np.array(
+            [slit.meta.exposure.exposure_time for slit in self.slits]
+        )
 
     def slit_metadata(self):
         """
@@ -943,20 +1073,18 @@ class SlitGroup:
             bar = np.ones_like(sci)
 
         dq = np.array([slit.dq[sl].flatten() * 1 for slit in slits])
-        var = np.array(
-            [
-                (slit.var_poisson + slit.var_rnoise)[sl].flatten()
-                for slit in slits
-            ]
+        var_rnoise = np.array(
+            [slit.var_rnoise[sl].flatten() * 1 for slit in slits]
         )
-        var_flat = np.array(
-            [slit.var_flat[sl].flatten() * 1 for slit in slits]
+
+        var_poisson = np.array(
+            [slit.var_poisson[sl].flatten() * 1 for slit in slits]
         )
 
         bad = sci == 0
         sci[bad] = np.nan
-        var[bad] = np.nan
-        var_flat[bad] = np.nan
+        var_rnoise[bad] = np.nan
+        var_poisson[bad] = np.nan
         dq[bad] = 1
         if bar is not None:
             bar[bad] = np.nan
@@ -1063,11 +1191,23 @@ class SlitGroup:
         wtr = np.array(wtr)
 
         bad = (dq & 1025) > 0
+
+        # Bad pixels in 2 or more positions should be bad in all
+        if self.N > 2:
+            nbad = bad.sum(axis=0)
+            all_bad = nbad >= 2 * (self.N // 3)
+            for i in range(self.N):
+                bad[i, :] |= all_bad
+
         bad |= ~np.isfinite(sci) | (sci == 0)
 
         if self.grating in ["PRISM"]:
             bad |= sci > PRISM_MAX_VALID
-            bad |= sci < PRISM_MIN_VALID_SN * np.sqrt(var)
+            bad |= sci < PRISM_MIN_VALID_SN * np.sqrt(var_rnoise + var_poisson)
+
+        bad |= sci < -5 * np.sqrt(
+            np.nanmedian((var_rnoise + var_poisson)[~bad])
+        )
 
         if self.meta["pad_border"] > 0:
             # grow mask around edges
@@ -1080,14 +1220,15 @@ class SlitGroup:
 
         sci[bad] = np.nan
         mask = np.isfinite(sci)
-        var[~mask] = np.nan
+        var_rnoise[~mask] = np.nan
+        var_poisson[~mask] = np.nan
 
         self.sci = sci
         self.dq = dq
         self.mask = mask & True
         self.bkg_mask = mask & True
-        self.var = var
-        self.var_flat = var_flat
+        self.var_rnoise = var_rnoise
+        self.var_poisson = var_poisson
 
         for j, slit in enumerate(slits):
             phot_scl = slit.meta.photometry.pixelarea_steradians * 1.0e12
@@ -1101,19 +1242,30 @@ class SlitGroup:
 
                 with pyfits.open(self.files[j]) as sim:
                     if pl_ext in sim:
-                        if verbose:
-                            msg = f"   {self.files[j]} source_type={slit.source_type} "
-                            msg += pl_ext
-                            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                        msg = f"   {self.files[j]} source_type={slit.source_type} "
+                        msg += f" undo {pl_ext}"
+                        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
                         phot_scl *= (
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
                         )
                         self.meta["removed_pathloss"] = pl_ext
 
+                    if self.meta["undo_pathloss"] == 2:
+                        # Apply point source
+                        msg = f"   {self.files[j]} apply PATHLOSS_PS "
+                        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+                        pl_ps = "PATHLOSS_PS"
+                        phot_scl /= (
+                            sim[pl_ps].data.astype(sci.dtype)[sl].flatten()
+                        )
+
             self.sci[j, :] *= phot_scl
-            self.var[j, :] *= phot_scl**2
-            self.var_flat[j, :] *= phot_scl**2
+            self.var_rnoise[j, :] *= phot_scl**2
+            self.var_poisson[j, :] *= phot_scl**2
+
+        self.var_total = self.var_rnoise + self.var_poisson
 
         self.xslit = xslit
         self.yslit = yslit
@@ -1203,6 +1355,402 @@ class SlitGroup:
         else:
             self._apply_bad_shutter_mask()
 
+    def flag_hot_cold_pixels(
+        self,
+        cold_percentile=1,
+        hot_percentile=98,
+        min_nexp=-2,
+        dilate=None,
+        verbose=True,
+    ):
+        """
+        Flag hot/cold pixels where multiple pixels across exposures are below or above
+        global percentiles
+
+        Parameters
+        ----------
+        cold_percentile : float
+            Lower limit for "cold" pixels
+
+        hot_percentile : float
+            Upper limit for "hot" pixels
+
+        min_nexp : int
+            Minimum number of exposures required that exceed the threshold. If provided
+            as a negative number, will be interpreted as ``Nflag >= Nexp + min_nexp``.
+            If positive, will be treated as an absolute number.
+
+        dilate : int, bool
+            If provided, do 2D dilation on the masks
+
+        Returns
+        -------
+        ncold, nhot : int
+            Number of flagged cold, hot pixels
+
+        flag : array-like, int
+            Flag array: 1 = cold, 2 = hot
+        """
+        import scipy.ndimage as nd
+
+        try:
+            cold_level, hot_level = np.nanpercentile(
+                self.data[self.mask],
+                [cold_percentile, hot_percentile],
+            )
+        except TypeError:
+            return 0, 0, np.zeros(self.sh, dtype=bool).flatten()
+
+        if min_nexp < 1:
+            Nmin = -min_nexp * self.N // self.unp.N
+        else:
+            Nmin = min_nexp
+
+        Nmin = np.maximum(Nmin, 2)
+
+        hot_flagged = (self.data > hot_level).sum(axis=0) >= Nmin
+        cold_flagged = (self.data < cold_level).sum(axis=0) >= Nmin
+
+        if dilate is not None:
+            if dilate > 0:
+                hot_flagged = nd.binary_dilation(
+                    hot_flagged.reshape(self.sh), iterations=dilate
+                ).flatten()
+
+                cold_flagged = nd.binary_dilation(
+                    cold_flagged.reshape(self.sh), iterations=dilate
+                ).flatten()
+
+        ncold, nhot = cold_flagged.sum(), hot_flagged.sum()
+
+        msg = f" flag_hot_cold_pixels: cold = {ncold}   /   hot = {nhot}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+        return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
+
+    def estimate_sky(
+        self,
+        mask_yslit=[[-4.5, 4.5]],
+        min_bar=0.9,
+        var_percentiles=[-5, -5],
+        df=51,
+        use=True,
+        outlier_threshold=7,
+        absolute_threshold=0.2,
+        make_plot=False,
+        verbose=True,
+        **kwargs,
+    ):
+        """
+        Estimate sky spectrum by fitting a flexible spline to all available pixels in
+        indicated empty shutter areas
+
+        Parameters
+        ----------
+        mask_yslit : list of (float, float)
+            Range of shutter pixels to exclude as coming from the source and/or
+            contaminants
+
+        min_bar : float
+            Minimum allowed value of the bar obscuration
+
+        var_percentiles : None, (float, float)
+            Exclude sky pixels with variances outside of this percentile range.  If
+            a negative number is provided, treat as an explicit number of pixels
+            to exclude from the low and high sides.
+
+        df : int
+            Degrees of freedom of the spline fit
+
+        use : bool
+            Use the resulting sky model for the local sky
+
+        outlier_threshold : float, None
+            Mask pixels where the residual w.r.t the sky model is greater than this
+
+        make_plot : bool
+            Make a diagnostic plto
+
+        verbose : bool
+            messaging
+
+        Returns
+        -------
+        Stores sky fit results in ``sky_data`` attribute
+
+        """
+        exclude_yslit = np.zeros_like(self.mask, dtype=bool)
+        for _yrange in mask_yslit:
+            exclude_yslit |= (self.yslit > _yrange[0]) & (
+                self.yslit < _yrange[1]
+            )
+
+        full_ok_sky = self.mask & ~exclude_yslit
+        ok_sky = full_ok_sky & True
+
+        if min_bar is not None:
+            ok_sky &= self.bar > min_bar
+
+        if ok_sky.sum() < 64:
+            return None
+
+        if var_percentiles is not None:
+            var_parray = np.array(var_percentiles)
+            absolute_clip = False
+
+            var_p = np.nanpercentile(
+                self.var_total[full_ok_sky], np.abs(var_parray)
+            )
+            so = np.argsort(self.var_total[full_ok_sky])
+
+            if var_parray[0] < 0:
+                var_p[0] = self.var_total[full_ok_sky][so][int(-var_parray[0])]
+                absolute_clip = True
+            if var_parray[1] < 0:
+                var_p[1] = self.var_total[full_ok_sky][so][
+                    -int(-var_parray[1])
+                ]
+                absolute_clip = True
+
+            var_clip = (self.var_total > var_p[0]) & (
+                self.var_total < var_p[1]
+            )
+            ok_sky &= var_clip
+        else:
+            absolute_clip = False
+
+        ok_skyf = ok_sky.flatten()
+
+        sky_wave = msautils.get_standard_wavelength_grid(
+            self.grating, sample=1.0
+        )
+        nbin = sky_wave.shape[0]
+        xbin = np.interp(self.wave, sky_wave, np.arange(nbin) / nbin)
+
+        spl_full = utils.bspline_templates(
+            xbin.flatten(),
+            df=df,
+            minmax=(0, 1),
+            get_matrix=True,
+        )
+
+        nspl = spl_full[ok_skyf, :].sum(axis=0)
+        spl_trim = nspl > 1.0e-4 * nspl.max()
+        spl_full = spl_full[:, spl_trim]
+
+        AxT = (spl_full[ok_skyf, :].T / np.sqrt(self.var_rnoise[ok_sky])).T
+        yx = (self.sci / np.sqrt(self.var_rnoise))[ok_sky]
+        sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)
+
+        if absolute_clip & (absolute_threshold is not None):
+            # Flag outliers
+            sky2d = spl_full.dot(sky_coeffs[0]).reshape(self.sci.shape)
+            sky_bad = np.abs(self.sci - sky2d) > absolute_threshold
+            var_clip |= sky_bad & ok_sky
+            ok_sky &= ~sky_bad
+            ok_skyf = ok_sky.flatten()
+
+            spl_full = utils.bspline_templates(
+                xbin.flatten(),
+                df=df,
+                minmax=(0, 1),
+                get_matrix=True,
+            )
+            nspl = spl_full[ok_skyf, :].sum(axis=0)
+            spl_trim = nspl > 1.0e-4 * nspl.max()
+            spl_full = spl_full[:, spl_trim]
+
+            AxT = (spl_full[ok_skyf, :].T / np.sqrt(self.var_rnoise[ok_sky])).T
+            yx = (self.sci / np.sqrt(self.var_rnoise))[ok_sky]
+            sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)
+
+        sky_covar = utils.safe_invert(np.dot(AxT.T, AxT))
+
+        spl_array = utils.bspline_templates(
+            np.arange(nbin) / nbin,
+            df=df,
+            minmax=(0, 1),
+            get_matrix=True,
+        )
+
+        spl_array = spl_array[:, spl_trim]
+        sky_model = spl_array.dot(sky_coeffs[0])
+        sky2d = spl_full.dot(sky_coeffs[0]).reshape(self.sci.shape)
+
+        # Rescale - this really should already be ~1.0
+        scl_sky = (self.sci * sky2d / self.var_rnoise)[ok_sky].sum()
+        scl_sky /= (sky2d**2 / self.var_rnoise)[ok_sky].sum()
+        sky2d *= scl_sky
+        sky_model *= scl_sky
+
+        sky_model[(sky_wave < np.nanmin(self.wave[ok_sky]))] = np.nan
+        sky_model[(sky_wave > np.nanmax(self.wave[ok_sky]))] = np.nan
+
+        self.sky_data = {
+            "sky_wave": sky_wave,
+            "sky_model": sky_model,
+            "sky_coeffs": sky_coeffs,
+            "sky_covar": sky_covar,
+            "spl_trim": spl_trim,
+            "df": df,
+            "sky2d": sky2d,
+            "use": use,
+            "npix": ok_sky.sum(),
+            "mask": ok_sky,
+        }
+
+        msg = f" estimate_sky: N = {ok_sky.sum()} "
+        if outlier_threshold is not None:
+            sky_outliers = np.abs(
+                self.sci - sky2d
+            ) > outlier_threshold * np.sqrt(self.var_total)
+            sky_outliers &= full_ok_sky
+            if absolute_clip:
+                sky_outliers |= full_ok_sky & ~var_clip
+
+            self.mask &= ~sky_outliers
+
+            msg += f", outliers > {outlier_threshold}: {sky_outliers.sum()}"
+        else:
+            sky_outliers = None
+
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+        if make_plot:
+            fig, axes = plt.subplots(2, 1, figsize=(8, 5), sharex=True)
+            ax = axes[0]
+            ax.scatter(
+                self.wave[full_ok_sky],
+                self.sci[full_ok_sky],
+                c=self.yslit[full_ok_sky],
+                alpha=0.1,
+            )
+
+            if sky_outliers is not None:
+                ax.scatter(
+                    self.wave[sky_outliers],
+                    self.sci[sky_outliers],
+                    ec="r",
+                    fc="None",
+                    s=100,
+                    alpha=0.8,
+                )
+
+            ax.plot(sky_wave, sky_model, color="magenta", alpha=0.5)
+            ax.grid()
+            ymax = np.nanmax(sky_model)
+            ax.set_ylim(-0.1 * ymax, ymax * 1.1)
+
+            ax = axes[1]
+            ax.scatter(
+                self.wave[full_ok_sky],
+                ((self.sci - sky2d) / np.sqrt(self.var_total))[full_ok_sky],
+                c=self.yslit[full_ok_sky],
+                alpha=0.1,
+            )
+
+            ax.plot(sky_wave, sky_model * 0, color="magenta", alpha=0.5)
+            ax.set_ylim(-7, 7)
+            ax.grid()
+
+    def flag_from_profile(
+        self,
+        grow=2,
+        nfilt=-32,
+        require_multiple=False,
+        verbose=True,
+        make_plot=False,
+    ):
+        """
+        Flag pixel outliers based on the cross-dispersion profile
+        - Calculate the p5, p50, and p95 rolling percentiles across the profile
+        - Flag high pixels where ``value > p95 + (p95 - p50)*grow``
+        - Flag low pixels where ``value < min(p5, 0) - 5 * sigma``
+
+        Parameters
+        ----------
+        grow : float
+
+        nfilt : int
+            Size of the filter window for the profile.  If ``nfilt < 0``, then interpret
+            as ``nfilt = self.mask.sum() // -nfilt``, otherwise use directly as the
+            filter size
+
+        require_multiple : bool
+            Require that flagged pixels appear in multiple exposures
+
+        verbose : bool
+            Messaging
+
+        make_plot : bool
+            Make a diagnostic figure
+
+        Returns
+        -------
+        updates the ``mask`` attribute
+
+        """
+        if hasattr(self, "mask_profile"):
+            self.mask |= self.mask_profile
+
+        so = np.argsort(self.yslit[self.mask])
+        yso = self.yslit[self.mask][so]
+        xso = (self.data)[self.mask][so]
+
+        if nfilt < 0:
+            # nfilt = self.sh[1] // (-nfilt)
+            nfilt = self.mask.sum() // -nfilt
+
+        phi = nd.percentile_filter(xso, 95, nfilt)
+        pmi = nd.percentile_filter(xso, 50, nfilt)
+        plo = nd.percentile_filter(xso, 5, nfilt)
+
+        hi_thresh = phi + (phi - pmi) * grow
+        lo_thresh = np.minimum(plo, 0)
+
+        bad = self.data > np.interp(self.yslit, yso, hi_thresh)
+        bad |= self.data < (
+            np.interp(self.yslit, yso, lo_thresh) - 5 * np.sqrt(self.var_total)
+        )
+
+        if require_multiple:
+            if self.N > 2:
+                nbad = bad.sum(axis=0)
+                bad &= False
+                all_bad = nbad >= 2 * (self.N // 3)
+                for i in range(self.N):
+                    bad[i, :] |= all_bad
+
+        self.mask_profile = bad
+
+        msg = f" flag_from_profile: {bad.sum()} "
+        msg += f"({bad.sum() / self.mask.sum() * 100:4.1f}%) pixels"
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+        if make_plot:
+            fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+            ax.scatter(yso, xso, c=self.wave[self.mask][so], alpha=0.1)
+            ax.scatter(
+                self.yslit[bad],
+                self.data[bad],
+                ec="r",
+                fc="None",
+                s=80,
+                alpha=0.8,
+            )
+
+            ax.plot(yso, hi_thresh, color="r", alpha=0.5)
+            ax.plot(yso, lo_thresh, color="r", alpha=0.5)
+            ax.plot(yso, np.array([phi, pmi, plo]).T, color="0.5", alpha=0.5)
+
+            ax.set_ylim(
+                np.nanmin(lo_thresh), np.nanmax(phi + (phi - pmi) * (grow + 1))
+            )
+            ax.grid()
+
+        self.mask &= ~bad
+        # self.sci[~self.mask] = np.nan
+
     def set_trace_coeffs(self, degree=2):
         """
         Fit a polynomial to the trace
@@ -1252,6 +1800,33 @@ class SlitGroup:
         self.yslit = np.array(yslit)
         self.yshutter = np.array(yshutter)
 
+    def apply_normalization_correction(self, verbose=True):
+        """
+        Apply normalization correction from `msaexp.utils.get_normalization_correction`
+
+        Only implemented for PRISM for now
+        """
+        if self.grating not in ["PRISM"]:
+            return None
+
+        slit = self.slits[0]
+        corr = msautils.get_normalization_correction(
+            self.wave,
+            slit.quadrant,
+            slit.xcen,
+            slit.ycen,
+            grating=self.grating,
+            verbose=verbose,
+        )
+
+        self.normalization = corr
+        self.sci *= corr
+        self.var_rnoise *= corr**2
+        self.var_poisson *= corr**2
+        self.mask &= np.isfinite(corr)
+
+        self.var_total = self.var_poisson + self.var_rnoise
+
     def apply_spline_bar_correction(self, verbose=True):
         """
         Own bar shadow correction for PRISM derived from empty background shutters
@@ -1282,24 +1857,46 @@ class SlitGroup:
 
         utils.log_comment(
             utils.LOGFILE,
-            f" Run apply_spline_bar_correction",
+            (
+                " apply_spline_bar_correction"
+                + "(mode='{bar_corr_mode}')".format(**self.meta)
+            ),
             verbose=verbose,
         )
 
-        bar, bar_wrapped = msautils.get_prism_bar_correction(
-            self.fixed_yshutter,
-            wrap="auto",
-        )
+        num_shutters = len(self.info["shutter_state"][0])
+        if num_shutters > 3:
+            # Force use 3-shutter file
+            wrap = True
+            num_shutters = 3
+        else:
+            wrap = "auto"
+
+        if self.meta["bar_corr_mode"] == "flat":
+            bar, bar_wrapped = msautils.get_prism_bar_correction(
+                self.fixed_yshutter,
+                num_shutters=num_shutters,
+                wrap=wrap,
+            )
+        else:
+            bar, bar_wrapped = msautils.get_prism_wave_bar_correction(
+                self.fixed_yshutter,
+                self.wave,
+                num_shutters=num_shutters,
+                wrap=wrap,
+            )
+
         self.meta["wrapped_barshadow"] = bar_wrapped
         self.meta["own_barshadow"] = True
 
         self.sci *= self.bar / bar
-        self.var *= 1.0 / bar**2
+        self.var_poisson *= (self.bar / bar) ** 2
+        self.var_total = self.var_poisson + self.var_rnoise
         self.orig_bar = self.bar * 1
         self.bar = bar * 1
         self.mask &= np.isfinite(self.sci)
 
-    def mask_stuck_closed_shutters(self, stuck_threshold=0.3, min_bar=0.6):
+    def mask_stuck_closed_shutters(self, stuck_threshold=0.3, min_bar=0.7):
         """
         Identify stuck-closed shutters in prism spectra
 
@@ -1331,7 +1928,7 @@ class SlitGroup:
 
         shutter_y = self.fixed_yshutter
 
-        sn = self.sci / np.sqrt(self.var)
+        sn = self.sci / np.sqrt(self.var_total)
 
         bar_mask = self.mask & (self.bar > min_bar)
         if bar_mask.sum() == 0:
@@ -1348,7 +1945,8 @@ class SlitGroup:
         if un.N == 1:
             bad_shutter = sn_shutters < stuck_threshold
         else:
-            bad_shutter = sn_shutters < stuck_threshold * sn_shutters.max()
+            bad_shutter = sn_shutters < (stuck_threshold * sn_shutters.max())
+            bad_shutter &= un.counts > 0.5 * un.counts.max()
 
         if bad_shutter.sum() > 0:
             bad_list = [un.values[i] for i in np.where(bad_shutter)[0]]
@@ -1378,14 +1976,71 @@ class SlitGroup:
         )
 
         for i in self.meta["bad_shutter_names"]:
-            shutter_mask = np.abs(self.fixed_yshutter - i) < 0.5
+            shutter_mask = np.abs(self.fixed_yshutter - i) < 0.6
             self.sci[shutter_mask] = np.nan
             self.mask &= np.isfinite(self.sci)
+
+    def compute_sky_scale(self, trace_avoid=[-2.5, 2.5], verbose=True):
+        """
+        Compute scaling of input sky arrays
+        """
+        if self.sky_arrays is None:
+            return 1.0
+
+        trace_mask = (self.yslit < trace_avoid[0]) | (
+            self.yslit > trace_avoid[1]
+        )
+        trace_mask &= self.mask
+
+        if trace_mask.sum() == 0:
+            msg = f" compute_sky_scale: {trace_avoid} - no pixels"
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            return 1.0
+
+        sky = self.sky_background * 1
+
+        wmin = np.maximum(np.nanmin(self.wave), np.nanmin(self.sky_arrays[0]))
+        wmax = np.minimum(np.nanmax(self.wave), np.nanmax(self.sky_arrays[0]))
+        # print(wmin, wmax)
+
+        trace_mask &= (self.wave > wmin) & (self.wave < wmax)
+        trace_mask &= np.abs(self.sci - sky) < 5 * np.sqrt(self.var_total)
+
+        scale = np.nanmedian((self.sci / sky)[trace_mask])
+
+        df = 13
+
+        bspl_full = utils.bspline_templates(
+            self.wave[trace_mask], df=df, get_matrix=True, minmax=(wmin, wmax)
+        )
+
+        lsq_coeffs = np.linalg.lstsq(
+            (bspl_full.T * (sky / np.sqrt(self.var_total))[trace_mask]).T,
+            (self.sci / np.sqrt(self.var_total))[trace_mask],
+            rcond=None,
+        )
+
+        bspl_arrays = utils.bspline_templates(
+            self.sky_arrays[0], df=df, get_matrix=True, minmax=(wmin, wmax)
+        )
+
+        self.sky_arrays[1] *= bspl_arrays.dot(lsq_coeffs[0])
+
+        if np.isfinite(scale):
+            # self.meta["scale_sky"] *= scale
+            msg = f" compute_sky_scale: {trace_avoid} - scale = {scale:.2f}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        else:
+            msg = f" compute_sky_scale: {trace_avoid} - ! {scale}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+        return scale
 
     @property
     def sky_background(self):
         """
-        Optional sky-background data computed from the ``sky_arrays`` attribute
+        Optional sky-background data computed from the ``sky_arrays`` or ``sky_data``
+        attributes
 
         Returns
         -------
@@ -1394,8 +2049,20 @@ class SlitGroup:
 
         """
         if self.sky_arrays is not None:
-            sky = np.interp(self.wave, *self.sky_arrays, left=-1, right=-1)
+            sky = np.interp(
+                self.wave,
+                self.sky_arrays[0],
+                self.sky_arrays[1] * self.meta["scale_sky"],
+                left=-1,
+                right=-1,
+            )
+
             sky[sky < 0] = np.nan
+        elif hasattr(self, "sky_data"):
+            if self.sky_data["use"]:
+                sky = self.sky_data["sky2d"] * 1.0
+            else:
+                sky = 0.0
         else:
             sky = 0.0
 
@@ -1415,9 +2082,12 @@ class SlitGroup:
         sky = self.sky_background
 
         if self.meta["undo_barshadow"]:
-            return (self.sci - sky) * self.bar
+            clean = (self.sci - sky) * self.bar
         else:
-            return self.sci - sky
+            clean = self.sci - sky
+
+        clean[~self.mask] = np.nan
+        return clean
 
     def make_diff_image(self, exp=1):
         """
@@ -1443,6 +2113,9 @@ class SlitGroup:
         vdiff : array-like
             Flattened variance image
 
+        wdiff : array-like
+            Flattened weight image
+
         """
         ipos = self.unp[exp]
 
@@ -1451,34 +2124,58 @@ class SlitGroup:
         )
 
         vpos = (
-            np.nansum(self.var[ipos, :], axis=0)
+            np.nansum(self.var_total[ipos, :], axis=0)
             / np.nansum(self.mask[ipos, :], axis=0) ** 2
         )
-        #
+
+        if self.meta["weight_type"] == "ivm_bar":
+            wpos = (
+                np.nansum((self.var_rnoise / self.bar**2)[ipos, :], axis=0)
+                / np.nansum(self.mask[ipos, :], axis=0) ** 2
+            )
+        else:
+            wpos = (
+                np.nansum(self.var_rnoise[ipos, :], axis=0)
+                / np.nansum(self.mask[ipos, :], axis=0) ** 2
+            )
+
         if self.meta["diffs"]:
             ineg = ~self.unp[exp]
             neg = np.nansum(self.data[ineg, :], axis=0) / np.nansum(
                 self.bkg_mask[ineg, :], axis=0
             )
             vneg = (
-                np.nansum(self.var[ineg, :], axis=0)
+                np.nansum(self.var_total[ineg, :], axis=0)
                 / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
             )
+
+            if self.meta["weight_type"] == "ivm_bar":
+                wneg = (
+                    np.nansum((self.var_rnoise / self.bar**2)[ineg, :], axis=0)
+                    / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
+                )
+            else:
+                wneg = (
+                    np.nansum(self.var_rnoise[ineg, :], axis=0)
+                    / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
+                )
         else:
             ineg = np.zeros(self.N, dtype=bool)
             neg = np.zeros_like(pos)
             vneg = np.zeros_like(vpos)
+            wneg = np.zeros_like(wpos)
 
         diff = pos - neg
         vdiff = vpos + vneg
+        wdiff = wpos + wneg
 
-        return ipos, ineg, diff, vdiff
+        return ipos, ineg, diff, vdiff, wdiff
 
     def plot_2d_differences(
         self,
         fit=None,
-        clip_sigma=3,
-        kws=dict(cmap="Blues", interpolation="hanning"),
+        clip_sigma=5,
+        kws=dict(cmap="bone_r", interpolation="hanning"),
         figsize=(6, 2),
     ):
         """
@@ -1503,7 +2200,6 @@ class SlitGroup:
         fig : matplotlib.figure.Figure
             The generated figure.
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         Ny = self.unp.N
         if fit is None:
@@ -1526,7 +2222,7 @@ class SlitGroup:
         nods = self.relative_nod_offset
 
         for i, exp in enumerate(self.unp.values):
-            ipos, ineg, diff, vdiff = self.make_diff_image(exp=exp)
+            ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
 
             if fit is not None:
                 model = fit[exp]["smod"]
@@ -1768,7 +2464,7 @@ class SlitGroup:
         from scipy.optimize import minimize
 
         global EVAL_COUNT
-        ipos, ineg, diff, vdiff = self.make_diff_image(exp=exp)
+        ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
 
         base_coeffs = self.base_coeffs[np.where(ipos)[0][0]]
 
@@ -1777,6 +2473,7 @@ class SlitGroup:
             self.wave,
             self.xslit,
             self.ypix,
+            self.bar,
             self.yslit,
             diff,
             vdiff,
@@ -1794,6 +2491,7 @@ class SlitGroup:
             self.wave,
             self.xslit,
             self.ypix,
+            self.bar,
             self.yslit,
             diff,
             vdiff,
@@ -2017,7 +2715,7 @@ class SlitGroup:
 
         Note: This documentation is mainly AI-generated and will be reviewed
         """
-        ipos, ineg, diff, vdiff = self.make_diff_image(exp=exp)
+        ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
         if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=(5, 5))
 
@@ -2038,14 +2736,24 @@ class SlitGroup:
         return fig
 
 
-# grid for oversampling cross-dispersion
-xstep_func = (
-    lambda x, pf: (np.linspace(1.0 / x, 2 + 1.0 / x, x + 1)[:-1] - 1) * pf
-)
+def xstep_func(x, pf):
+    """
+    Grid for oversampling cross dispersion axis
+    """
+    return (np.linspace(1.0 / x, 2 + 1.0 / x, x + 1)[:-1] - 1) * pf
 
 
 def pseudo_drizzle(
-    xpix, ypix, data, wht, xbin, ybin, arrays=None, oversample=4, pixfrac=1
+    xpix,
+    ypix,
+    data,
+    var,
+    wht,
+    xbin,
+    ybin,
+    arrays=None,
+    oversample=4,
+    pixfrac=1,
 ):
     """
     2D histogram analogous to drizzle with pixfrac=0
@@ -2093,24 +2801,17 @@ def pseudo_drizzle(
 
     if arrays is None:
         num = np.zeros((len(ybin) - 1, len(xbin) - 1))
+        vnum = num * 0.0
         den = num * 0.0
+        ntot = num * 0.0
     else:
-        num, den = arrays
+        num, vnum, den, ntot = arrays
 
     dx = 0
     for dy in xs:
-        # for dy in xs:
-        res = binned_statistic_2d(
-            ypix + dy,
-            xpix + dx,
-            (data * wht / oversample),
-            statistic="sum",
-            bins=(ybin, xbin),
-        )
 
-        ok = np.isfinite(res.statistic)
-
-        num[ok] += res.statistic[ok]
+        ####
+        # Total weight
         res = binned_statistic_2d(
             ypix + dy,
             xpix + dx,
@@ -2119,9 +2820,47 @@ def pseudo_drizzle(
             bins=(ybin, xbin),
         )
 
+        ok = np.isfinite(res.statistic) & (res.statistic > 0)
         den[ok] += res.statistic[ok]
 
-    return (num, den)
+        ####
+        # Weighted data
+        res = binned_statistic_2d(
+            ypix + dy,
+            xpix + dx,
+            (data * wht / oversample),
+            statistic="sum",
+            bins=(ybin, xbin),
+        )
+
+        # ok = np.isfinite(res.statistic)
+        num[ok] += res.statistic[ok]
+
+        ####
+        # Weighted variance
+        res = binned_statistic_2d(
+            ypix + dy,
+            xpix + dx,
+            (var * wht / oversample),
+            statistic="sum",
+            bins=(ybin, xbin),
+        )
+
+        vnum[ok] += res.statistic[ok]
+
+        ####
+        # Counts
+        res = binned_statistic_2d(
+            ypix + dy,
+            xpix + dx,
+            ((var + wht) > 0) * 1.0,
+            statistic="sum",
+            bins=(ybin, xbin),
+        )
+
+        ntot[ok] += res.statistic[ok] / len(xs)
+
+    return (num, vnum, den, ntot)
 
 
 def obj_header(obj):
@@ -2249,23 +2988,27 @@ def combine_grating_group(
     _ = drizzle_grating_group(xobj, grating_keys, **drizzle_kws)
     wave_bin, xbin, ybin, header, slit_info, arrays, parrays = _
 
-    num, den = arrays
-    mnum, mden = parrays
+    num, vnum, den, ntot = arrays
+    mnum, _, mden, _ = parrays
 
     sci2d = num / den
-    wht2d = den * 1
+    # wht2d = den * 1
+
+    var2d = vnum / den / ntot
+    wht2d = 1 / var2d
 
     pmask = mnum / den > 0
     snum = np.nansum((num / den) * mnum * pmask, axis=0)
+    svnum = np.nansum((vnum / den / ntot) * mnum * pmask, axis=0)
     sden = np.nansum(mnum**2 / den * pmask, axis=0)
 
     smsk = nd.binary_erosion(np.isfinite(snum / sden), iterations=2) * 1.0
     smsk[smsk < 1] = np.nan
     snum *= smsk
 
-    snmask = snum / sden * np.sqrt(sden) > 3
+    snmask = snum / sden / np.sqrt(svnum / sden) > 3
     if snmask.sum() < 10:
-        snmask = snum / sden * np.sqrt(sden) > 1
+        snmask = snum / sden / np.sqrt(svnum / sden) > 1
 
     pdata = np.nansum((num / den) * snmask * den, axis=1)
     pdata /= np.nansum(snmask * den, axis=1)
@@ -2307,7 +3050,8 @@ def combine_grating_group(
     _sci2d, _wht2d, profile2d, spec, prof = _data
 
     spec["flux"] = snum / sden
-    spec["err"] = 1.0 / np.sqrt(sden)
+    # spec["err"] = 1.0 / np.sqrt(sden)
+    spec["err"] = np.sqrt(svnum / sden)
     spec["flux"].unit = u.microJansky
     spec["err"].unit = u.microJansky
     spec["wave"].unit = u.micron
@@ -2415,11 +3159,12 @@ def drizzle_grating_group(
     slit_info : `~astropy.table.Table`
         Table of slit metadata
 
-    arrays : (array-like, array-like)
-        2D `sci2d` and `wht2d` arrays of the resampled data
+    arrays : (array-like, array-like, array-like)
+        2D ``sci_num``, ``var_num`` and ``wht_denom`` arrays of the resampled data. The
+        weighted data is ``sci_num / wht_denom``
 
-    parrays : (array-like, array-like)
-        2D `prof2d` and `prof_wht2d` arrays of the profile model resampled
+    parrays : (array-like, array-like, array-like)
+        2D `prof2d`, `var2d` and `prof_wht2d` arrays of the profile model resampled
         like the data
 
     """
@@ -2485,14 +3230,33 @@ def drizzle_grating_group(
         header["WITHPTH"] = (with_pathloss, "Internal path loss correction")
 
         for ii, exp in enumerate(exp_ids):
-            ipos, ineg, diff, vdiff = obj.make_diff_image(exp=exp)
-            wht = 1.0 / vdiff
+            ipos, ineg, diff, vdiff, wdiff = obj.make_diff_image(exp=exp)
             ip = np.where(ipos)[0][0]
-            ok = np.isfinite(diff + wht + obj.yslit[ip, :])
+
+            # wht = 1.0 / vdiff
+            if obj.meta["weight_type"].lower() == "poisson":
+                wht = 1.0 / vdiff
+            elif obj.meta["weight_type"].lower() == "mask":
+                wht = (vdiff > 0.0) * 1.0
+            elif obj.meta["weight_type"].lower() == "exptime":
+                wht = (vdiff > 0.0) * obj.exptime[ipos].sum()
+            elif obj.meta["weight_type"].lower() == "exptime_bar":
+                wht = (vdiff > 0.0) * obj.exptime[ipos].sum()
+                wht *= obj.bar[ip, :] ** 2
+            elif obj.meta["weight_type"].lower() in ["ivm", "ivm_bar"]:
+                # Weighting by var_rnoise or compound
+                wht = 1.0 / wdiff
+            else:
+                msg = "weight_type {weight_type} not recognized".format(
+                    **obj.meta
+                )
+                raise ValueError(msg)
+
+            ok = np.isfinite(diff + vdiff + wht + obj.yslit[ip, :])
             if fit is not None:
                 ok &= np.isfinite(fit[exp]["smod"].flatten())
 
-            ok &= vdiff > 0
+            ok &= (vdiff > 0) & (wht > 0)
             if ok.sum() == 0:
                 continue
 
@@ -2541,6 +3305,7 @@ def drizzle_grating_group(
                 xsl,
                 ysl,
                 diff[ok] / prf_i,
+                vdiff[ok] / prf_i**2,
                 wht[ok] * prf_i**2,
                 xbin,
                 ybin,
@@ -2557,6 +3322,7 @@ def drizzle_grating_group(
                     xsl,
                     ysl,
                     mod[ok],
+                    vdiff[ok] / prf_i**2,
                     wht[ok] * prf_i**2,
                     xbin,
                     ybin,
@@ -2724,12 +3490,14 @@ def extract_spectra(
     diffs=True,
     undo_pathloss=True,
     undo_barshadow=False,
+    sky_arrays=None,
     drizzle_kws=DRIZZLE_KWS,
     get_xobj=False,
     trace_with_xpos=False,
     trace_with_ypos="auto",
     get_background=False,
     make_2d_plots=True,
+    plot_kws={},
     **kwargs,
 ):
     # TODO: Adding the missing parameters to this docstring made it extremely
@@ -2876,7 +3644,10 @@ def extract_spectra(
     # Log function arguments
     utils.LOGFILE = f"{root}_{target}.extract.log"
     args = utils.log_function_arguments(
-        utils.LOGFILE, frame, "slit_combine.extract_spectra"
+        utils.LOGFILE,
+        frame,
+        "slit_combine.extract_spectra",
+        ignore=["sky_arrays"],
     )
     if isinstance(args, dict):
         with open(f"{root}_{target}.extract.yml", "w") as fp:
@@ -2960,13 +3731,14 @@ def extract_spectra(
             stuck_threshold=stuck_threshold,
             undo_barshadow=undo_barshadow,
             undo_pathloss=undo_pathloss,
-            # sky_arrays=(wsky, fsky),
+            sky_arrays=sky_arrays,
             trace_with_xpos=trace_with_xpos,
             trace_with_ypos=trace_with_ypos,
             trace_from_yoffset=trace_from_yoffset,
             nod_offset=nod_offset,
             reference_exposure=reference_exposure,
             pad_border=pad_border,
+            **kwargs,
         )
 
         if 0:
@@ -2976,6 +3748,11 @@ def extract_spectra(
                 msg = f"\n    skip shape=({obj.sh}) {obj.grating}\n"
                 utils.log_comment(utils.LOGFILE, msg, verbose=True)
                 continue
+
+        if obj.mask.sum() < 256:
+            msg = f"\n    skip npix={obj.mask.sum()} shape=({obj.sh}) {obj.grating}\n"
+            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            continue
 
         if obj.meta["diffs"]:
             valid_frac = obj.mask.sum() / obj.mask.size
@@ -3230,8 +4007,8 @@ def extract_spectra(
             fileroot = f"{root}_{obj.grating}-{obj.filter}_{target}".lower()
             fig2d.savefig(f"{fileroot}.d2d.png")
 
-    for k in xobj:
-        xobj[k]["obj"].sky_arrays = None
+    # for k in xobj:
+    #     xobj[k]["obj"].sky_arrays = None
 
     gratings = {}
     for k in keys:
@@ -3244,6 +4021,18 @@ def extract_spectra(
     utils.log_comment(utils.LOGFILE, f"\ngratings: {gratings}", verbose=True)
 
     hdul = {}
+
+    if diffs:
+        if len(plot_kws) == 0:
+            plot_kws = {}
+    else:
+        if len(plot_kws) == 0:
+            plot_kws = {
+                "vmin": -0.05,
+                #'ny': 7,
+                #'ymax_sigma_scale':5, 'ymax_percentile': 90, 'ymax_scale': 1.5,
+            }
+
     for g in gratings:
         hdul[g] = combine_grating_group(
             xobj, gratings[g], drizzle_kws=drizzle_kws
@@ -3259,10 +4048,15 @@ def extract_spectra(
         utils.log_comment(utils.LOGFILE, specfile, verbose=True)
         hdul[g].writeto(specfile, overwrite=True)
 
-        fig = msautils.drizzled_hdu_figure(hdul[g])
+        if g.upper() == "PRISM":
+            plot_kws["interpolation"] = "nearest"
+        else:
+            plot_kws["interpolation"] = "hanning"
+
+        fig = msautils.drizzled_hdu_figure(hdul[g], **plot_kws)
         fig.savefig(specfile.replace(".spec.fits", ".fnu.png"))
 
-        fig = msautils.drizzled_hdu_figure(hdul[g], unit="flam")
+        fig = msautils.drizzled_hdu_figure(hdul[g], unit="flam", **plot_kws)
         fig.savefig(specfile.replace(".spec.fits", ".flam.png"))
 
     # Cleanup
