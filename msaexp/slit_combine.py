@@ -222,13 +222,8 @@ def objfun_prof_trace(
     verbose,
     ret,
 ):
-    # TODO: The following docstring does not provide a lot of information -
-    # I believe the AI tool (and me) could not decode the complexity of this
-    # method to make the parameter descriptions more precise.
-    # I hope the docstring skeleton in itself is useful and can save you
-    # some time (K.V.).
     """
-    Objective function for profile tracing.
+    Objective function for fitting the profile along the trace
 
     Parameters:
     -----------
@@ -236,7 +231,7 @@ def objfun_prof_trace(
         Array of parameters for the objective function.
 
     base_coeffs : array-like
-        Coefficients for the base polynomial.
+        Coefficients for the base trace polynomial.
 
     wave : array-like
         Array of wavelengths.
@@ -251,28 +246,30 @@ def objfun_prof_trace(
         Array of initial y-slit positions.
 
     diff : array-like
-        Array of differences between data and model.
+        A-B nod difference image
 
     vdiff : array-like
-        Array of variances of the differences.
+        Propagated variance of the difference image
 
     mask : array-like
-        Array of masks for the data.
+        Valid pixel mask
 
     ipos : array-like
-        Array of positive indices.
+        Array of exposure indices corresponding to the positive
+        "A" component of the difference
 
     ineg : array-like
-        Array of negative indices.
-
+        Array of exposure indices corresponding to the negative
+        "B" component of the difference
+        
     sh : tuple
         Shape of the data.
 
     fix_sigma : float
-        Fixed value for sigma.
+        Optional value to fix the profile width
 
     force_positive : bool
-        Flag to force positive values.
+        Only consider positive parts of the profile difference image
 
     verbose : bool
         Flag to enable verbose output.
@@ -284,13 +281,14 @@ def objfun_prof_trace(
     --------
     If ret == 1:
         snum : array-like
-            Numerator of the objective function.
+            Numerator of the objective function.  The estimated 1D
+            spectrum is ``snum/sden``.
 
         sden : array-like
             Denominator of the objective function.
 
         smod : array-like
-            Model of the objective function.
+            Profile model of the objective function
 
         sigma : float
             Value of sigma.
@@ -304,7 +302,6 @@ def objfun_prof_trace(
         chi2 : float
             Chi-squared value.
 
-    Note: This documentation is mainly AI-generated and will be reviewed.
     """
 
     from msaexp.resample_numba import pixel_integrated_gaussian_numba as PRF
@@ -522,8 +519,6 @@ class SlitGroup:
         reference_exposure="auto",
         **kwargs,
     ):
-        # TODO are 'trace_with_xpos' and 'trace_with_ypos' interpreted
-        # correctly in this docstring (K.V.)?
         """
         Container for a list of 2D extracted ``SlitModel`` files
 
@@ -2330,7 +2325,6 @@ class SlitGroup:
         tfits : dict
             Dictionary containing the fit results for each exposure group
 
-        Note: This documentation is mainly AI-generated and will be reviewed.
         """
         tfits = {}
 
@@ -2713,7 +2707,6 @@ class SlitGroup:
         fig : matplotlib.figure.Figure
             Figure object containing the plot.
 
-        Note: This documentation is mainly AI-generated and will be reviewed
         """
         ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
         if ax is None:
@@ -2756,7 +2749,8 @@ def pseudo_drizzle(
     pixfrac=1,
 ):
     """
-    2D histogram analogous to drizzle with pixfrac=0
+    2D histogram analogous to drizzle.  Oversamples along cross-dispersion axis
+    to approximate pixfrac and smooth over pixel aliasing of curved traces.
 
     Parameters
     ----------
@@ -2790,10 +2784,19 @@ def pseudo_drizzle(
 
     Returns
     -------
-    tuple
-        Tuple containing the `num` and `den` arrays.
+    num : array-like
+        Weighted numerator
 
-    Note: This documentation is mainly AI-generated and will be reviewed.
+    vnum : array-like
+        Weighted variance numerator
+        
+    den : array-like
+        Weighted denominator
+
+    ntot : array-like
+        Number of exposures that contribute to 
+        the output pixels
+
     """
     from scipy.stats import binned_statistic_2d
 
@@ -2949,11 +2952,9 @@ DRIZZLE_KWS = dict(
 
 
 def combine_grating_group(
-    # TODO Should 'extract_kws' be removed? (K.V.)
     xobj,
     grating_keys,
     drizzle_kws=DRIZZLE_KWS,
-    extract_kws={},
     verbose=True,
 ):
     """
@@ -2970,9 +2971,6 @@ def combine_grating_group(
 
     drizzle_kws : dict
         Keyword arguments passed to `msaexp.slit_combine.drizzle_grating_group`
-
-    extract_kws : dict
-        Not used
 
     Returns
     -------
@@ -3500,13 +3498,8 @@ def extract_spectra(
     plot_kws={},
     **kwargs,
 ):
-    # TODO: Adding the missing parameters to this docstring made it extremely
-    # long. Most of the parameters are self-explanatony, so maybe they
-    # should be removed anyway. I let it all stay in the commit, as
-    # I assume it would be easier for you to remove them instead
-    # of writing them up again in case you would like to keep them (K.V.).
     """
-    Spectral combination workflow
+    Spectral combination workflow splitting by grating and multiple observations in a particular grating
 
     Parameters
     ----------
@@ -3530,13 +3523,10 @@ def extract_spectra(
         Indices of ``files[i].split('[._]') + GRATING`` to join as a group
 
     split_uncover : bool
-        Split sub-pixel dithers from UNCOVER when defining exposure groups
+        Split sub-pixel dithers from UNCOVER (GO-2561) when defining exposure groups
 
-    stuck_threshold, pad_border, position_key:
-        See `msaexp.slit_combine.SlitGroup
-
-    pad_border : int, optional
-        Padding border value
+    stuck_threshold, pad_border, position_key, pad_border:
+        See `msaexp.slit_combine.SlitGroup`
 
     sort_by_sn : bool
         Try to process groups in order of decreasing S/N, i.e., to derive the
@@ -3544,7 +3534,11 @@ def extract_spectra(
         to other groups with the gratings
 
     position_key : str, optional
-        Position key value
+        Keyword to define the separate nod positions, e.g., 
+        - "y_index" : Rounded y offset
+        - "position_number" : dither number
+        - "shutter_state" : Shutter state from MPT.  Usually robust, but can 
+           get confused when multiple catalog sources fall within the slitlets
 
     mask_cross_dispersion : None or [int, int]
         Optional cross-dispersion masking, e.g., for stuck-closed shutters or
@@ -3571,31 +3565,35 @@ def extract_spectra(
         See `msaexp.slit_combine.SlitGroup`
 
     trace_niter : int, optional
-        Trace iteration value
+        Number of iterations for the trace fit
 
     offset_degree : int, optional
-        Offset degree value
+        Polynomial offset degree
 
     degree_kwargs : dict, optional
         Degree keyword arguments
 
     recenter_all : bool, optional
-        Recenter all
+        Refit for the trace center for all groups.  If False,
+        use the center from the first (usually highest S/N prism)
+        trace.
 
     nod_offset : None, optional
-        Nod offset value
+        Nod offset value.  If not specified, will be calculated
+        internally.
 
-    initial_sigma : int, optional
-        Initial sigma value
+    initial_sigma : float, optional
+        Initial sigma value.  This is 10 times the Gaussian sigma
+        width, in pixels.
 
     fit_type : int, optional
         Fit type value
 
     initial_theta : None, optional
-        Initial theta value
+        Initial parameter guesses
 
     fix_params : bool, optional
-        Fix parameters
+        Fix parameters to ``initial_theta``
 
     input_fix_sigma : None, optional
         Input fix sigma value
@@ -3604,19 +3602,22 @@ def extract_spectra(
         Fit parameters keyword arguments
 
     diffs : bool, optional
-        Diffs value
+        Do nod differences
 
     undo_pathloss : bool, optional
-        Undo pathloss value
+        Undo pipeline pathloss correction (should usually be the 
+        PATHLOSS_UNIFORM correction)
 
-    undo_barshadow : bool, optional
-        Undo barshadow value
+    undo_barshadow : bool, 2, optional
+        - ``True`` : undo the pipeline BarShadow correction
+        - ``2`` : Replace with the internal BarShadow correction
 
     drizzle_kws : dict, optional
         Drizzle keyword arguments
 
     get_xobj : bool, optional
-        Get xobj value
+        Return `msaexp.slit_combine.SlitGroup` objects along with the
+        HDU product
 
     trace_with_xpos : bool, optional
         Trace with xpos value
@@ -3632,10 +3633,12 @@ def extract_spectra(
 
     Returns
     -------
-    None
+    - None
         If no valid spectra are found
-
-    Note: This documentation is mainly AI-generated and will be reviewed.
+    - hdu : dict
+        Dict of `astropy.io.fits.HDUList` objects for the separate gratings
+    - xobj : dict
+        Dictionary of `SlitGroup` objects
     """
 
     global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR, MSA_NOD_ARCSEC
