@@ -905,7 +905,6 @@ def get_xlimits_from_lines(
     pad=10,
     verbose=True,
 ):
-    # TODO: I had issues in narrowing down the exact format of 'xlim' (K.V.)
     """
     Find emission lines in 2D spectrum
 
@@ -939,7 +938,6 @@ def get_xlimits_from_lines(
     xlim : tuple
         A tuple containing the x-limits of the emission lines.
 
-    Note: This documentation is mainly AI-generated and will be reviewed.
     """
     import scipy.ndimage as nd
 
