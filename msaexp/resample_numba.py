@@ -220,8 +220,8 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.0):
 def compute_igm(z, wobs, scale_tau=1.0):
     """
     Calculate
-    [Inoue+ (2014)](https://ui.adsabs.harvard.edu/abs/2014MNRAS.442.1805I) IGM
-    transmission, reworked from `~eazy.igm.Inoue14`
+    `Inoue+ (2014) <(https://ui.adsabs.harvard.edu/abs/2014MNRAS.442.1805I)`_
+    IGM transmission, reworked from `~eazy.igm.Inoue14`
 
     Parameters
     ----------

@@ -76,6 +76,7 @@ from . import utils as msautils
 
 try:
     from .resample_numba import compute_igm
+
     igm_func = compute_igm
 
 except ImportError:
@@ -1691,7 +1692,7 @@ def fit_redshift_grid(
     zgrid : array
         Redshifts to fit
 
-    others : see `msaexp.spectrum.fit_redshift`
+    others : see `~msaexp.spectrum.fit_redshift`
 
     Returns
     -------
@@ -2275,14 +2276,14 @@ def plot_spectrum(
         ``templates, coeffs, flam, eflam, _model, mask, full_chi2``
 
     use_aper_columns : bool, optional
-        Whether to use aperture columns in the spectrum table. 
+        Whether to use aperture columns in the spectrum table.
         Default is False.
 
     label : None or str, optional
         Label to add. Default is None.
 
     **kwargs : dict, optional
-        Additional keyword arguments. 
+        Additional keyword arguments.
         Used in 'SpectrumSampler' & 'make_templates'
 
     Returns

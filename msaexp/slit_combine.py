@@ -261,7 +261,7 @@ def objfun_prof_trace(
     ineg : array-like
         Array of exposure indices corresponding to the negative
         "B" component of the difference
-        
+
     sh : tuple
         Shape of the data.
 
@@ -532,6 +532,10 @@ class SlitGroup:
 
         position_key : str
             Column in the ``info`` table to define the nod positions
+                - "y_index" = Rounded y offset
+                - "position_number" = dither number
+                - "shutter_state" = Shutter state from MPT.  Usually robust, but can
+                   get confused when multiple catalog sources fall within the slitlets
 
         diffs : bool
             Compute nod differences
@@ -565,7 +569,8 @@ class SlitGroup:
             estimate sky directly from the slit data
 
         undo_pathloss : bool
-            Remove the pathloss correction if the extensions found in the slit
+            Undo pipeline pathloss correction (should usually be the
+            PATHLOSS_UNIFORM correction) if the extensions are found in the slit
             model files
 
         trace_with_xpos : bool
@@ -592,8 +597,7 @@ class SlitGroup:
 
         weight_type : str
             Weighting scheme for 2D resampling
-            - ``ivm`` : Use weights from ``var_rnoise``, like
-                        [jwst.resample](https://github.com/spacetelescope/jwst/blob/4342988027ee0811b57d3641bda4c8486d7da1f5/jwst/resample/resample_utils.py#L168)
+            - ``ivm`` : Use weights from ``var_rnoise``, like `jwst.resample <(https://github.com/spacetelescope/jwst/blob/4342988027ee0811b57d3641bda4c8486d7da1f5/jwst/resample/resample_utils.py#L168>`_
             - ``ivm_bar`` : Use a modified weight
                             ``VAR_RNOISE / BARSHADOW**2``
             - ``poisson`` : Weight with ``var_poisson``, msaexp extractions v1 and v2
@@ -1827,7 +1831,7 @@ class SlitGroup:
         Own bar shadow correction for PRISM derived from empty background shutters
         and implemented as a flexible bspline
 
-        See `msaexp.utils.get_prism_bar_correction`.
+        See `~msaexp.utils.get_prism_bar_correction`.
 
         Parameters
         ----------
@@ -2418,7 +2422,7 @@ class SlitGroup:
             Initial profile sigma to use (pixels*10)
 
         exp : int
-            Exposure index (see ``unp``)
+            Exposure index (see ``self.unp``)
 
         force_positive : bool
             Don't consider the negative subtracted parts of the difference
@@ -2689,7 +2693,7 @@ class SlitGroup:
         Parameters
         ----------
         exp : int
-            Exposure index (see ``unp``)
+            Exposure index (see ``self.unp``)
 
         ax : matplotlib.axes.Axes, optional
             Axes object to plot on.
@@ -2789,12 +2793,12 @@ def pseudo_drizzle(
 
     vnum : array-like
         Weighted variance numerator
-        
+
     den : array-like
         Weighted denominator
 
     ntot : array-like
-        Number of exposures that contribute to 
+        Number of exposures that contribute to
         the output pixels
 
     """
@@ -3525,20 +3529,10 @@ def extract_spectra(
     split_uncover : bool
         Split sub-pixel dithers from UNCOVER (GO-2561) when defining exposure groups
 
-    stuck_threshold, pad_border, position_key, pad_border:
-        See `msaexp.slit_combine.SlitGroup`
-
     sort_by_sn : bool
         Try to process groups in order of decreasing S/N, i.e., to derive the
         trace offsets in the prism where it will be best defined and propagate
         to other groups with the gratings
-
-    position_key : str, optional
-        Keyword to define the separate nod positions, e.g., 
-        - "y_index" : Rounded y offset
-        - "position_number" : dither number
-        - "shutter_state" : Shutter state from MPT.  Usually robust, but can 
-           get confused when multiple catalog sources fall within the slitlets
 
     mask_cross_dispersion : None or [int, int]
         Optional cross-dispersion masking, e.g., for stuck-closed shutters or
@@ -3561,8 +3555,17 @@ def extract_spectra(
         stuck-closed shutters, though the how effective it is is still under
         investigation.
 
-    trace_from_yoffset, reference_exposure :
-        See `msaexp.slit_combine.SlitGroup`
+    stuck_threshold, pad_border :
+        See `~msaexp.slit_combine.SlitGroup`
+
+    trace_from_yoffset, trace_with_xpos, trace_with_ypos :
+        See `~msaexp.slit_combine.SlitGroup`
+
+    position_key, reference_exposure, nod_offset, diffs :
+        See `~msaexp.slit_combine.SlitGroup`
+
+    undo_pathloss, undo_barshadow :
+        See `~msaexp.slit_combine.SlitGroup`
 
     trace_niter : int, optional
         Number of iterations for the trace fit
@@ -3577,10 +3580,6 @@ def extract_spectra(
         Refit for the trace center for all groups.  If False,
         use the center from the first (usually highest S/N prism)
         trace.
-
-    nod_offset : None, optional
-        Nod offset value.  If not specified, will be calculated
-        internally.
 
     initial_sigma : float, optional
         Initial sigma value.  This is 10 times the Gaussian sigma
@@ -3601,29 +3600,12 @@ def extract_spectra(
     fit_params_kwargs : None, optional
         Fit parameters keyword arguments
 
-    diffs : bool, optional
-        Do nod differences
-
-    undo_pathloss : bool, optional
-        Undo pipeline pathloss correction (should usually be the 
-        PATHLOSS_UNIFORM correction)
-
-    undo_barshadow : bool, 2, optional
-        - ``True`` : undo the pipeline BarShadow correction
-        - ``2`` : Replace with the internal BarShadow correction
-
     drizzle_kws : dict, optional
         Drizzle keyword arguments
 
     get_xobj : bool, optional
         Return `msaexp.slit_combine.SlitGroup` objects along with the
         HDU product
-
-    trace_with_xpos : bool, optional
-        Trace with xpos value
-
-    trace_with_ypos : str, optional
-        Trace with ypos value
 
     get_background : bool, optional
         Get background value
@@ -3633,12 +3615,12 @@ def extract_spectra(
 
     Returns
     -------
-    - None
-        If no valid spectra are found
-    - hdu : dict
-        Dict of `astropy.io.fits.HDUList` objects for the separate gratings
-    - xobj : dict
-        Dictionary of `SlitGroup` objects
+    None : null
+      If no valid spectra are found
+    hdu : dict
+      Dict of `astropy.io.fits.HDUList` objects for the separate gratings
+    xobj : dict
+      Dictionary of `SlitGroup` objects if ``get_xobj``
     """
 
     global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR, MSA_NOD_ARCSEC

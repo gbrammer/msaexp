@@ -1333,7 +1333,7 @@ def build_slit_centered_wcs(
     Returns
     -------
     _data : tuple
-        See `msaexp.utils.build_regular_wavelength_wcs`
+        See `~msaexp.utils.build_regular_wavelength_wcs`
 
     """
     from gwcs import wcstools
@@ -1396,8 +1396,6 @@ def build_slit_centered_wcs(
 
         xc = (np.arange(len(prof)) * prof).sum() / prof.sum()
         yoff = xc - (force_nypix - 1) / 2 + phase
-
-    # print('yoffset: ', yoff, xc)
 
     slit.drizzle_slit_offset = yoff
 
@@ -1887,8 +1885,6 @@ def combine_2d_with_rejection(
     ok &= prof1d > 0
 
     xpix = np.arange(sh[0])
-    # ytrace = np.nanmedian(ytr)
-    # print('xxx', ytrace, sh[0]/2)
     ytrace = sh[0] / 2.0
     x0 = np.arange(sh[0]) - ytrace
     y0 = yp - ytrace
