@@ -457,7 +457,7 @@ class SlitGroup:
         undo_barshadow : bool, 2
             Undo the ``BarShadow`` correction if an extension found in the
             slit model files.  If ``2``, then apply internal barshadow correction
-            with `msaexp.slit_combine.
+            with `msaexp.slit_combine`.
 
         bar_corr_mode : str
             Internal barshadow correction type
