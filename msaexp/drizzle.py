@@ -939,6 +939,7 @@ def make_optimal_extraction(
     waves,
     sci2d,
     wht2d,
+    var2d=None,
     profile_slice=None,
     prf_center=None,
     prf_sigma=1.0,
@@ -1068,7 +1069,11 @@ def make_optimal_extraction(
         med_wht = np.nanmedian(wht2d[ok])
         ok &= wht2d < max_med_wht_factor * med_wht
 
-    wht_mask = wht2d * 1
+    if var2d is None:
+        wht_mask = wht2d * 1
+    else:
+        wht_mask = 1.0 / var2d
+
     wht_mask[~ok] = 0.0
 
     if profile_slice is not None:
