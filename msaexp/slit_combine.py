@@ -78,11 +78,16 @@ def split_visit_groups(
     gratings : list
         List of NIRSpec gratings to consider
 
+    split_uncover : bool, optional
+        Whether to split UNCOVER sub groups, default is True
+
+    verbose : bool, optional
+        Status messages
+
     Returns
     -------
     groups : dict
         File groups
-
     """
     keys = []
     all_files = []
@@ -145,26 +150,30 @@ def slit_prf_fraction(
     verbose=True,
 ):
     """
-    Rough slit-loss correction given derived source width and x_offset shutter centering
+    Rough slit-loss correction given derived source
+    width and x_offset shutter centering
 
     Parameters
     ----------
-    sigma : float
-        Derived source width (pixels) in quadtrature with the tabulated intrinsic PSF
-        width from ``msaexp.utils.get_nirspec_psf_fwhm``
-
     wave : array-like, float
         Spectrum wavelengths, microns
 
+    sigma : float
+        Derived source width (pixels) in quadtrature with the tabulated
+        intrinsic PSF width from ``msaexp.utils.get_nirspec_psf_fwhm``
+
     x_pos : float
-        Shutter-normalized source center in range (-0.5, 0.5) (``source_xpos`` in slit
-        metadata)
+        Shutter-normalized source center in range (-0.5, 0.5)
+        (``source_xpos`` in slit metadata)
 
     slit_width : float
         Slit/shutter width, arcsec
 
     pixel_scale : float
         NIRSpec pixel scale, arcsec/pix
+
+    verbose : bool, optional
+        Status messages
 
     Returns
     -------
@@ -213,7 +222,88 @@ def objfun_prof_trace(
     verbose,
     ret,
 ):
-    """ """
+    """
+    Objective function for fitting the profile along the trace
+
+    Parameters:
+    -----------
+    theta : array-like
+        Array of parameters for the objective function.
+
+    base_coeffs : array-like
+        Coefficients for the base trace polynomial.
+
+    wave : array-like
+        Array of wavelengths.
+
+    xpix : array-like
+        Array of x-pixel positions.
+
+    ypix : array-like
+        Array of y-pixel positions.
+
+    yslit0 : array-like
+        Array of initial y-slit positions.
+
+    diff : array-like
+        A-B nod difference image
+
+    vdiff : array-like
+        Propagated variance of the difference image
+
+    mask : array-like
+        Valid pixel mask
+
+    ipos : array-like
+        Array of exposure indices corresponding to the positive
+        "A" component of the difference
+
+    ineg : array-like
+        Array of exposure indices corresponding to the negative
+        "B" component of the difference
+        
+    sh : tuple
+        Shape of the data.
+
+    fix_sigma : float
+        Optional value to fix the profile width
+
+    force_positive : bool
+        Only consider positive parts of the profile difference image
+
+    verbose : bool
+        Flag to enable verbose output.
+
+    ret : int
+        Return flag (see returns).
+
+    Returns:
+    --------
+    If ret == 1:
+        snum : array-like
+            Numerator of the objective function.  The estimated 1D
+            spectrum is ``snum/sden``.
+
+        sden : array-like
+            Denominator of the objective function.
+
+        smod : array-like
+            Profile model of the objective function
+
+        sigma : float
+            Value of sigma.
+
+        trace_coeffs : array-like
+            Coefficients of the trace polynomial.
+
+        chi2 : float
+            Chi-squared value.
+    else:
+        chi2 : float
+            Chi-squared value.
+
+    """
+
     from msaexp.resample_numba import pixel_integrated_gaussian_numba as PRF
 
     global EVAL_COUNT
@@ -478,14 +568,23 @@ class SlitGroup:
             Remove the pathloss correction if the extensions found in the slit
             model files
 
+        trace_with_xpos : bool
+            Compute traces including the predicted source center x position
+
         trace_with_ypos : bool
-            Compute traces including the predicted source center
+            Compute traces including the predicted source center y position
+
+        trace_from_yoffset : bool
+            Compute traces derived from y offsets
 
         nod_offset : float, None
             Nod offset size (pixels) to use if the slit model traces don't
             already account for it, e.g., in background-indicated slits
             without explicit catalog sources.  If not provided (None), then set
             to `MSA_NOD_ARCSEC / slit_pixel_scale`.
+
+        pad_border : int
+            Grow mask around edges of 2D cutouts
 
         reference_exposure : int, 'auto'
             Define a reference nod position. If ``'auto'``, then will use the
@@ -897,6 +996,11 @@ class SlitGroup:
         """
         Generate the `info` metadata attribute from the `slits` data
 
+        Parameters
+        ----------
+        verbose : bool, optional
+            Status messages
+
         Returns
         -------
         info : `~astropy.table.Table`
@@ -906,7 +1010,7 @@ class SlitGroup:
         rows = []
         for i, slit in enumerate(self.slits):
             msg = f"{i:>2} {slit.meta.filename} {slit.data.shape}"
-            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
             md = slit.meta.dither.instance
             mi = slit.meta.instrument.instance
@@ -928,7 +1032,7 @@ class SlitGroup:
         info["x_position"] = np.round(info["x_offset"] * 10) / 10.0
         info["y_position"] = np.round(info["y_offset"] * 10) / 10.0
         info["y_index"] = (
-            utils.Unique(info["y_position"], verbose=False).indices + 1
+            utils.Unique(info["y_position"], verbose=verbose).indices + 1
         )
 
         return info
@@ -937,6 +1041,12 @@ class SlitGroup:
         """
         Read science, variance and trace data from the ``slits`` SlitModel
         files
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            Status messages
+
         """
         import scipy.ndimage as nd
 
@@ -1788,15 +1898,18 @@ class SlitGroup:
         Parameters
         ----------
         stuck_threshold : float
-            1. Compute the median S/N of all pixels in each shutter of the slitlet
-            2. If the slitlet is more than one shutter, mask shutters where
-               ``sn_shutter < stuck_threshold * max(sn_shutters)``
-            3. If the slitlet is a single shutter, mask the shutter if the absolute
-               S/N is less than ``bad_shutter_names``
+            1. Compute the median S/N of all pixels in
+            each shutter of the slitlet
+
+            2. If the slitlet is more than one shutter,mask shutters where
+            ``sn_shutter < stuck_threshold * max(sn_shutters)``
+
+            3. If the slitlet is a single shutter, mask the shutter if
+              the absolute S/N is less than ``bad_shutter_names``
 
         min_bar : float
-            Minimum value of the bar shadow mask to treat as valid pixels within a
-            shutter
+            Minimum value of the bar shadow mask to treat as valid
+            pixels within a shutter
 
         Returns
         -------
@@ -1842,6 +1955,11 @@ class SlitGroup:
     def _apply_bad_shutter_mask(self, verbose=True):
         """
         Mask ``sci`` array for ``bad_shutter_names`` shutters
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            Status messages
         """
         if len(self.meta["bad_shutter_names"]) == 0:
             return None
@@ -2056,7 +2174,27 @@ class SlitGroup:
         figsize=(6, 2),
     ):
         """
-        Make diagnostic plots of 2D difference images
+        Plot the 2D differences between exposures.
+
+        Parameters
+        ----------
+        fit : dict, optional
+            A dictionary containing the fit information for each exposure.
+
+        clip_sigma : float, optional
+            The number of std. deviations to use for clipping the color scale.
+
+        kws : dict, optional
+            Additional keyword arguments to be passed to the `imshow` function.
+
+        figsize : tuple, optional
+            The size of the figure in inches.
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            The generated figure.
+
         """
         Ny = self.unp.N
         if fit is None:
@@ -2163,6 +2301,30 @@ class SlitGroup:
     ):
         """
         Fit all traces in the group
+
+        Parameters
+        ----------
+        niter : int
+            Number of iterations for fitting the traces (default: 3)
+
+        dchi_threshold : float
+            Threshold value for the change in chi-square to consider a fit
+            (default: -25)
+
+        ref_exp : int
+            Reference exposure for fitting the traces (default: 2)
+
+        verbose : bool
+            Status messages
+
+        **kwargs : dict
+            Additional keyword arguments for the fitting process
+
+        Returns
+        -------
+        tfits : dict
+            Dictionary containing the fit results for each exposure group
+
         """
         tfits = {}
 
@@ -2283,6 +2445,9 @@ class SlitGroup:
 
         with_bounds : bool
             Use ``sigma_bounds`` and ``trace_bounds`` in optimization
+
+        verbose : bool
+            Status messages
 
         Returns
         -------
@@ -2469,6 +2634,9 @@ class SlitGroup:
             thresholds ``x_sn`` below which a polynomial degree ``y_degree``
             is used
 
+        verbose : bool
+            Status messages
+
         kwargs : dict
             Keyword arguments passed to the ``get_trace_sn`` method
 
@@ -2517,6 +2685,28 @@ class SlitGroup:
     def plot_profile(self, exp=1, ax=None, fit_result=None, ymax=0.2):
         """
         Make a plot of cross-dispersion profile
+
+        Parameters
+        ----------
+        exp : int
+            Exposure index (see ``unp``)
+
+        ax : matplotlib.axes.Axes, optional
+            Axes object to plot on.
+            If not provided, a new figure and axes will be created.
+
+        fit_result : dict, optional
+            Fit results from `fit_single_trace` method.
+            If provided, the fitted profile will be plotted.
+
+        ymax : float, optional
+            Maximum value for the y-axis. Default is 0.2.
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            Figure object containing the plot.
+
         """
         ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
         if ax is None:
@@ -2559,7 +2749,54 @@ def pseudo_drizzle(
     pixfrac=1,
 ):
     """
-    2D histogram analogous to drizzle with pixfrac=0
+    2D histogram analogous to drizzle.  Oversamples along cross-dispersion axis
+    to approximate pixfrac and smooth over pixel aliasing of curved traces.
+
+    Parameters
+    ----------
+    xpix : array-like
+        X pixel positions.
+
+    ypix : array-like
+        Y pixel positions.
+
+    data : array-like
+        Data values.
+
+    wht : array-like
+        Weight values.
+
+    xbin : array-like
+        X bin edges.
+
+    ybin : array-like
+        Y bin edges.
+
+    arrays : tuple, optional
+        Tuple containing `num` and `den` arrays. If provided, `num` and `den`
+        arrays will be updated instead of creating new arrays. Default is None.
+
+    oversample : int, optional
+        Oversampling factor. Default is 4.
+
+    pixfrac : float, optional
+        Pixel fraction. Default is 1.
+
+    Returns
+    -------
+    num : array-like
+        Weighted numerator
+
+    vnum : array-like
+        Weighted variance numerator
+        
+    den : array-like
+        Weighted denominator
+
+    ntot : array-like
+        Number of exposures that contribute to 
+        the output pixels
+
     """
     from scipy.stats import binned_statistic_2d
 
@@ -2715,7 +2952,10 @@ DRIZZLE_KWS = dict(
 
 
 def combine_grating_group(
-    xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, extract_kws={}, verbose=True
+    xobj,
+    grating_keys,
+    drizzle_kws=DRIZZLE_KWS,
+    verbose=True,
 ):
     """
     Make pseudo-drizzled outputs from a set of `msaexp.slit_combine.SlitGroup`
@@ -2731,9 +2971,6 @@ def combine_grating_group(
 
     drizzle_kws : dict
         Keyword arguments passed to `msaexp.slit_combine.drizzle_grating_group`
-
-    extract_kws : dict
-        Not used
 
     Returns
     -------
@@ -3262,7 +3499,7 @@ def extract_spectra(
     **kwargs,
 ):
     """
-    Spectral combination workflow
+    Spectral combination workflow splitting by grating and multiple observations in a particular grating
 
     Parameters
     ----------
@@ -3286,15 +3523,22 @@ def extract_spectra(
         Indices of ``files[i].split('[._]') + GRATING`` to join as a group
 
     split_uncover : bool
-        Split sub-pixel dithers from UNCOVER when defining exposure groups
+        Split sub-pixel dithers from UNCOVER (GO-2561) when defining exposure groups
 
-    stuck_threshold, pad_border, position_key:
+    stuck_threshold, pad_border, position_key, pad_border:
         See `msaexp.slit_combine.SlitGroup`
 
     sort_by_sn : bool
         Try to process groups in order of decreasing S/N, i.e., to derive the
         trace offsets in the prism where it will be best defined and propagate
         to other groups with the gratings
+
+    position_key : str, optional
+        Keyword to define the separate nod positions, e.g., 
+        - "y_index" : Rounded y offset
+        - "position_number" : dither number
+        - "shutter_state" : Shutter state from MPT.  Usually robust, but can 
+           get confused when multiple catalog sources fall within the slitlets
 
     mask_cross_dispersion : None or [int, int]
         Optional cross-dispersion masking, e.g., for stuck-closed shutters or
@@ -3320,7 +3564,83 @@ def extract_spectra(
     trace_from_yoffset, reference_exposure :
         See `msaexp.slit_combine.SlitGroup`
 
+    trace_niter : int, optional
+        Number of iterations for the trace fit
+
+    offset_degree : int, optional
+        Polynomial offset degree
+
+    degree_kwargs : dict, optional
+        Degree keyword arguments
+
+    recenter_all : bool, optional
+        Refit for the trace center for all groups.  If False,
+        use the center from the first (usually highest S/N prism)
+        trace.
+
+    nod_offset : None, optional
+        Nod offset value.  If not specified, will be calculated
+        internally.
+
+    initial_sigma : float, optional
+        Initial sigma value.  This is 10 times the Gaussian sigma
+        width, in pixels.
+
+    fit_type : int, optional
+        Fit type value
+
+    initial_theta : None, optional
+        Initial parameter guesses
+
+    fix_params : bool, optional
+        Fix parameters to ``initial_theta``
+
+    input_fix_sigma : None, optional
+        Input fix sigma value
+
+    fit_params_kwargs : None, optional
+        Fit parameters keyword arguments
+
+    diffs : bool, optional
+        Do nod differences
+
+    undo_pathloss : bool, optional
+        Undo pipeline pathloss correction (should usually be the 
+        PATHLOSS_UNIFORM correction)
+
+    undo_barshadow : bool, 2, optional
+        - ``True`` : undo the pipeline BarShadow correction
+        - ``2`` : Replace with the internal BarShadow correction
+
+    drizzle_kws : dict, optional
+        Drizzle keyword arguments
+
+    get_xobj : bool, optional
+        Return `msaexp.slit_combine.SlitGroup` objects along with the
+        HDU product
+
+    trace_with_xpos : bool, optional
+        Trace with xpos value
+
+    trace_with_ypos : str, optional
+        Trace with ypos value
+
+    get_background : bool, optional
+        Get background value
+
+    make_2d_plots : bool, optional
+        Make 2D plots value
+
+    Returns
+    -------
+    - None
+        If no valid spectra are found
+    - hdu : dict
+        Dict of `astropy.io.fits.HDUList` objects for the separate gratings
+    - xobj : dict
+        Dictionary of `SlitGroup` objects
     """
+
     global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR, MSA_NOD_ARCSEC
     frame = inspect.currentframe()
 

@@ -25,6 +25,24 @@ utils.set_warnings()
 
 
 def float_representer(dumper, value):
+    """
+    Representer function for converting a float value to a YAML scalar
+    with six decimal places (``{value:.6f}``).
+
+    Parameters
+    ----------
+    dumper : yaml.Dumper
+        The YAML dumper object.
+
+    value : float
+        The float value to be represented.
+
+    Returns
+    -------
+    yaml.ScalarNode:
+        The YAML scalar node representing the float value.
+
+    """
     text = "{0:.6f}".format(value)
     return dumper.represent_scalar("tag:yaml.org,2002:float", text)
 
@@ -156,6 +174,12 @@ class SpectrumSampler(object):
     def initialize_emission_line(self, nsamp=64):
         """
         Initialize emission line
+
+        Parameters
+        ----------
+        nsamp : int
+            Number of samples for the emission line.
+            Default = 64
         """
         self.xline = (
             np.linspace(-nsamp, nsamp, 2 * nsamp + 1) / nsamp * 0.1 + 1
@@ -230,7 +254,7 @@ class SpectrumSampler(object):
             wavelengths
 
         """
-            
+
         templ_wobs = template.wave.astype(np.float32) * (1 + z) / 1.0e4
         if fnu:
             templ_flux = template.flux_fnu(z=z).astype(np.float32)
@@ -238,7 +262,7 @@ class SpectrumSampler(object):
             templ_flux = template.flux_flam(z=z).astype(np.float32)
 
         # Turn off
-        igmz = 1.
+        igmz = 1.0
 
         res = self.resample_func(
             self.spec_wobs,
@@ -344,8 +368,12 @@ class SpectrumSampler(object):
         log : bool
             Sample in log(wavelength)
 
+        by_wavelength : bool
+            If True, sample bspline functions across the wavelength range.
+            If False, sample bspline functions across the index range.
+
         get_matrix : bool
-            If true, return array data.  Otherwise, return template objects
+            If True, return array data. Otherwise, return template objects.
 
         Returns
         -------
@@ -477,14 +505,7 @@ class SpectrumSampler(object):
 
 
 def smooth_template_disp_eazy(
-    templ,
-    wobs_um,
-    disp,
-    z,
-    velocity_fwhm=80,
-    scale_disp=1.3,
-    flambda=True,
-    with_igm=True,
+    templ, wobs_um, disp, z, velocity_fwhm=80, scale_disp=1.3, flambda=True
 ):
     """
     Smooth a template with a wavelength-dependent dispersion function.
@@ -593,6 +614,9 @@ def smooth_template_disp_sedpy(
     flambda : bool
         Return smoothed template in units of f_lambda or f_nu.
 
+    with_igm : bool
+        Apply the intergalactic medium (IGM) absorption to smoothed template
+
     Returns
     -------
     tsmooth : array-like
@@ -680,6 +704,10 @@ def smooth_template_disp(
 
     flambda : bool
         Return smoothed template in units of f_lambda or f_nu.
+
+    with_igm : bool
+        Apply the intergalactic medium (IGM) absorption to the  template
+
     Returns
     -------
     tsmooth : array-like
@@ -1004,22 +1032,19 @@ def make_templates(
     broad_width=4000,
     broad_lines=[],
     scale_disp=1.3,
-    use_full_dispersion=False,
-    disp=None,
     grating="prism",
     halpha_prism=["Ha+NII"],
     oiii=["OIII"],
     o4363=[],
     sii=["SII"],
-    lorentz=False,
     with_pah=True,
     **kwargs,
 ):
     """
     Generate fitting templates
 
-    wobs : array
-        Observed-frame wavelengths of the spectrum to fit, microns
+    sampler : `~msaexp.spectrum.SpectrumSampler`
+        Spectrum object with wavelength arrays and metadata
 
     z : float
         Redshift
@@ -1032,7 +1057,19 @@ def make_templates(
         place of the spline + line templates
 
     vel_width : float
-        Velocity width of the individual emission line templates
+        Velocity width of the individual emission line templates, km/s
+
+    broad_width : float
+        Velocity width of the broad emission line templates, km/s
+
+    broad_lines : list
+        List of line template names to be modeled as broad lines
+
+    scale_disp : float
+        Scaling factor for the tabulated dispersion
+
+    grating : str
+        Grating used for the observation
 
     halpha_prism : ['Ha+NII'], ['Ha','NII']
         Line template names to use for Halpha and [NII], i.e., ``['Ha+NII']``
@@ -1045,13 +1082,13 @@ def make_templates(
         independently.
 
     o4363 : [] or ['OIII-4363']
-        How to fit [OIII]4363.
+        Include [OIII]4363 as a separate template
 
     sii : ['SII'], ['SII-6717','SII-6731']
-        [SII] doublet
+        How to fit the [SII] doublet
 
-    lorentz : bool
-        Use Lorentzian profile for lines
+    with_pah : bool
+        Whether to include PAH templates in the fitting
 
     Returns
     -------
@@ -1062,7 +1099,7 @@ def make_templates(
         Boolean list of which templates are line components
 
     _A : (NT, NWAVE) array
-        Design matrix of templates interpolated at `wobs`
+        Design matrix of templates interpolated at ``wobs``
 
     """
     from grizli import utils
@@ -1389,6 +1426,18 @@ def old_make_templates(
     vel_width : float
         Velocity width of the individual emission line templates
 
+    broad_width : float
+        Velocity width of the broad emission line templates
+
+    broad_lines : list
+        List of line template names to be modeled as broad lines
+
+    scale_disp : float
+        Scaling factor for the dispersion of the emission line templates
+
+    grating : str
+        Grating used for the observation
+
     halpha_prism : ['Ha+NII'], ['Ha','NII']
         Line template names to use for Halpha and [NII], i.e., ``['Ha+NII']``
         fits with a fixed line ratio and `['Ha','NII']` fits them separately
@@ -1407,6 +1456,12 @@ def old_make_templates(
 
     lorentz : bool
         Use Lorentzian profile for lines
+
+    use_full_dispersion : bool
+        Whether to use the full dispersion information in the templates
+
+    disp : dict
+        Dispersion information for the templates
 
     Returns
     -------
@@ -1621,14 +1676,10 @@ def fit_redshift_grid(
     file="jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits",
     zgrid=None,
     vel_width=100,
-    bkg=None,
     scale_disp=1.3,
     nspline=27,
-    line_complexes=True,
-    Rline=1000,
     eazy_templates=None,
     use_full_dispersion=True,
-    sys_err=0.02,
     use_aper_columns=False,
     **kwargs,
 ):
@@ -1723,7 +1774,6 @@ def calc_uncertainty_scale(
     sys_err=0.02,
     fit_sys_err=False,
     method="bfgs",
-    tol=None,
     student_df=10,
     update=True,
     verbose=True,
@@ -1758,9 +1808,6 @@ def calc_uncertainty_scale(
 
     method : str
         Optimization method for `scipy.optimize.minimize`
-
-    tol : None, float
-        Tolerance parameter passed to `scipy.optimize.minimize`
 
     student_df : int, None
         If specified, calculate log likelihood of a `scipy.stats.t Student-t
@@ -1821,6 +1868,27 @@ def calc_uncertainty_scale(
     ok &= np.isfinite(_err + spec["flux"])
 
     def objfun_scale_uncertainties(c, ok, ret):
+        """
+        Objective function for scaling uncertainties
+        (Nested method in `calc_uncertainty_scale`).
+
+        Parameters
+        ----------
+        c : list
+            List of coefficients for scaling uncertainties.
+
+        ok : array
+            Boolean array indicating which elements to include.
+
+        ret : int
+            Return type indicator. If 1, return sys_err, full_err, and model.
+
+        Returns
+        ----------
+        chi2 : float
+            The calculated chi-squared value.
+
+        """
 
         if fit_sys_err:
             _sys_err = c[0] / 100
@@ -2128,23 +2196,18 @@ def plot_spectrum(
     inp="jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits",
     z=9.505,
     vel_width=100,
-    bkg=None,
     scale_disp=1.3,
     nspline=27,
     show_cont=True,
     draws=100,
     figsize=(16, 8),
     ranges=[(3650, 4980)],
-    Rline=1000,
     full_log=False,
-    write=False,
     eazy_templates=None,
     use_full_dispersion=True,
     get_init_data=False,
-    get_spl_templates=False,
     scale_uncertainty_kwargs=None,
     plot_unit=None,
-    spline_single=True,
     sys_err=0.02,
     return_fit_results=False,
     use_aper_columns=False,
@@ -2152,14 +2215,82 @@ def plot_spectrum(
     **kwargs,
 ):
     """
-    Make a diagnostic figure
+    Fit templates to a spectrum and make a diagnostic figure
 
     Parameters
     ----------
-    ...
+    inp : str or `~astropy.io.fits.HDUList` or `msaexp.spectrum.SpectrumSampler`
+        Input spectrum file path or HDUList object or SpectrumSampler object.
+        Default is "jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits".
+
+    z : float, optional
+        Redshift value. Default is 9.505.
+
+    vel_width : int, optional
+        Velocity width, km/s. Default is 100.
+
+    scale_disp : float, optional
+        Dispersion scale factor. Default is 1.3.
+
+    nspline : int, optional
+        Number of spline continuum components. Default is 27.
+
+    show_cont : bool, optional
+        Whether to show continuum. Default is True.
+
+    draws : int, optional
+        Number of draws from the fit covariance to plot. Default is 100.
+
+    figsize : tuple, optional
+        Figure size. Default is (16, 8).
+
+    ranges : list of tuples, optional
+        List of wavelength ranges to plot in zoom panels. Default is [(3650, 4980)].
+
+    full_log : bool, optional
+        Whether to use full log. Default is False.
+
+    eazy_templates : None or str, optional
+        Eazy templates to use for the fit. Default is None.
+
+    use_full_dispersion : bool, optional
+        Whether to use full dispersion. Default is True.
+
+    get_init_data : bool, optional
+        If specified, just return the `SpectrumSampler` object and
+        the design matrix array ``A``
+
+    scale_uncertainty_kwargs : None or dict, optional
+        Scale uncertainty keyword arguments. Default is None.
+
+    plot_unit : None, str, `~astropy.units.Unit`, optional
+        Plot unit. Default is None.
+
+    sys_err : float, optional
+        Systematic error added in quadrature with the spectrum
+        uncertainties. Default is 0.02.
+
     return_fit_results : bool
-        Just return the fit results -
+        Just return the fit results without making a plot -
         ``templates, coeffs, flam, eflam, _model, mask, full_chi2``
+
+    use_aper_columns : bool, optional
+        Whether to use aperture columns in the spectrum table. 
+        Default is False.
+
+    label : None or str, optional
+        Label to add. Default is None.
+
+    **kwargs : dict, optional
+        Additional keyword arguments. 
+        Used in 'SpectrumSampler' & 'make_templates'
+
+    Returns
+    -------
+    None or tuple
+        If return_fit_results=True, returns a tuple containing the fit results:
+        templates, coeffs, flam, eflam, _model, mask, full_chi2.
+        Otherwise, returns None.
 
     """
     global SCALE_UNCERTAINTY

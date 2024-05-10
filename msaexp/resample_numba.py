@@ -45,6 +45,9 @@ def resample_template_numba(
     nsig : float
         Number of sigmas of the Gaussian convolution kernel to sample
 
+    fill_value : float
+        Value to fill in the resampled array where no template data is available
+
     Returns
     -------
     resamp : array-like

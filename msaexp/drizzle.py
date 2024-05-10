@@ -752,13 +752,18 @@ def show_drizzled_slits(
     figsize : tuple
         Figure size
 
+    variable_size : bool, optional
+        Whether to use variable size for the figure.
+
     imshow_kws : dict
         Keywords passed to `~matplotlib.pyplot.imshow`
+
+    with_background : bool, optional
+        Whether to include the background in the displayed slitlets.
 
     Returns
     -------
     fig : Figure
-
     """
     avg = hdul["SCI"].data
     xvalid = np.isfinite(avg).sum(axis=0) > 0
@@ -897,12 +902,42 @@ def get_xlimits_from_lines(
     max_dy=4,
     n_erode=2,
     n_dilate=4,
-    smooth_sigma=4,
     pad=10,
     verbose=True,
 ):
     """
     Find emission lines in 2D spectrum
+
+    Parameters:
+    -----------
+    hdul : HDUList
+        The HDUList object containing the 2D spectrum.
+
+    sn_thresh : float, optional
+        The signal-to-noise threshold for identifying emission lines.
+        Default is 2.
+
+    max_dy : float, optional
+        The maximum deviation in the y-direction from the central pixel.
+        Default is 4.
+
+    n_erode : int, optional
+        The number of iterations for binary erosion. Default is 2.
+
+    n_dilate : int, optional
+        The number of iterations for binary dilation. Default is 4.
+
+    pad : int, optional
+        The padding value for the x-limits. Default is 10.
+
+    verbose : bool, optional
+        Whether to print verbose output. Default is True.
+
+    Returns:
+    --------
+    xlim : tuple
+        A tuple containing the x-limits of the emission lines.
+
     """
     import scipy.ndimage as nd
 
@@ -945,7 +980,6 @@ def make_optimal_extraction(
     prf_sigma=1.0,
     sigma_bounds=(0.5, 2.5),
     center_limit=4,
-    fit_prf=True,
     fix_center=False,
     fix_sigma=False,
     trim=0,
@@ -955,7 +989,6 @@ def make_optimal_extraction(
     max_wht_percentile=None,
     max_med_wht_factor=10,
     verbose=True,
-    find_line_kws={},
     ap_radius=None,
     ap_center=None,
     **kwargs,
@@ -992,15 +1025,14 @@ def make_optimal_extraction(
     center_limit : float
         Maximum offset from `prf_center` allowed
 
-    fit_prf : bool
-        Fit the profile.  If False, then just use the fixed values of
-        `prf_center` and `prf_sigma`
-
     fix_center : bool
         Fix the centering in the fit
 
     fix_sigma : bool
         Fix the width in the fit
+
+    trim : int
+        Number of pixels to trim from the edges of the extracted spectrum
 
     bkg_offset, bkg_parity : int, list
         Parameters for the local background determination (see
@@ -1018,6 +1050,9 @@ def make_optimal_extraction(
         Maximum weight value relative to the median nonzero weight to consider
         valid
 
+    verbose : bool
+        Status messages
+
     ap_center, ap_radius : int, int
         Center and radius of fixed-width aperture extraction, in pixels.  If
         not specified, then
@@ -1027,9 +1062,6 @@ def make_optimal_extraction(
 
             >>> ap_center = int(np.round(ytrace + fit_center))
             >>> ap_radius = np.clip(int(np.round(prof_sigma*2.35/2)), 1, 3)
-
-    verbose : bool
-        Status messages
 
     kwargs : dict
         Ignored keyword args
@@ -1389,6 +1421,9 @@ def extract_from_hdul(
 
     verbose : bool
         Printing status messages
+
+    line_limit_kwargs : dict
+        Keyword arguments passed to `msaexp.drizzle.get_xlimits_from_lines`
 
     kwargs : dict
         Keyword arguments passed to `msaexp.drizzle.make_optimal_extraction`
