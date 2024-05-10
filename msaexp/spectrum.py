@@ -119,13 +119,13 @@ class SpectrumSampler(object):
         ----------
         resample_func : func
             Template resampling function, from
-            `msaexp.resample_template_numba.msaexp.resample_numba` if possible
-            and `msaexp.resample.resample_template` otherwise
+            `~msaexp.resample_template_numba.msaexp.resample_numba` if possible
+            and `~msaexp.resample.resample_template` otherwise
 
         sample_line_func : func
             Emission line function, from
-            `msaexp.resample_template_numba.msaexp.sample_gaussian_line_numba`
-             if possible and `msaexp.resample.sample_line_func` otherwise
+            `~msaexp.resample_template_numba.msaexp.sample_gaussian_line_numba`
+             if possible and `~msaexp.resample.sample_line_func` otherwise
 
         spec : `~astropy.table.Table`
             1D spectrum table from the `SPEC1D HDU of ``file``
@@ -199,7 +199,7 @@ class SpectrumSampler(object):
             Filename, usually `[root].spec.fits`
 
         kwargs : dict
-            Keyword arguments passed to `msaexp.spectrum.read_spectrum`
+            Keyword arguments passed to `~msaexp.spectrum.read_spectrum`
 
         """
         self.spec_input = spec_input
@@ -410,13 +410,13 @@ class SpectrumSampler(object):
     def redo_1d_extraction(self, **kwargs):
         """
         Redo 1D extraction from 2D arrays with
-        `msaexp.drizzle.make_optimal_extraction`
+        `~msaexp.drizzle.make_optimal_extraction`
 
         Parameters
         ----------
         kwargs : dict
             Keyword arguments passed to
-            `msaexp.drizzle.make_optimal_extraction`
+            `~msaexp.drizzle.make_optimal_extraction`
 
         Returns
         -------
@@ -483,12 +483,12 @@ class SpectrumSampler(object):
 
     def drizzled_hdu_figure(self, **kwargs):
         """
-        Run `msaexp.utils.drizzled_hdu_figure` on array data
+        Run `~msaexp.utils.drizzled_hdu_figure` on array data
 
         Parameters
         ----------
         kwargs : dict
-            Keyword arguments passed to `msaexp.utils.drizzled_hdu_figure`
+            Keyword arguments passed to `~msaexp.utils.drizzled_hdu_figure`
 
         Returns
         -------
@@ -1791,7 +1791,7 @@ def calc_uncertainty_scale(
         Spectrum filename
 
     data : tuple
-        Precomputed outputs from `msaexp.spectrum.plot_spectrum`
+        Precomputed outputs from `~msaexp.spectrum.plot_spectrum`
 
     order : int
         Degree of the correction polynomial
@@ -1824,7 +1824,7 @@ def calc_uncertainty_scale(
         each step of the optimization.
 
     kwargs : dict
-        Keyword arguments for `msaexp.spectrum.plot_spectrum` if `data` not
+        Keyword arguments for `~msaexp.spectrum.plot_spectrum` if `data` not
         specified
 
     Returns
@@ -1987,7 +1987,7 @@ def calc_uncertainty_scale(
 
 def setup_spectrum(file, **kwargs):
     """
-    Deprecated, use `msaexp.spectrum.read_spectrum`
+    Deprecated, use `~msaexp.spectrum.read_spectrum`
     """
     return read_spectrum(file, **kwargs)
 
@@ -2220,9 +2220,9 @@ def plot_spectrum(
 
     Parameters
     ----------
-    inp : str or `~astropy.io.fits.HDUList` or `msaexp.spectrum.SpectrumSampler`
+    inp : str or `~astropy.io.fits.HDUList` or `~msaexp.spectrum.SpectrumSampler`
         Input spectrum file path or HDUList object or SpectrumSampler object.
-        Default is "jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits".
+        Default is ``jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits``.
 
     z : float, optional
         Redshift value. Default is 9.505.
@@ -2258,7 +2258,7 @@ def plot_spectrum(
         Whether to use full dispersion. Default is True.
 
     get_init_data : bool, optional
-        If specified, just return the `SpectrumSampler` object and
+        If specified, just return the `~msaexp.spectrum.SpectrumSampler` object and
         the design matrix array ``A``
 
     scale_uncertainty_kwargs : None or dict, optional
@@ -2280,18 +2280,17 @@ def plot_spectrum(
         Default is False.
 
     label : None or str, optional
-        Label to add. Default is None.
+        Label to add to the figure. Default is None.
 
-    **kwargs : dict, optional
-        Additional keyword arguments.
-        Used in 'SpectrumSampler' & 'make_templates'
+    kwargs : dict, optional
+        Additional keyword arguments passed to `~msaexp.spectrum.SpectrumSampler`
+        and  `~msaexp.spectrum.make_templates`
 
     Returns
     -------
-    None or tuple
-        If return_fit_results=True, returns a tuple containing the fit results:
-        templates, coeffs, flam, eflam, _model, mask, full_chi2.
-        Otherwise, returns None.
+    If ``return_fit_results = True``, returns a tuple containing the fit results:
+    ``templates, coeffs, flam, eflam, _model, mask, full_chi2``.
+    Otherwise, returns ``None``.
 
     """
     global SCALE_UNCERTAINTY
@@ -2793,11 +2792,11 @@ def do_integrate_filters(
 
     scale_kwargs : dict, None
         If provided, initialize the spectrum by first passing through
-        `msaexp.spectrum.calc_uncertainty_scale`
+        `~msaexp.spectrum.calc_uncertainty_scale`
 
     beta_kwargs : dict
         Compute rest-frame UV slope and DLA equivalent width with
-        `msaexp.spectrum.measure_uv_slope`
+        `~msaexp.spectrum.measure_uv_slope`
     Returns
     -------
     fdict : dict

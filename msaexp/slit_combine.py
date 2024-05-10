@@ -2318,7 +2318,7 @@ class SlitGroup:
         verbose : bool
             Status messages
 
-        **kwargs : dict
+        kwargs : dict
             Additional keyword arguments for the fitting process
 
         Returns

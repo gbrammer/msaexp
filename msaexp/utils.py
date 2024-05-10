@@ -3417,7 +3417,7 @@ def all_slit_cutout_regions(files, output="slits.reg", **kwargs):
     output : str, optional
         The output file path where the slit cutout regions will be saved.
         Default is 'slits.reg'.
-    **kwargs : dict, optional
+    kwargs : dict, optional
         Additional keyword arguments to be passed to the slit_cutout_region
         function.
 
