@@ -160,7 +160,7 @@ def slit_prf_fraction(
 
     sigma : float
         Derived source width (pixels) in quadtrature with the tabulated
-        intrinsic PSF width from ``msaexp.utils.get_nirspec_psf_fwhm``
+        intrinsic PSF width from `~msaexp.utils.get_nirspec_psf_fwhm`
 
     x_pos : float
         Shutter-normalized source center in range (-0.5, 0.5)
@@ -517,8 +517,7 @@ class SlitGroup:
         pad_border=2,
         weight_type="ivm_bar",
         reference_exposure="auto",
-        **kwargs,
-    ):
+        **kwargs):
         """
         Container for a list of 2D extracted ``SlitModel`` files
 
@@ -551,21 +550,22 @@ class SlitGroup:
         undo_barshadow : bool, 2
             Undo the ``BarShadow`` correction if an extension found in the
             slit model files.  If ``2``, then apply internal barshadow correction
-            with `msaexp.slit_combine`.
+            with ``bar_corr_mode``.
 
         bar_corr_mode : str
             Internal barshadow correction type
-            - ``flat``: monochromatic `~msaexp.utils.get_prism_bar_correction`
-            - ``wave``: wave-dependent `~msaexp.utils.get_prism_wave_bar_correction`
+                - ``flat``: monochromatic `~msaexp.utils.get_prism_bar_correction`
+                - ``wave``: wave-dependent `~msaexp.utils.get_prism_wave_bar_correction`
 
         fix_prism_norm : bool
-            Apply prism normalization correction
+            Apply prism normalization correction with
+            `~msaexp.utils.get_normalization_correction`.
 
         sky_arrays : array-like
             Optional sky data (in progress)
 
         estimate_sky_kwargs : None, dict
-            Arguments to pass to `msaexp.slit_combine.SlitGroup.estimate_sky` to
+            Arguments to pass to `~msaexp.slit_combine.SlitGroup.estimate_sky` to
             estimate sky directly from the slit data
 
         undo_pathloss : bool
@@ -597,12 +597,11 @@ class SlitGroup:
 
         weight_type : str
             Weighting scheme for 2D resampling
-            - ``ivm`` : Use weights from ``var_rnoise``, like `jwst.resample <(https://github.com/spacetelescope/jwst/blob/4342988027ee0811b57d3641bda4c8486d7da1f5/jwst/resample/resample_utils.py#L168>`_
-            - ``ivm_bar`` : Use a modified weight
-                            ``VAR_RNOISE / BARSHADOW**2``
-            - ``poisson`` : Weight with ``var_poisson``, msaexp extractions v1 and v2
-            - ``exptime`` : Use ``slit.meta.exposure.exposure_time * mask``
-            - ``mask`` : Just use the bad pixel mask
+                - ``ivm`` : Use weights from ``var_rnoise``, like `jwst.resample <https://github.com/spacetelescope/jwst/blob/4342988027ee0811b57d3641bda4c8486d7da1f5/jwst/resample/resample_utils.py#L168>`_
+                - ``ivm_bar`` : Use a modified weight ``var_rnoise / barshadow**2``
+                - ``poisson`` : Weight with ``var_poisson``, msaexp extractions v1, v2
+                - ``exptime`` : Use ``slit.meta.exposure.exposure_time * mask``
+                - ``mask`` : Just use the bad pixel mask
 
         pad_border : int
             Grow mask around edges of 2D cutouts
@@ -1352,7 +1351,7 @@ class SlitGroup:
         if self.meta["bad_shutter_names"] is None:
             self.mask_stuck_closed_shutters()
         else:
-            self._apply_bad_shutter_mask()
+            self.apply_bad_shutter_mask()
 
     def flag_hot_cold_pixels(
         self,
@@ -1801,7 +1800,7 @@ class SlitGroup:
 
     def apply_normalization_correction(self, verbose=True):
         """
-        Apply normalization correction from `msaexp.utils.get_normalization_correction`
+        Apply normalization correction from `~msaexp.utils.get_normalization_correction`
 
         Only implemented for PRISM for now
         """
@@ -1902,14 +1901,12 @@ class SlitGroup:
         Parameters
         ----------
         stuck_threshold : float
-            1. Compute the median S/N of all pixels in
-            each shutter of the slitlet
-
-            2. If the slitlet is more than one shutter,mask shutters where
-            ``sn_shutter < stuck_threshold * max(sn_shutters)``
-
-            3. If the slitlet is a single shutter, mask the shutter if
-              the absolute S/N is less than ``bad_shutter_names``
+            1. Compute a mask where the bar throughput is greater than ``min_bar``
+            2. Compute the median S/N of all pixels in each shutter of the slitlet
+            3. If the slitlet is more than one shutter, mask shutters where
+               ``sn_shutter < stuck_threshold * max(sn_shutters)``
+            4. If the slitlet is a single shutter, mask the shutter if
+               the absolute S/N is less than ``stuck_threshold``
 
         min_bar : float
             Minimum value of the bar shadow mask to treat as valid
@@ -1918,7 +1915,7 @@ class SlitGroup:
         Returns
         -------
         Updates ``bad_shutter_names`` attribute and runs
-        `~msaexp.slit_combine.SlitGroup._apply_bad_shutter_mask`
+        `~msaexp.slit_combine.SlitGroup.apply_bad_shutter_mask`
 
         """
         if self.grating.upper() != "PRISM":
@@ -1954,9 +1951,9 @@ class SlitGroup:
         else:
             self.meta["bad_shutter_names"] = []
 
-        self._apply_bad_shutter_mask()
+        self.apply_bad_shutter_mask()
 
-    def _apply_bad_shutter_mask(self, verbose=True):
+    def apply_bad_shutter_mask(self, verbose=True):
         """
         Mask ``sci`` array for ``bad_shutter_names`` shutters
 
@@ -2777,8 +2774,7 @@ def pseudo_drizzle(
         Y bin edges.
 
     arrays : tuple, optional
-        Tuple containing `num` and `den` arrays. If provided, `num` and `den`
-        arrays will be updated instead of creating new arrays. Default is None.
+        Tuple containing the four output arrays that will be updated in place
 
     oversample : int, optional
         Oversampling factor. Default is 4.
@@ -2789,17 +2785,17 @@ def pseudo_drizzle(
     Returns
     -------
     num : array-like
-        Weighted numerator
+        Weighted data numerator.  The full weighted data result is ``num / den``.
 
     vnum : array-like
-        Weighted variance numerator
+        Weighted variance numerator.  The full weighted variance is
+        ``vnum / den / ntot``.
 
     den : array-like
         Weighted denominator
 
     ntot : array-like
-        Number of exposures that contribute to
-        the output pixels
+        Number of exposures that contribute to each output pixel
 
     """
     from scipy.stats import binned_statistic_2d
@@ -3604,7 +3600,7 @@ def extract_spectra(
         Drizzle keyword arguments
 
     get_xobj : bool, optional
-        Return `msaexp.slit_combine.SlitGroup` objects along with the
+        Return `~msaexp.slit_combine.SlitGroup` objects along with the
         HDU product
 
     get_background : bool, optional
@@ -3618,9 +3614,9 @@ def extract_spectra(
     None : null
       If no valid spectra are found
     hdu : dict
-      Dict of `astropy.io.fits.HDUList` objects for the separate gratings
+      Dict of `~astropy.io.fits.HDUList` objects for the separate gratings
     xobj : dict
-      Dictionary of `SlitGroup` objects if ``get_xobj``
+      Dictionary of `~msaexp.slit_combine.SlitGroup` objects if ``get_xobj=True``
     """
 
     global CENTER_WIDTH, CENTER_PRIOR, SIGMA_PRIOR, MSA_NOD_ARCSEC

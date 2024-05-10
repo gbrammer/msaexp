@@ -46,8 +46,8 @@ def rename_source(source_name):
     This function takes a source name as input and returns the adjusted
     name according to the following rules:
 
-    - If the source name starts with 'background_', it is replaced with 'b'.
-    - If the source name contains '_-', it is replaced with '_m'.
+        - If the source name starts with "background", it is replaced with "b".
+        - If the source name contains "_-", it is replaced with "_m".
 
     Parameters:
     -----------
@@ -350,11 +350,12 @@ def update_slit_metadata(slit):
     Try to update missing slit metadata.
 
     This function tries to update missing metadata for a given slit object.
-    - If the slit's lamp mode is 'FIXEDSLIT' and the source name is missing,
-        it sets the source name based on the target's proposer name and the slit's name.
-    - If the slit's source type is missing, it sets it to 'EXTENDED'.
-    - If the slit's source type is None, it sets it to 'EXTENDED'.
-    - If the slit's slitlet ID is missing, it sets it to 9999.
+        - If the slit's lamp mode is 'FIXEDSLIT' and the source name is missing,
+          it sets the source name based on the target's proposer name and the slit's
+          name.
+        - If the slit's source type is missing, it sets it to 'EXTENDED'.
+        - If the slit's source type is None, it sets it to 'EXTENDED'.
+        - If the slit's slitlet ID is missing, it sets it to 9999.
 
     Parameters:
     -----------
@@ -364,7 +365,6 @@ def update_slit_metadata(slit):
     Returns:
     --------
     None
-
     """
     meta = slit.meta.instance
     is_fixed = meta["instrument"]["lamp_mode"] == "FIXEDSLIT"
@@ -631,8 +631,7 @@ def slit_metadata_to_header(slit, key="", header=None):
 
 
 def slit_trace_center(
-    slit, with_source_xpos=False, with_source_ypos=True, index_offset=0.0
-):
+    slit, with_source_xpos=False, with_source_ypos=True, index_offset=0.0):
     """
     Get detector coordinates along the center of a slit
 
@@ -2095,8 +2094,7 @@ def drizzled_hdu_figure(
     flam_scale=-20,
     recenter=True,
     use_aper_columns=False,
-    smooth_sigma=None,
-):
+    smooth_sigma=None):
     """
     Figure showing drizzled hdu
 
@@ -2720,11 +2718,18 @@ def get_prism_bar_correction(
         Cross-dispersion pixel coordinates, scaled by a factor of 1/5 to roughly have
         units of the MSA shutters
 
+    num_shutters : [1,2,3]
+        Number of shutters in the slitlet
+
     wrap : bool, str
         If ``auto``, determine if the bounds of ``scaled_yshutter`` are more than 0.5
         shutters outside of the (-1.5, 1.5) range used to determine the correction.
         If so, or if ``wrap=True``, replicate the center shutter to all specified
         shutters.
+    
+    wrap_pad : float
+        If ``wrap``, pad the outer edges that are unilluminated and won't be 
+        properly calibrated
 
     Returns
     -------
@@ -2742,17 +2747,23 @@ def get_prism_bar_correction(
 
         import numpy as np
         import matplotlib.pyplot as plt
-        import msaexp.utils
+        from msaexp.utils import get_prism_bar_correction
 
         scaled_yshutter = np.linspace(-1.6, 1.6, 512)
 
         fig, ax = plt.subplots(1,1,figsize=(6,4))
-        bar, _wrapped = msaexp.utils.get_prism_bar_correction(scaled_yshutter)
-        ax.plot(scaled_yshutter, bar)
+        
+        for n in [1,2,3]:
+            bar, _wrapped = get_prism_bar_correction(scaled_yshutter,
+                                                     num_shutters=n,
+                                                     wrap=False)
+            ax.plot(scaled_yshutter, bar, label=f'{n}-shutter', alpha=0.5)
+        
+        ax.legend(loc='lower right', fontsize=6)
         ax.grid()
 
         ax.set_xlabel('scaled_yshutter = cross-dispersion pixel / 5')
-        ax.set_ylabel('bar shadow correction')
+        ax.set_ylabel('bar shadow factor')
 
         fig.tight_layout(pad=1)
         fig.show()
@@ -2774,7 +2785,7 @@ def get_prism_bar_correction(
         ax.legend()
 
         ax.set_xlabel('scaled_yshutter = cross-dispersion pixel / 5')
-        ax.set_ylabel('bar shadow correction')
+        ax.set_ylabel('bar shadow factor')
 
         fig.tight_layout(pad=1)
         fig.show()
@@ -2871,6 +2882,9 @@ def get_prism_wave_bar_correction(
     wavelengths : array-like
         Wavelength of the pixel samples, microns
 
+    num_shutters : [1,2,3]
+        Number of shutters in the slitlet
+
     wrap : bool, str
         If ``auto``, determine if the bounds of ``scaled_yshutter`` are more than 0.5
         shutters outside of the (-1.5, 1.5) range used to determine the correction.
@@ -2878,7 +2892,8 @@ def get_prism_wave_bar_correction(
         shutters.
 
     wrap_pad : float
-        If ``wrap``, pad the outer edge that won't be correctly calibrated
+        If ``wrap``, pad the outer edges that are unilluminated and won't be 
+        properly calibrated
 
     Returns
     -------
@@ -2889,6 +2904,38 @@ def get_prism_wave_bar_correction(
         Was the bar profile wrapped using the single central shutter, e.g., from
         ``wrap='auto'``?
 
+    .. plot::
+        :include-source:
+
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from msaexp.utils import get_prism_wave_bar_correction
+        
+        scaled_yshutter = np.linspace(-1.6, 1.6, 512)
+
+        fig, ax = plt.subplots(1,1,figsize=(6,4))
+        
+        for w in [1.0, 2.0, 3.0, 4.0, 5.0]:
+            bar, _wrapped = get_prism_wave_bar_correction(
+                                    scaled_yshutter,
+                                    np.full_like(scaled_yshutter, w),
+                                    num_shutters=3,
+                                    wrap=False)
+            
+            ax.plot(scaled_yshutter, bar,
+                    label=f'{w:.0f} um',
+                    alpha=0.5,
+                    color=plt.cm.RdYlBu_r(np.interp(w, [0.8, 5.3], [0, 1]))
+                    )
+        
+        ax.legend(loc='lower right', fontsize=6)
+        ax.grid()
+
+        ax.set_xlabel('scaled_yshutter = cross-dispersion pixel / 5')
+        ax.set_ylabel('bar shadow factor')
+
+        fig.tight_layout(pad=1)
+        fig.show()
     """
     import yaml
 
@@ -2985,6 +3032,32 @@ def get_normalization_correction(
     corr : array-like
         Correction to apply to slit data, i.e., ``corrected = slit.data * corr``
 
+    Examples
+    --------
+    .. plot::
+        :include-source:
+
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from msaexp.utils import get_normalization_correction
+
+        waves = np.linspace(0.8, 5.2, 256)
+
+        fig, ax = plt.subplots(1, 1, figsize=(6,4))
+        
+        corr = get_normalization_correction(waves, 1, 180, 85, grating="PRISM")
+        ax.plot(waves, corr)
+
+        ax.legend(loc='lower right', fontsize=6)
+        ax.grid()
+        ax.set_ylim(0.8, 1.2)
+        ax.hlines([1.], 0.7, 5.3, color='r', linestyle=':')
+
+        ax.set_xlabel('wavelength, um')
+        ax.set_ylabel('normalization')
+
+        fig.tight_layout(pad=1)
+        fig.show()
     """
 
     import yaml
@@ -3063,8 +3136,7 @@ def make_nirspec_gaussian_profile(
     ny=31,
     weight=1,
     bkg_offset=6,
-    bkg_parity=[-1, 1],
-):
+    bkg_parity=[-1, 1]):
     """
     Make a pixel-integrated Gaussian profile
 
@@ -3137,8 +3209,7 @@ def objfun_prf(
     bkg_parity,
     fit_type,
     ret,
-    verbose,
-):
+    verbose):
     """
     Objective function for fitting the 2D profile
 
