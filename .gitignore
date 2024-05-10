@@ -3,6 +3,7 @@ docs/examples/*pdf
 docs/examples/*png
 docs/examples/*txt
 docs/examples/*yaml
+docs/examples/*yml
 docs/examples/*reg
 
 docs/examples/FILTER*
