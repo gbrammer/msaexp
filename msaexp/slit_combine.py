@@ -1076,6 +1076,11 @@ class SlitGroup:
     def calculate_slices(self):
         """
         Calculate slices to handle unequal cutout sizes
+        
+        Returns
+        -------
+        Adds ``slice`` attribute to each item in the ``slits`` list, where
+        ``slice = (slice(ystart, ystart + shape[0]), slice(xstart, xstart + shape[1]))``
         """
         ashapes = np.array(self.shapes)
         ystart = np.max(self.info["ystart"])
