@@ -631,7 +631,8 @@ def slit_metadata_to_header(slit, key="", header=None):
 
 
 def slit_trace_center(
-    slit, with_source_xpos=False, with_source_ypos=True, index_offset=0.0):
+    slit, with_source_xpos=False, with_source_ypos=True, index_offset=0.0
+):
     """
     Get detector coordinates along the center of a slit
 
@@ -2094,7 +2095,8 @@ def drizzled_hdu_figure(
     flam_scale=-20,
     recenter=True,
     use_aper_columns=False,
-    smooth_sigma=None):
+    smooth_sigma=None,
+):
     """
     Figure showing drizzled hdu
 
@@ -2707,7 +2709,12 @@ def get_nirspec_psf_fwhm(wave):
 
 
 def get_prism_bar_correction(
-    scaled_yshutter, num_shutters=3, wrap="auto", wrap_pad=0.2, mask=True
+    scaled_yshutter,
+    num_shutters=3,
+    wrap="auto",
+    wrap_pad=0.2,
+    mask=True,
+    bar_data=None,
 ):
     """
     Generate the `msaexp` prism bar-shadow correction
@@ -2726,10 +2733,18 @@ def get_prism_bar_correction(
         shutters outside of the (-1.5, 1.5) range used to determine the correction.
         If so, or if ``wrap=True``, replicate the center shutter to all specified
         shutters.
-    
+
     wrap_pad : float
-        If ``wrap``, pad the outer edges that are unilluminated and won't be 
+        If ``wrap``, pad the outer edges that are unilluminated and won't be
         properly calibrated
+
+    mask : bool
+        Apply mask where the bar correction is within the shutter pixels of the
+        calibration
+
+    bar_data : None, dict
+        Correction data.  If not specified, read from
+        ``prism_{num_shutters}_bar_coeffs_wave.yaml``
 
     Returns
     -------
@@ -2752,13 +2767,13 @@ def get_prism_bar_correction(
         scaled_yshutter = np.linspace(-1.6, 1.6, 512)
 
         fig, ax = plt.subplots(1,1,figsize=(6,4))
-        
+
         for n in [1,2,3]:
             bar, _wrapped = get_prism_bar_correction(scaled_yshutter,
                                                      num_shutters=n,
                                                      wrap=False)
             ax.plot(scaled_yshutter, bar, label=f'{n}-shutter', alpha=0.5)
-        
+
         ax.legend(loc='lower right', fontsize=6)
         ax.grid()
 
@@ -2811,14 +2826,15 @@ def get_prism_bar_correction(
     """
     import yaml
 
-    path_to_ref = os.path.join(
-        os.path.dirname(__file__),
-        "data",
-        f"prism_{num_shutters}_bar_coeffs.yaml",
-    )
+    if bar_data is None:
+        path_to_ref = os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            f"prism_{num_shutters}_bar_coeffs.yaml",
+        )
 
-    with open(path_to_ref) as fp:
-        bar_data = yaml.load(fp, Loader=yaml.Loader)
+        with open(path_to_ref) as fp:
+            bar_data = yaml.load(fp, Loader=yaml.Loader)
 
     df = len(bar_data["coeffs"])
 
@@ -2869,6 +2885,7 @@ def get_prism_wave_bar_correction(
     wrap="auto",
     wrap_pad=0.2,
     mask=True,
+    bar_data=None,
 ):
     """
     Generate the `msaexp` prism bar-shadow correction including wavelength dependence
@@ -2892,8 +2909,16 @@ def get_prism_wave_bar_correction(
         shutters.
 
     wrap_pad : float
-        If ``wrap``, pad the outer edges that are unilluminated and won't be 
+        If ``wrap``, pad the outer edges that are unilluminated and won't be
         properly calibrated
+
+    mask : bool
+        Apply mask where the bar correction is within the shutter pixels of the
+        calibration
+
+    bar_data : None, dict
+        Correction data.  If not specified, read from
+        ``prism_{num_shutters}_bar_coeffs_wave.yaml``
 
     Returns
     -------
@@ -2910,24 +2935,24 @@ def get_prism_wave_bar_correction(
         import numpy as np
         import matplotlib.pyplot as plt
         from msaexp.utils import get_prism_wave_bar_correction
-        
+
         scaled_yshutter = np.linspace(-1.6, 1.6, 512)
 
         fig, ax = plt.subplots(1,1,figsize=(6,4))
-        
+
         for w in [1.0, 2.0, 3.0, 4.0, 5.0]:
             bar, _wrapped = get_prism_wave_bar_correction(
                                     scaled_yshutter,
                                     np.full_like(scaled_yshutter, w),
                                     num_shutters=3,
                                     wrap=False)
-            
+
             ax.plot(scaled_yshutter, bar,
                     label=f'{w:.0f} um',
                     alpha=0.5,
                     color=plt.cm.RdYlBu_r(np.interp(w, [0.8, 5.3], [0, 1]))
                     )
-        
+
         ax.legend(loc='lower right', fontsize=6)
         ax.grid()
 
@@ -2939,14 +2964,15 @@ def get_prism_wave_bar_correction(
     """
     import yaml
 
-    path_to_ref = os.path.join(
-        os.path.dirname(__file__),
-        "data",
-        f"prism_{num_shutters}_bar_coeffs_wave.yaml",
-    )
+    if bar_data is None:
+        path_to_ref = os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            f"prism_{num_shutters}_bar_coeffs_wave.yaml",
+        )
 
-    with open(path_to_ref) as fp:
-        bar_data = yaml.load(fp, Loader=yaml.Loader)
+        with open(path_to_ref) as fp:
+            bar_data = yaml.load(fp, Loader=yaml.Loader)
 
     df = len(bar_data["coeffs"])
 
@@ -3003,6 +3029,32 @@ def get_prism_wave_bar_correction(
     return bar, is_wrapped
 
 
+def slit_normalization_correction(slit, verbose=True):
+    """
+    Run `~msaexp.utils.get_normalization_correction` for a ``SlitModel`` object
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data
+
+    Returns
+    -------
+    corr : array-like
+        Correction to apply to slit data, i.e., ``corrected = slit.data * corr``
+
+    """
+    corr = get_normalization_correction(
+        slit.wavelength,
+        slit.quadrant,
+        slit.xcen,
+        slit.ycen,
+        grating=slit.meta.instrument.grating,
+        verbose=verbose,
+    )
+    return corr
+
+
 def get_normalization_correction(
     wavelengths, quadrant, xcen, ycen, grating="PRISM", verbose=True
 ):
@@ -3044,7 +3096,7 @@ def get_normalization_correction(
         waves = np.linspace(0.8, 5.2, 256)
 
         fig, ax = plt.subplots(1, 1, figsize=(6,4))
-        
+
         corr = get_normalization_correction(waves, 1, 180, 85, grating="PRISM")
         ax.plot(waves, corr)
 
@@ -3136,7 +3188,8 @@ def make_nirspec_gaussian_profile(
     ny=31,
     weight=1,
     bkg_offset=6,
-    bkg_parity=[-1, 1]):
+    bkg_parity=[-1, 1],
+):
     """
     Make a pixel-integrated Gaussian profile
 
@@ -3209,7 +3262,8 @@ def objfun_prf(
     bkg_parity,
     fit_type,
     ret,
-    verbose):
+    verbose,
+):
     """
     Objective function for fitting the 2D profile
 
