@@ -4095,7 +4095,7 @@ def extract_spectra(
         for k in keys:
             obj = xobj[k]["obj"]
             gr = k.split("-")[-1]
-            if obj.sh[1] < max_size[gr]:
+            if (obj.sh[1] < max_size[gr]) & (make_2d_plots > 1):
                 continue
 
             if "fit" in xobj[k]:
