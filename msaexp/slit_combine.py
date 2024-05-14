@@ -390,7 +390,8 @@ def objfun_prof_trace(
         )
 
     ppos = ppos.reshape(yslit[ipos, :].shape)
-    # Don't scale profile by bar because *data* are corrected
+    #####
+    #  Don't scale profile by bar because *data* are corrected
     # ppos *= bar[ipos,:]
 
     if ineg.sum() > 0:
@@ -507,7 +508,6 @@ class SlitGroup:
         sky_arrays=None,
         estimate_sky_kwargs=None,
         flag_profile_kwargs={},
-        scale_sky=1.0,
         undo_pathloss=True,
         trace_with_xpos=False,
         trace_with_ypos=True,
@@ -517,7 +517,8 @@ class SlitGroup:
         pad_border=2,
         weight_type="ivm_bar",
         reference_exposure="auto",
-        **kwargs):
+        **kwargs,
+    ):
         """
         Container for a list of 2D extracted ``SlitModel`` files
 
@@ -704,7 +705,6 @@ class SlitGroup:
             "nhot": 0,
             "ncold": 0,
             "has_sky_arrays": (sky_arrays is not None),
-            "scale_sky": scale_sky,
             "weight_type": weight_type,
         }
 
@@ -729,7 +729,6 @@ class SlitGroup:
             "nhot": "Number of flagged hot pixels",
             "ncold": "Number of flagged cold pixels",
             "has_sky_arrays": "sky arrays specified",
-            "scale_sky": "Scaling of sky arrays",
             "weight_type": "Weighting scheme for 2D combination",
         }
 
@@ -744,6 +743,8 @@ class SlitGroup:
 
         self.files = keep_files
         self.info = self.parse_metadata()
+        self.calculate_slices()
+
         self.sh = np.min(np.array(self.shapes), axis=0)
 
         self.parse_data()
@@ -776,8 +777,6 @@ class SlitGroup:
                 self.flag_from_profile(**flag_profile_kwargs)
             except ValueError:
                 pass
-
-        self.compute_sky_scale()
 
     @property
     def N(self):
@@ -879,6 +878,30 @@ class SlitGroup:
         return pix_scale
 
     @property
+    def slit_shutter_scale(self):
+        """
+        Compute cross dispersion pixel scale in shutter coordinates from slit WCS
+
+        Returns
+        -------
+        pix_scale : float
+            Cross-dispersion pixel scale ``shutters / pixel``
+
+        """
+
+        sl = self.slits[0]
+        wcs = sl.meta.wcs
+        d2s = wcs.get_transform("detector", "slit_frame")
+
+        x0 = d2s(self.sh[1] // 2, self.sh[0] // 2)
+        x1 = d2s(self.sh[1] // 2, self.sh[0] // 2 + 1)
+
+        dx = np.array(x1) - np.array(x0)
+        pix_scale = np.sqrt(dx[0] ** 2 + dx[1] ** 2)
+
+        return pix_scale
+
+    @property
     def relative_nod_offset(self):
         """
         Compute relative nod offsets from the trace polynomial
@@ -892,14 +915,20 @@ class SlitGroup:
     @property
     def fixed_yshutter(self):
         """
-        Fixed cross-dispersion shutter coordinates
-        """
-        if self.meta["position_key"] == "manual_position":
-            shutter_y = (self.yshutter + self.source_ypixel_position - 1.0) / 5
-        else:
-            shutter_y = (self.yshutter + self.source_ypixel_position) / 5
+        Fixed cross-dispersion shutter coordinate
 
-        shutter_y += self.meta["fixed_offset"]
+        Returns
+        -------
+        shutter_y : array-like
+            Cross-dispersion pixel in normalized shutter coordinates:
+            ``shutter_y = (slit_frame_y / slit_shutter_scale + fixed_offset ) / 5``
+
+        """
+        shutter_y = (
+            self.slit_frame_y / self.slit_shutter_scale
+            + self.meta["fixed_offset"]
+        ) / 5.0
+
         shutter_y[~self.mask] = np.nan
 
         return shutter_y
@@ -1021,6 +1050,8 @@ class SlitGroup:
                 [
                     slit.meta.filename,
                     slit.meta.filename.split("_")[0],
+                    slit.xstart,
+                    slit.ystart,
                     slit.data.shape,
                 ]
                 + [md[k] for k in md]
@@ -1028,17 +1059,41 @@ class SlitGroup:
             )
 
         names = (
-            ["filename", "visit", "shape"] + [k for k in md] + [k for k in mi]
+            ["filename", "visit", "xstart", "ystart", "shape"]
+            + [k for k in md]
+            + [k for k in mi]
         )
 
         info = utils.GTable(names=names, rows=rows)
         info["x_position"] = np.round(info["x_offset"] * 10) / 10.0
         info["y_position"] = np.round(info["y_offset"] * 10) / 10.0
         info["y_index"] = (
-            utils.Unique(info["y_position"], verbose=verbose).indices + 1
+            utils.Unique(info["y_position"], verbose=False).indices + 1
         )
 
         return info
+
+    def calculate_slices(self):
+        """
+        Calculate slices to handle unequal cutout sizes
+        """
+        ashapes = np.array(self.shapes)
+        ystart = np.max(self.info["ystart"])
+        ystop = np.min(self.info["ystart"] + self.info["shape"][:, 0])
+
+        xstart = np.max(self.info["xstart"])
+        xstop = np.min(self.info["xstart"] + self.info["shape"][:, 1])
+
+        sh = (ystop - ystart, xstop - xstart)
+
+        y0 = ystart - self.info["ystart"]
+        x0 = xstart - self.info["xstart"]
+        slices = [
+            (slice(yi, yi + sh[0]), slice(xi, xi + sh[1]))
+            for yi, xi in zip(y0, x0)
+        ]
+        for s, slit in zip(slices, self.slits):
+            slit.slice = s
 
     def parse_data(self, verbose=True):
         """
@@ -1062,21 +1117,21 @@ class SlitGroup:
 
         sl = (slice(0, self.sh[0]), slice(0, self.sh[1]))
 
-        sci = np.array([slit.data[sl].flatten() * 1 for slit in slits])
+        sci = np.array([slit.data[slit.slice].flatten() * 1 for slit in slits])
         try:
             bar = np.array(
-                [slit.barshadow[sl].flatten() * 1 for slit in slits]
+                [slit.barshadow[slit.slice].flatten() * 1 for slit in slits]
             )
         except:
             bar = np.ones_like(sci)
 
-        dq = np.array([slit.dq[sl].flatten() * 1 for slit in slits])
+        dq = np.array([slit.dq[slit.slice].flatten() * 1 for slit in slits])
         var_rnoise = np.array(
-            [slit.var_rnoise[sl].flatten() * 1 for slit in slits]
+            [slit.var_rnoise[slit.slice].flatten() * 1 for slit in slits]
         )
 
         var_poisson = np.array(
-            [slit.var_poisson[sl].flatten() * 1 for slit in slits]
+            [slit.var_poisson[slit.slice].flatten() * 1 for slit in slits]
         )
 
         bad = sci == 0
@@ -1086,9 +1141,6 @@ class SlitGroup:
         dq[bad] = 1
         if bar is not None:
             bar[bad] = np.nan
-
-        sh = slits[0].data.shape
-        yp, xp = np.indices(sh)
 
         # 2D
         xslit = []
@@ -1100,6 +1152,7 @@ class SlitGroup:
         xtr = []
         ytr = []
         wtr = []
+        slit_frame_y = []
 
         attr_keys = [
             "source_ra",
@@ -1118,6 +1171,10 @@ class SlitGroup:
 
         for j, slit in enumerate(slits):
 
+            sh = slit.data.shape
+            yp, xp = np.indices(sh)
+
+            sl = slit.slice
             _res = msautils.slit_trace_center(
                 slit,
                 with_source_xpos=False,
@@ -1127,15 +1184,20 @@ class SlitGroup:
 
             _xtr, _ytr, _wtr, slit_ra, slit_dec = _res
 
-            xslit.append(xp[sl].flatten())
-            yslit.append((yp[sl] - (_ytr[sl[1]])).flatten())
-            ypix.append(yp[sl].flatten())
+            xslit.append(xp[sl].flatten() - sl[1].start)
+            yslit.append((yp[sl] - (_ytr[sl[1]])).flatten() - sl[0].start)
+            ypix.append(yp[sl].flatten() - sl[0].start)
 
             wcs = slit.meta.wcs
             d2w = wcs.get_transform("detector", "world")
 
             _ypi, _xpi = np.indices(slit.data.shape)
             _ras, _des, _wave = d2w(_xpi, _ypi)
+
+            # Slit frame coordinate defined from first exposure
+            if j == 0:
+                d2s = wcs.get_transform("detector", "slit_frame")
+                _sx, _sy, _slam = np.array(d2s(_xpi[sl], _ypi[sl]))
 
             if self.meta["trace_with_xpos"] & (slit.source_xpos is not None):
                 _xres = msautils.slit_trace_center(
@@ -1170,11 +1232,11 @@ class SlitGroup:
                 _wave += np.interp(_xpi, _xtr, dwave)
                 _wtr = _xwtr
 
-            xtr.append(_xtr[sl[1]])
-            ytr.append(_ytr[sl[1]])
+            xtr.append(_xtr[sl[1]] - sl[1].start)
+            ytr.append(_ytr[sl[1]] - sl[0].start)
             wtr.append(_wtr[sl[1]])
-
             wave.append(_wave[sl].flatten())
+            slit_frame_y.append(_sy.flatten())
 
             for k in attr_keys:
                 self.info[k][j] = getattr(slit, k)
@@ -1183,6 +1245,7 @@ class SlitGroup:
         yslit = np.array(yslit)
         ypix = np.array(ypix)
         wave = np.array(wave)
+        slit_frame_y = np.array(slit_frame_y)
 
         xtr = np.array(xtr)
         ytr = np.array(ytr)
@@ -1229,6 +1292,9 @@ class SlitGroup:
         self.var_poisson = var_poisson
 
         for j, slit in enumerate(slits):
+
+            sl = slit.slice
+
             phot_scl = slit.meta.photometry.pixelarea_steradians * 1.0e12
             # phot_scl *= (slit.pathloss_uniform / slit.pathloss_point)[sl].flatten()
             # Remove pathloss correction
@@ -1270,6 +1336,7 @@ class SlitGroup:
         self.yslit_orig = yslit * 1
         self.ypix = ypix
         self.wave = wave
+        self.slit_frame_y = slit_frame_y
 
         self.bar = bar
 
@@ -1306,11 +1373,14 @@ class SlitGroup:
                 msg += f"Force {offstr} pix offsets"
                 utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
-                self.info["manual_position"] = offsets
+                self.info["manual_position"] = [
+                    f"{int(o*10)/10.:.1f}" for o in offsets
+                ]
+
                 self.meta["position_key"] = "manual_position"
 
                 for i, _off in enumerate(offsets):
-                    self.ytr[i, :] += _off - 1
+                    self.ytr[i, :] += _off  # - 1
 
         elif (self.info["lamp_mode"][0] == "FIXEDSLIT") & (1):
 
@@ -1429,7 +1499,7 @@ class SlitGroup:
     def estimate_sky(
         self,
         mask_yslit=[[-4.5, 4.5]],
-        min_bar=0.9,
+        min_bar=0.95,
         var_percentiles=[-5, -5],
         df=51,
         use=True,
@@ -1458,7 +1528,8 @@ class SlitGroup:
             to exclude from the low and high sides.
 
         df : int
-            Degrees of freedom of the spline fit
+            Degrees of freedom of the spline fit.  If ``df = 0``, then just compute
+            a scalar normalization factor.  If ``df < 0``, then don't rescale at all.
 
         use : bool
             Use the resulting sky model for the local sky
@@ -1474,6 +1545,9 @@ class SlitGroup:
 
         Returns
         -------
+        fig : `~matplotlib.figure.Figure`
+            Figure object if ``make_figure`` else None
+
         Stores sky fit results in ``sky_data`` attribute
 
         """
@@ -1517,69 +1591,100 @@ class SlitGroup:
         else:
             absolute_clip = False
 
-        ok_skyf = ok_sky.flatten()
-
         sky_wave = msautils.get_standard_wavelength_grid(
             self.grating, sample=1.0
         )
         nbin = sky_wave.shape[0]
         xbin = np.interp(self.wave, sky_wave, np.arange(nbin) / nbin)
 
-        spl_full = utils.bspline_templates(
-            xbin.flatten(),
-            df=df,
-            minmax=(0, 1),
-            get_matrix=True,
-        )
-
-        nspl = spl_full[ok_skyf, :].sum(axis=0)
-        spl_trim = nspl > 1.0e-4 * nspl.max()
-        spl_full = spl_full[:, spl_trim]
-
-        AxT = (spl_full[ok_skyf, :].T / np.sqrt(self.var_rnoise[ok_sky])).T
-        yx = (self.sci / np.sqrt(self.var_rnoise))[ok_sky]
-        sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)
-
-        if absolute_clip & (absolute_threshold is not None):
-            # Flag outliers
-            sky2d = spl_full.dot(sky_coeffs[0]).reshape(self.sci.shape)
-            sky_bad = np.abs(self.sci - sky2d) > absolute_threshold
-            var_clip |= sky_bad & ok_sky
-            ok_sky &= ~sky_bad
-            ok_skyf = ok_sky.flatten()
-
+        if df <= 0:  # | (self.sky_arrays is not None):
+            spl_full = np.ones(xbin.size)[:, None]
+        else:
             spl_full = utils.bspline_templates(
                 xbin.flatten(),
                 df=df,
                 minmax=(0, 1),
                 get_matrix=True,
             )
+
+        if self.sky_arrays is not None:
+            _sky_interp = np.interp(
+                self.wave.flatten(),
+                *self.sky_arrays,
+                left=np.nan,
+                right=np.nan,
+            )
+            ok_sky &= np.isfinite(_sky_interp.reshape(ok_sky.shape))
+            spl_full = (spl_full.T * _sky_interp).T
+
+        if ok_sky.sum() == 0:
+            msg = f"estimate_sky: no valid pixels"
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            return None
+
+        ok_skyf = ok_sky.flatten()
+        nspl = spl_full[ok_skyf, :].sum(axis=0)
+        spl_trim = nspl > 1.0e-4 * nspl.max()
+        spl_full = spl_full[:, spl_trim]
+
+        AxT = (spl_full[ok_skyf, :].T / np.sqrt(self.var_rnoise[ok_sky])).T
+        yx = (self.sci / np.sqrt(self.var_rnoise))[ok_sky]
+        if df < 0:  # | (self.sky_arrays is not None):
+            sky_coeffs = np.array([1.0])
+        else:
+            sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)[0]
+
+        if absolute_clip & (absolute_threshold is not None):
+            # Flag outliers
+            sky2d = spl_full.dot(sky_coeffs).reshape(self.sci.shape)
+            sky_bad = np.abs(self.sci - sky2d) > absolute_threshold
+            var_clip |= sky_bad & ok_sky
+            ok_sky &= ~sky_bad
+            ok_skyf = ok_sky.flatten()
+
+            if df <= 0:
+                spl_full = np.ones(xbin.size)[:, None]
+            else:
+                spl_full = utils.bspline_templates(
+                    xbin.flatten(),
+                    df=df,
+                    minmax=(0, 1),
+                    get_matrix=True,
+                )
             nspl = spl_full[ok_skyf, :].sum(axis=0)
             spl_trim = nspl > 1.0e-4 * nspl.max()
             spl_full = spl_full[:, spl_trim]
 
+            if self.sky_arrays is not None:
+                spl_full = (spl_full.T * _sky_interp).T
+
             AxT = (spl_full[ok_skyf, :].T / np.sqrt(self.var_rnoise[ok_sky])).T
             yx = (self.sci / np.sqrt(self.var_rnoise))[ok_sky]
-            sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)
+            if df < 0:
+                sky_coeffs = np.array([1.0])
+            else:
+                sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)[0]
 
-        sky_covar = utils.safe_invert(np.dot(AxT.T, AxT))
+        if df <= 0:
+            spl_array = np.ones(nbin)[:, None]
+            sky_covar = np.array([1.0])
+        else:
+            sky_covar = utils.safe_invert(np.dot(AxT.T, AxT))
 
-        spl_array = utils.bspline_templates(
-            np.arange(nbin) / nbin,
-            df=df,
-            minmax=(0, 1),
-            get_matrix=True,
-        )
+            spl_array = utils.bspline_templates(
+                np.arange(nbin) / nbin,
+                df=df,
+                minmax=(0, 1),
+                get_matrix=True,
+            )
 
         spl_array = spl_array[:, spl_trim]
-        sky_model = spl_array.dot(sky_coeffs[0])
-        sky2d = spl_full.dot(sky_coeffs[0]).reshape(self.sci.shape)
+        if self.sky_arrays is not None:
+            _sky_interp = np.interp(sky_wave, *self.sky_arrays)
+            spl_array = (spl_array.T * _sky_interp).T
 
-        # Rescale - this really should already be ~1.0
-        scl_sky = (self.sci * sky2d / self.var_rnoise)[ok_sky].sum()
-        scl_sky /= (sky2d**2 / self.var_rnoise)[ok_sky].sum()
-        sky2d *= scl_sky
-        sky_model *= scl_sky
+        sky_model = spl_array.dot(sky_coeffs)
+        sky2d = spl_full.dot(sky_coeffs).reshape(self.sci.shape)
 
         sky_model[(sky_wave < np.nanmin(self.wave[ok_sky]))] = np.nan
         sky_model[(sky_wave > np.nanmax(self.wave[ok_sky]))] = np.nan
@@ -1638,6 +1743,7 @@ class SlitGroup:
             ax.grid()
             ymax = np.nanmax(sky_model)
             ax.set_ylim(-0.1 * ymax, ymax * 1.1)
+            ax.set_ylabel(r"sky $f_\nu$, $\mu$Jy")
 
             ax = axes[1]
             ax.scatter(
@@ -1650,6 +1756,12 @@ class SlitGroup:
             ax.plot(sky_wave, sky_model * 0, color="magenta", alpha=0.5)
             ax.set_ylim(-7, 7)
             ax.grid()
+            ax.set_xlabel("wavelength")
+            ax.set_ylabel("residual, sigma")
+        else:
+            fig = None
+
+        return fig
 
     def flag_from_profile(
         self,
@@ -1976,62 +2088,6 @@ class SlitGroup:
             self.sci[shutter_mask] = np.nan
             self.mask &= np.isfinite(self.sci)
 
-    def compute_sky_scale(self, trace_avoid=[-2.5, 2.5], verbose=True):
-        """
-        Compute scaling of input sky arrays
-        """
-        if self.sky_arrays is None:
-            return 1.0
-
-        trace_mask = (self.yslit < trace_avoid[0]) | (
-            self.yslit > trace_avoid[1]
-        )
-        trace_mask &= self.mask
-
-        if trace_mask.sum() == 0:
-            msg = f" compute_sky_scale: {trace_avoid} - no pixels"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
-            return 1.0
-
-        sky = self.sky_background * 1
-
-        wmin = np.maximum(np.nanmin(self.wave), np.nanmin(self.sky_arrays[0]))
-        wmax = np.minimum(np.nanmax(self.wave), np.nanmax(self.sky_arrays[0]))
-        # print(wmin, wmax)
-
-        trace_mask &= (self.wave > wmin) & (self.wave < wmax)
-        trace_mask &= np.abs(self.sci - sky) < 5 * np.sqrt(self.var_total)
-
-        scale = np.nanmedian((self.sci / sky)[trace_mask])
-
-        df = 13
-
-        bspl_full = utils.bspline_templates(
-            self.wave[trace_mask], df=df, get_matrix=True, minmax=(wmin, wmax)
-        )
-
-        lsq_coeffs = np.linalg.lstsq(
-            (bspl_full.T * (sky / np.sqrt(self.var_total))[trace_mask]).T,
-            (self.sci / np.sqrt(self.var_total))[trace_mask],
-            rcond=None,
-        )
-
-        bspl_arrays = utils.bspline_templates(
-            self.sky_arrays[0], df=df, get_matrix=True, minmax=(wmin, wmax)
-        )
-
-        self.sky_arrays[1] *= bspl_arrays.dot(lsq_coeffs[0])
-
-        if np.isfinite(scale):
-            # self.meta["scale_sky"] *= scale
-            msg = f" compute_sky_scale: {trace_avoid} - scale = {scale:.2f}"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
-        else:
-            msg = f" compute_sky_scale: {trace_avoid} - ! {scale}"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
-
-        return scale
-
     @property
     def sky_background(self):
         """
@@ -2044,23 +2100,23 @@ class SlitGroup:
             Sky data with dimensions ``(N, sh[0]*sh[1])``
 
         """
-        if self.sky_arrays is not None:
+        if hasattr(self, "sky_data"):
+            if self.sky_data["use"]:
+                sky = self.sky_data["sky2d"] * 1.0
+            else:
+                sky = np.zeros_like(self.wave)
+        elif self.sky_arrays is not None:
             sky = np.interp(
                 self.wave,
                 self.sky_arrays[0],
-                self.sky_arrays[1] * self.meta["scale_sky"],
+                self.sky_arrays[1],
                 left=-1,
                 right=-1,
             )
 
             sky[sky < 0] = np.nan
-        elif hasattr(self, "sky_data"):
-            if self.sky_data["use"]:
-                sky = self.sky_data["sky2d"] * 1.0
-            else:
-                sky = 0.0
         else:
-            sky = 0.0
+            sky = np.zeros_like(self.wave)
 
         return sky
 
@@ -2106,6 +2162,9 @@ class SlitGroup:
         diff : array-like
             Flattened difference image
 
+        diff : array-like
+            Flattened sky background difference image
+
         vdiff : array-like
             Flattened variance image
 
@@ -2116,6 +2175,10 @@ class SlitGroup:
         ipos = self.unp[exp]
 
         pos = np.nansum(self.data[ipos, :], axis=0) / np.nansum(
+            self.mask[ipos, :], axis=0
+        )
+
+        bpos = np.nansum(self.sky_background[ipos, :], axis=0) / np.nansum(
             self.mask[ipos, :], axis=0
         )
 
@@ -2140,6 +2203,9 @@ class SlitGroup:
             neg = np.nansum(self.data[ineg, :], axis=0) / np.nansum(
                 self.bkg_mask[ineg, :], axis=0
             )
+            bneg = np.nansum(self.sky_background[ineg, :], axis=0) / np.nansum(
+                self.bkg_mask[ineg, :], axis=0
+            )
             vneg = (
                 np.nansum(self.var_total[ineg, :], axis=0)
                 / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
@@ -2158,14 +2224,16 @@ class SlitGroup:
         else:
             ineg = np.zeros(self.N, dtype=bool)
             neg = np.zeros_like(pos)
+            bneg = np.zeros_like(bpos)
             vneg = np.zeros_like(vpos)
             wneg = np.zeros_like(wpos)
 
         diff = pos - neg
+        bdiff = bpos - bneg
         vdiff = vpos + vneg
         wdiff = wpos + wneg
 
-        return ipos, ineg, diff, vdiff, wdiff
+        return ipos, ineg, diff, bdiff, vdiff, wdiff
 
     def plot_2d_differences(
         self,
@@ -2218,7 +2286,9 @@ class SlitGroup:
         nods = self.relative_nod_offset
 
         for i, exp in enumerate(self.unp.values):
-            ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
+            ipos, ineg, diff, bdiff, vdiff, wdiff = self.make_diff_image(
+                exp=exp
+            )
 
             if fit is not None:
                 model = fit[exp]["smod"]
@@ -2459,7 +2529,7 @@ class SlitGroup:
         from scipy.optimize import minimize
 
         global EVAL_COUNT
-        ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
+        ipos, ineg, diff, bdiff, vdiff, wdiff = self.make_diff_image(exp=exp)
 
         base_coeffs = self.base_coeffs[np.where(ipos)[0][0]]
 
@@ -2709,7 +2779,7 @@ class SlitGroup:
             Figure object containing the plot.
 
         """
-        ipos, ineg, diff, vdiff, wdiff = self.make_diff_image(exp=exp)
+        ipos, ineg, diff, bdiff, vdiff, wdiff = self.make_diff_image(exp=exp)
         if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=(5, 5))
 
@@ -2984,12 +3054,14 @@ def combine_grating_group(
     import msaexp.drizzle
 
     _ = drizzle_grating_group(xobj, grating_keys, **drizzle_kws)
-    wave_bin, xbin, ybin, header, slit_info, arrays, parrays = _
+    wave_bin, xbin, ybin, header, slit_info, arrays, barrays, parrays = _
 
     num, vnum, den, ntot = arrays
+    bnum = barrays[0]
     mnum, _, mden, _ = parrays
 
     sci2d = num / den
+    bkg2d = bnum / den
     # wht2d = den * 1
 
     var2d = vnum / den / ntot
@@ -2997,6 +3069,7 @@ def combine_grating_group(
 
     pmask = mnum / den > 0
     snum = np.nansum((num / den) * mnum * pmask, axis=0)
+    bnum = np.nansum((bnum / den) * mnum * pmask, axis=0)
     svnum = np.nansum((vnum / den / ntot) * mnum * pmask, axis=0)
     sden = np.nansum(mnum**2 / den * pmask, axis=0)
 
@@ -3053,6 +3126,9 @@ def combine_grating_group(
     spec["flux"].unit = u.microJansky
     spec["err"].unit = u.microJansky
     spec["wave"].unit = u.micron
+    spec["bkg_flux"] = bnum / sden
+    spec["bkg_flux"].description = "Weighted background"
+    spec["bkg_flux"].unit = u.micron
 
     # Add path_corr column
     average_path_loss(spec, header=header)
@@ -3086,6 +3162,11 @@ def combine_grating_group(
     hdul.append(pyfits.ImageHDU(data=wht2d, header=header, name="WHT"))
     hdul.append(pyfits.ImageHDU(data=profile2d, header=header, name="PROFILE"))
     hdul.append(pyfits.BinTableHDU(data=prof, name="PROF1D"))
+    if np.nanmax(bkg2d) != 0:
+        hdul.append(
+            pyfits.ImageHDU(data=bkg2d, header=header, name="BACKGROUND")
+        )
+
     if slit_info is not None:
         hdul.append(pyfits.BinTableHDU(data=slit_info, name="SLITS"))
 
@@ -3190,6 +3271,7 @@ def drizzle_grating_group(
     ybin = np.arange(-ny, ny + step * 1.01, step) - 0.5
 
     arrays = None
+    barrays = None
     parrays = None
 
     header = None
@@ -3228,7 +3310,9 @@ def drizzle_grating_group(
         header["WITHPTH"] = (with_pathloss, "Internal path loss correction")
 
         for ii, exp in enumerate(exp_ids):
-            ipos, ineg, diff, vdiff, wdiff = obj.make_diff_image(exp=exp)
+            ipos, ineg, diff, bdiff, vdiff, wdiff = obj.make_diff_image(
+                exp=exp
+            )
             ip = np.where(ipos)[0][0]
 
             # wht = 1.0 / vdiff
@@ -3311,6 +3395,18 @@ def drizzle_grating_group(
                 **dkws,
             )
 
+            barrays = pseudo_drizzle(
+                xsl,
+                ysl,
+                bdiff[ok] / prf_i,
+                vdiff[ok] / prf_i**2,
+                wht[ok] * prf_i**2,
+                xbin,
+                ybin,
+                arrays=barrays,
+                **dkws,
+            )
+
             if fit is not None:
                 mod = (
                     fit[exp]["smod"] / (fit[exp]["snum"] / fit[exp]["sden"])
@@ -3341,7 +3437,7 @@ def drizzle_grating_group(
     else:
         slit_info = None
 
-    return wave_bin, xbin, ybin, header, slit_info, arrays, parrays
+    return wave_bin, xbin, ybin, header, slit_info, arrays, barrays, parrays
 
 
 FIT_PARAMS_SN_KWARGS = dict(
