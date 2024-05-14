@@ -4074,31 +4074,41 @@ def extract_spectra(
             tfit = obj.fit_all_traces(**kws)
 
         xobj[k] = {"obj": obj, "fit": tfit}
+    
+    ######
+    # List of gratings
+    gratings = {}
+    max_size = {}
+
+    for k in keys:
+        gr = k.split("-")[-1]
+        if gr in gratings:
+            gratings[gr].append(k)
+            max_size[gr] = np.maximum(max_size[gr], xobj[k]["obj"].sh[1])
+        else:
+            gratings[gr] = [k]
+            max_size[gr] = xobj[k]["obj"].sh[1]
 
     ######
     # Fit plots
     if make_2d_plots:
         for k in keys:
             obj = xobj[k]["obj"]
+            gr = k.split("-")[-1]
+            if obj.sh[1] < max_size[gr]:
+                continue
+
             if "fit" in xobj[k]:
                 fit = xobj[k]["fit"]
             else:
                 fit = None
-
+                
             fig2d = obj.plot_2d_differences(fit=fit)
             fileroot = f"{root}_{obj.grating}-{obj.filter}_{target}".lower()
             fig2d.savefig(f"{fileroot}.d2d.png")
 
     # for k in xobj:
     #     xobj[k]["obj"].sky_arrays = None
-
-    gratings = {}
-    for k in keys:
-        gr = k.split("-")[-1]
-        if gr in gratings:
-            gratings[gr].append(k)
-        else:
-            gratings[gr] = [k]
 
     utils.log_comment(utils.LOGFILE, f"\ngratings: {gratings}", verbose=True)
 
