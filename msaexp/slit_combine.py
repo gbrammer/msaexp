@@ -1296,7 +1296,7 @@ class SlitGroup:
             dqi, dqf = msautils.extra_slit_dq_flags(
                 slit, verbose=(VERBOSE_LOG > 1)
             )
-            bad[i, :] |= dqi.flatten() > 0
+            bad[i, :] |= dqi[slit.slice].flatten() > 0
 
         # Dilate stuck open pixels
         if ("MSA_FAILED_OPEN" in BAD_PIXEL_NAMES) & self.meta[
