@@ -537,7 +537,7 @@ class SlitGroup:
         fixed_offset=0.0,
         nod_offset=None,
         pad_border=2,
-        weight_type="ivm_bar",
+        weight_type="ivm",
         reference_exposure="auto",
         **kwargs,
     ):
@@ -777,8 +777,6 @@ class SlitGroup:
         self.files = keep_files
         self.info = self.parse_metadata()
         self.calculate_slices()
-
-        self.sh = np.min(np.array(self.shapes), axis=0)
 
         self.parse_data()
 
@@ -1127,7 +1125,8 @@ class SlitGroup:
         xstart = np.max(self.info["xstart"])
         xstop = np.min(self.info["xstart"] + self.info["shape"][:, 1])
 
-        sh = (ystop - ystart, xstop - xstart)
+        # Global shape
+        self.sh = (ystop - ystart, xstop - xstart)
 
         y0 = ystart - self.info["ystart"]
         x0 = xstart - self.info["xstart"]
@@ -1290,6 +1289,14 @@ class SlitGroup:
         wtr = np.array(wtr)
 
         bad = (dq & BAD_PIXEL_FLAG) > 0
+
+        # Extra bad pix
+        for i, slit in enumerate(slits):
+            sl = slit.slice
+            dqi, dqf = msautils.extra_slit_dq_flags(
+                slit, verbose=(VERBOSE_LOG > 1)
+            )
+            bad[i, :] |= dqi.flatten() > 0
 
         # Dilate stuck open pixels
         if ("MSA_FAILED_OPEN" in BAD_PIXEL_NAMES) & self.meta[
