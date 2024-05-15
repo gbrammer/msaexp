@@ -1131,7 +1131,7 @@ class SlitGroup:
         y0 = ystart - self.info["ystart"]
         x0 = xstart - self.info["xstart"]
         slices = [
-            (slice(yi, yi + sh[0]), slice(xi, xi + sh[1]))
+            (slice(yi, yi + self.sh[0]), slice(xi, xi + self.sh[1]))
             for yi, xi in zip(y0, x0)
         ]
         for s, slit in zip(slices, self.slits):
