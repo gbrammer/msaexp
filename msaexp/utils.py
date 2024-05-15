@@ -3029,6 +3029,55 @@ def get_prism_wave_bar_correction(
     return bar, is_wrapped
 
 
+def extra_slit_dq_flags(slit, dq_data=None, verbose=True):
+    """
+    Set extra DQ flags, including a big stuck open shutter on NRS1
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data
+
+    dq_data : dict
+        DQ data dictionary to use.  Or read from
+        ``msaexp/data/msaexp_badpix_nrs[12].yaml``
+
+    Returns
+    -------
+    dq : array-like
+        Extra DQ flags
+
+    flags : dict
+        Description of DQ flags
+    """
+    import yaml
+
+    if dq_data is None:
+        path_to_ref = os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            f"msaexp_badpix_{slit.meta.instrument.detector}.yaml".lower(),
+        )
+
+        with open(path_to_ref) as fp:
+            dq_data = yaml.load(fp, Loader=yaml.Loader)
+    else:
+        path_to_ref = "(user-supplied)"
+
+    dq_arr = np.zeros(dq_data["shape"], dtype=int).flatten()
+    dq_arr[dq_data["pixel_index"]] = dq_data["pixel_value"]
+
+    slx = slice(slit.xstart - 1, slit.xstart - 1 + slit.xsize)
+    sly = slice(slit.ystart - 1, slit.ystart - 1 + slit.ysize)
+
+    dq = dq_arr.reshape(dq_data["shape"])[sly, slx]
+
+    msg = f" extra_slit_dq_flags: ({os.path.basename(path_to_ref)})  N={(dq > 0).sum()}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    return dq, dq_data["flags"]
+
+
 def slit_normalization_correction(slit, verbose=True):
     """
     Run `~msaexp.utils.get_normalization_correction` for a ``SlitModel`` object
