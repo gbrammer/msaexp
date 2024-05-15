@@ -3046,7 +3046,7 @@ def cache_badpix_arrays():
         path_to_ref = os.path.join(
             os.path.dirname(__file__),
             "data",
-            f"msaexp_badpix_{det}.yaml".lower(),
+            f"msaexp_badpix_{detector}.yaml".lower(),
         )
 
         with open(path_to_ref) as fp:
