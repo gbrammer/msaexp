@@ -525,6 +525,7 @@ class SlitGroup:
         bad_shutter_names=None,
         dilate_failed_open=True,
         undo_barshadow=False,
+        min_bar=0.4,
         bar_corr_mode="wave",
         fix_prism_norm=True,
         sky_arrays=None,
@@ -581,6 +582,9 @@ class SlitGroup:
             Undo the ``BarShadow`` correction if an extension found in the
             slit model files.  If ``2``, then apply internal barshadow correction
             with ``bar_corr_mode``.
+
+        min_bar : float
+            Minimum acceptable value of the BarShadow reference
 
         bar_corr_mode : str
             Internal barshadow correction type
@@ -724,6 +728,7 @@ class SlitGroup:
             "bad_shutter_names": bad_shutter_names,
             "dilate_failed_open": dilate_failed_open,
             "undo_barshadow": undo_barshadow,
+            "min_bar": min_bar,
             "bar_corr_mode": bar_corr_mode,
             "fix_prism_norm": fix_prism_norm,
             "wrapped_barshadow": False,
@@ -750,6 +755,7 @@ class SlitGroup:
             "stuck_threshold": "Stuck shutter threshold",
             "dilate_failed_open": "Dilate failed open mask",
             "undo_barshadow": "Bar shadow update behavior",
+            "min_bar": "Minimum allowed bar value",
             "bar_corr_mode": "Bar shadow correction type",
             "fix_prism_norm": "Apply prism scale correction",
             "wrapped_barshadow": "Bar shadow was wrapped for central shutter",
@@ -1478,6 +1484,9 @@ class SlitGroup:
         if self.meta["undo_barshadow"] == 2:
             self.apply_spline_bar_correction()
             self.meta["undo_barshadow"] = False
+
+        if self.meta["min_bar"] is not None:
+            self.mask &= self.bar > self.meta["min_bar"]
 
         if self.meta["bad_shutter_names"] is None:
             self.mask_stuck_closed_shutters()
