@@ -173,7 +173,7 @@ def pad_msa_metafile(
                 hdus[e].header[k] = im[e].header[k]
         im[e] = hdus[e]
 
-    output_file = prefix + metafile
+    output_file = prefix + os.path.basename(metafile)
 
     im.writeto(output_file, overwrite=True)
     im.close()
