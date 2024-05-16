@@ -18,7 +18,30 @@ import jwst.datamodels
 from grizli import utils
 import msaexp.utils as msautils
 
+BAD_PIXEL_NAMES = [
+    "DO_NOT_USE",
+    "OTHER_BAD_PIXEL",
+    "MSA_FAILED_OPEN",
+    "UNRELIABLE_SLOPE",
+    "UNRELIABLE_BIAS",
+    "NO_SAT_CHECK",
+    "NO_GAIN_VALUE",
+    "HOT",
+    "DEAD",
+    # "TELEGRAPH",
+    "RC",
+    "LOW_QE",
+    "OPEN",
+    "ADJ_OPEN",
+    "SATURATED",
+]
+
+BAD_PIXEL_FLAG = 1024
+for _bp in BAD_PIXEL_NAMES:
+    BAD_PIXEL_FLAG |= jwst.datamodels.dqflags.pixel[_bp]
+
 utils.LOGFILE = "/tmp/msaexp_slit_combine.log.txt"
+VERBOSE_LOG = True
 
 # Cross-dispersion pixel scale computed from one of the fixed slits
 PIX_SCALE = 0.10544
@@ -61,7 +84,10 @@ __all__ = [
 
 
 def split_visit_groups(
-    files, join=[0, 3], gratings=["PRISM"], split_uncover=True, verbose=True
+    files,
+    join=[0, 3],
+    gratings=["PRISM"],
+    split_uncover=True,
 ):
     """
     Compute groupings of `SlitModel` files based on exposure, visit, detector,
@@ -80,9 +106,6 @@ def split_visit_groups(
 
     split_uncover : bool, optional
         Whether to split UNCOVER sub groups, default is True
-
-    verbose : bool, optional
-        Status messages
 
     Returns
     -------
@@ -120,7 +143,7 @@ def split_visit_groups(
         if test_field:
             msg = "split_visit_groups: split UNCOVER sub groups "
             msg += f"{k} N={un[k].sum()}"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
             ksp = k.split("-")
 
@@ -171,9 +194,6 @@ def slit_prf_fraction(
 
     pixel_scale : float
         NIRSpec pixel scale, arcsec/pix
-
-    verbose : bool, optional
-        Status messages
 
     Returns
     -------
@@ -499,15 +519,18 @@ class SlitGroup:
         name,
         position_key="position_number",
         diffs=True,
+        grating_diffs=True,
         stuck_threshold=0.5,
         hot_cold_kwargs=None,
         bad_shutter_names=None,
+        dilate_failed_open=True,
         undo_barshadow=False,
+        min_bar=0.4,
         bar_corr_mode="wave",
         fix_prism_norm=True,
         sky_arrays=None,
         estimate_sky_kwargs=None,
-        flag_profile_kwargs={},
+        flag_profile_kwargs=None,
         undo_pathloss=True,
         trace_with_xpos=False,
         trace_with_ypos=True,
@@ -515,7 +538,7 @@ class SlitGroup:
         fixed_offset=0.0,
         nod_offset=None,
         pad_border=2,
-        weight_type="ivm_bar",
+        weight_type="ivm",
         reference_exposure="auto",
         **kwargs,
     ):
@@ -540,6 +563,9 @@ class SlitGroup:
         diffs : bool
             Compute nod differences
 
+        grating_diffs : bool
+            Force diffs for grating spectra
+
         stuck_threshold : float
             Parameter for identifying stuck-closed shutters in prism spectra in
             `~msaexp.slit_combine.SlitGroup.mask_stuck_closed_shutters`
@@ -548,10 +574,17 @@ class SlitGroup:
             List of integer shutter indices (e.g., among ``[-1, 0, 1]`` for a
             3-shutter slitlet) to mask as bad, e.g., from stuck shutters
 
+        dilate_failed_open : bool, int
+            Dilate the mask of pixels flagged with ``MSA_FAILED_OPEN``.  If an integer,
+            do ``dilate_failed_open`` dilation iterations.
+
         undo_barshadow : bool, 2
             Undo the ``BarShadow`` correction if an extension found in the
             slit model files.  If ``2``, then apply internal barshadow correction
             with ``bar_corr_mode``.
+
+        min_bar : float
+            Minimum acceptable value of the BarShadow reference
 
         bar_corr_mode : str
             Internal barshadow correction type
@@ -686,13 +719,16 @@ class SlitGroup:
         # kwargs to meta dictionary
         self.meta = {
             "diffs": diffs,
+            "grating_diffs": grating_diffs,
             "trace_with_xpos": trace_with_xpos,
             "trace_with_ypos": trace_with_ypos,
             "trace_from_yoffset": trace_from_yoffset,
             "fixed_offset": fixed_offset,
             "stuck_threshold": stuck_threshold,
             "bad_shutter_names": bad_shutter_names,
+            "dilate_failed_open": dilate_failed_open,
             "undo_barshadow": undo_barshadow,
+            "min_bar": min_bar,
             "bar_corr_mode": bar_corr_mode,
             "fix_prism_norm": fix_prism_norm,
             "wrapped_barshadow": False,
@@ -711,12 +747,15 @@ class SlitGroup:
         # Comments on meta for header keywords
         self.meta_comment = {
             "diffs": "Calculated with exposure differences",
+            "grating_diffs": "Diffs forced for grating",
             "trace_with_xpos": "Trace includes x offset in shutter",
             "trace_with_ypos": "Trace includes y offset in shutter",
             "trace_from_yoffset": "Trace derived from yoffsets",
             "fixed_offset": "Global offset to fixed shutter coordinate",
             "stuck_threshold": "Stuck shutter threshold",
+            "dilate_failed_open": "Dilate failed open mask",
             "undo_barshadow": "Bar shadow update behavior",
+            "min_bar": "Minimum allowed bar value",
             "bar_corr_mode": "Bar shadow correction type",
             "fix_prism_norm": "Apply prism scale correction",
             "wrapped_barshadow": "Bar shadow was wrapped for central shutter",
@@ -745,9 +784,17 @@ class SlitGroup:
         self.info = self.parse_metadata()
         self.calculate_slices()
 
-        self.sh = np.min(np.array(self.shapes), axis=0)
-
         self.parse_data()
+
+        if self.grating.startswith("G"):
+            self.meta["diffs"] |= self.meta["grating_diffs"]
+            msg = " Disperser {grating} is a grating.  diffs={diffs}"
+            msg += " (grating_diffs={grating_diffs})"
+            utils.log_comment(
+                utils.LOGFILE,
+                msg.format(grating=self.grating, **self.meta),
+                verbose=VERBOSE_LOG,
+            )
 
         if fix_prism_norm:
             self.apply_normalization_correction()
@@ -758,7 +805,7 @@ class SlitGroup:
             print("xxx hi pixels", hi.sum())
             self.mask &= ~hi
 
-        if hot_cold_kwargs is not None:
+        if (hot_cold_kwargs is not None) & (self.N > 2):
             nhot, ncold, flag = self.flag_hot_cold_pixels(**hot_cold_kwargs)
             for i in range(self.N):
                 self.mask[i, :] &= flag == 0
@@ -1024,14 +1071,9 @@ class SlitGroup:
         tab = utils.GTable(rows)
         return tab
 
-    def parse_metadata(self, verbose=True):
+    def parse_metadata(self):
         """
         Generate the `info` metadata attribute from the `slits` data
-
-        Parameters
-        ----------
-        verbose : bool, optional
-            Status messages
 
         Returns
         -------
@@ -1042,7 +1084,7 @@ class SlitGroup:
         rows = []
         for i, slit in enumerate(self.slits):
             msg = f"{i:>2} {slit.meta.filename} {slit.data.shape}"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
             md = slit.meta.dither.instance
             mi = slit.meta.instrument.instance
@@ -1076,7 +1118,7 @@ class SlitGroup:
     def calculate_slices(self):
         """
         Calculate slices to handle unequal cutout sizes
-        
+
         Returns
         -------
         Adds ``slice`` attribute to each item in the ``slits`` list, where
@@ -1089,31 +1131,27 @@ class SlitGroup:
         xstart = np.max(self.info["xstart"])
         xstop = np.min(self.info["xstart"] + self.info["shape"][:, 1])
 
-        sh = (ystop - ystart, xstop - xstart)
+        # Global shape
+        self.sh = (ystop - ystart, xstop - xstart)
 
         y0 = ystart - self.info["ystart"]
         x0 = xstart - self.info["xstart"]
         slices = [
-            (slice(yi, yi + sh[0]), slice(xi, xi + sh[1]))
+            (slice(yi, yi + self.sh[0]), slice(xi, xi + self.sh[1]))
             for yi, xi in zip(y0, x0)
         ]
         for s, slit in zip(slices, self.slits):
             slit.slice = s
 
-    def parse_data(self, verbose=True):
+    def parse_data(self):
         """
         Read science, variance and trace data from the ``slits`` SlitModel
         files
 
-        Parameters
-        ----------
-        verbose : bool, optional
-            Status messages
-
         """
         import scipy.ndimage as nd
 
-        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN
+        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN, BAD_PIXEL_FLAG, BAD_PIXEL_NAMES
 
         slits = self.slits
 
@@ -1232,7 +1270,7 @@ class SlitGroup:
                     f"dx = {dwave_step[0]:.2f} to {dwave_step[2]:.2f} pixels"
                 )
 
-                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
                 _wave += np.interp(_xpi, _xtr, dwave)
                 _wtr = _xwtr
@@ -1256,7 +1294,27 @@ class SlitGroup:
         ytr = np.array(ytr)
         wtr = np.array(wtr)
 
-        bad = (dq & 1025) > 0
+        bad = (dq & BAD_PIXEL_FLAG) > 0
+
+        # Extra bad pix
+        for i, slit in enumerate(slits):
+            sl = slit.slice
+            dqi, dqf = msautils.extra_slit_dq_flags(
+                slit, verbose=(VERBOSE_LOG > 1)
+            )
+            bad[i, :] |= dqi[slit.slice].flatten() > 0
+
+        # Dilate stuck open pixels
+        if ("MSA_FAILED_OPEN" in BAD_PIXEL_NAMES) & self.meta[
+            "dilate_failed_open"
+        ]:
+            _bp = jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"]
+            for i in range(self.N):
+                grow_open = nd.binary_dilation(
+                    (dq[i].reshape(self.sh) & _bp) > 0,
+                    iterations=self.meta["dilate_failed_open"] * 1,
+                )
+                bad[i] |= grow_open.flatten()
 
         # Bad pixels in 2 or more positions should be bad in all
         if self.N > 2:
@@ -1313,7 +1371,9 @@ class SlitGroup:
                     if pl_ext in sim:
                         msg = f"   {self.files[j]} source_type={slit.source_type} "
                         msg += f" undo {pl_ext}"
-                        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                        utils.log_comment(
+                            utils.LOGFILE, msg, verbose=VERBOSE_LOG
+                        )
 
                         phot_scl *= (
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
@@ -1323,7 +1383,9 @@ class SlitGroup:
                     if self.meta["undo_pathloss"] == 2:
                         # Apply point source
                         msg = f"   {self.files[j]} apply PATHLOSS_PS "
-                        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                        utils.log_comment(
+                            utils.LOGFILE, msg, verbose=VERBOSE_LOG
+                        )
 
                         pl_ps = "PATHLOSS_PS"
                         phot_scl /= (
@@ -1354,7 +1416,7 @@ class SlitGroup:
                 msg = "Seems to be a background slit.  "
                 msg += "Force [0, {0}, -{0}]".format(self.meta["nod_offset"])
                 msg += "pix offsets"
-                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
                 self.ytr[0, :] -= 1.0
                 self.ytr[1, :] += -1 + self.meta["nod_offset"]
@@ -1376,7 +1438,7 @@ class SlitGroup:
 
                 msg = "Seems to be a background slit.  "
                 msg += f"Force {offstr} pix offsets"
-                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
                 self.info["manual_position"] = [
                     f"{int(o*10)/10.:.1f}" for o in offsets
@@ -1398,7 +1460,7 @@ class SlitGroup:
             _dystr = ", ".join([f"{_dyi:5.2f}" for _dyi in _dy])
 
             msg += f"force [{_dystr}] pix offsets"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
             for i, _dyi in enumerate(_dy):
                 self.ytr[i, :] += 1 + _dyi
@@ -1412,7 +1474,7 @@ class SlitGroup:
             _dystr = ", ".join([f"{_dyi:5.2f}" for _dyi in _dy])
 
             msg += f"force [{_dystr}] pix offsets"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
             for i, _dyi in enumerate(_dy):
                 self.ytr[i, :] = self.ytr[0, :] + _dyi
@@ -1423,6 +1485,9 @@ class SlitGroup:
             self.apply_spline_bar_correction()
             self.meta["undo_barshadow"] = False
 
+        if self.meta["min_bar"] is not None:
+            self.mask &= self.bar > self.meta["min_bar"]
+
         if self.meta["bad_shutter_names"] is None:
             self.mask_stuck_closed_shutters()
         else:
@@ -1430,11 +1495,11 @@ class SlitGroup:
 
     def flag_hot_cold_pixels(
         self,
-        cold_percentile=1,
-        hot_percentile=98,
-        min_nexp=-2,
+        cold_percentile=-0.1,
+        hot_percentile=1.5,
+        absolute=True,
+        min_nexp=-1,
         dilate=None,
-        verbose=True,
     ):
         """
         Flag hot/cold pixels where multiple pixels across exposures are below or above
@@ -1447,6 +1512,10 @@ class SlitGroup:
 
         hot_percentile : float
             Upper limit for "hot" pixels
+
+        absolute : bool
+            If set, ``cold_percentile`` and ``cold_percentile`` are absolute
+            flux densities
 
         min_nexp : int
             Minimum number of exposures required that exceed the threshold. If provided
@@ -1467,10 +1536,14 @@ class SlitGroup:
         import scipy.ndimage as nd
 
         try:
-            cold_level, hot_level = np.nanpercentile(
-                self.data[self.mask],
-                [cold_percentile, hot_percentile],
-            )
+            if absolute:
+                cold_level = cold_percentile
+                hot_level = hot_percentile
+            else:
+                cold_level, hot_level = np.nanpercentile(
+                    self.data[self.mask],
+                    [cold_percentile, hot_percentile],
+                )
         except TypeError:
             return 0, 0, np.zeros(self.sh, dtype=bool).flatten()
 
@@ -1497,7 +1570,7 @@ class SlitGroup:
         ncold, nhot = cold_flagged.sum(), hot_flagged.sum()
 
         msg = f" flag_hot_cold_pixels: cold = {ncold}   /   hot = {nhot}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
 
@@ -1507,11 +1580,11 @@ class SlitGroup:
         min_bar=0.95,
         var_percentiles=[-5, -5],
         df=51,
+        high_clip=0.8,
         use=True,
         outlier_threshold=7,
         absolute_threshold=0.2,
         make_plot=False,
-        verbose=True,
         **kwargs,
     ):
         """
@@ -1545,9 +1618,6 @@ class SlitGroup:
         make_plot : bool
             Make a diagnostic plto
 
-        verbose : bool
-            messaging
-
         Returns
         -------
         fig : `~matplotlib.figure.Figure`
@@ -1562,7 +1632,7 @@ class SlitGroup:
                 self.yslit < _yrange[1]
             )
 
-        full_ok_sky = self.mask & ~exclude_yslit
+        full_ok_sky = self.mask & ~exclude_yslit & (self.sci < high_clip)
         ok_sky = full_ok_sky & True
 
         if min_bar is not None:
@@ -1624,7 +1694,7 @@ class SlitGroup:
 
         if ok_sky.sum() == 0:
             msg = f"estimate_sky: no valid pixels"
-            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             return None
 
         ok_skyf = ok_sky.flatten()
@@ -1722,7 +1792,7 @@ class SlitGroup:
         else:
             sky_outliers = None
 
-        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         if make_plot:
             fig, axes = plt.subplots(2, 1, figsize=(8, 5), sharex=True)
@@ -1772,8 +1842,7 @@ class SlitGroup:
         self,
         grow=2,
         nfilt=-32,
-        require_multiple=False,
-        verbose=True,
+        require_multiple=True,
         make_plot=False,
     ):
         """
@@ -1793,9 +1862,6 @@ class SlitGroup:
 
         require_multiple : bool
             Require that flagged pixels appear in multiple exposures
-
-        verbose : bool
-            Messaging
 
         make_plot : bool
             Make a diagnostic figure
@@ -1840,7 +1906,7 @@ class SlitGroup:
 
         msg = f" flag_from_profile: {bad.sum()} "
         msg += f"({bad.sum() / self.mask.sum() * 100:4.1f}%) pixels"
-        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         if make_plot:
             fig, ax = plt.subplots(1, 1, figsize=(8, 5))
@@ -1915,7 +1981,7 @@ class SlitGroup:
         self.yslit = np.array(yslit)
         self.yshutter = np.array(yshutter)
 
-    def apply_normalization_correction(self, verbose=True):
+    def apply_normalization_correction(self):
         """
         Apply normalization correction from `~msaexp.utils.get_normalization_correction`
 
@@ -1931,7 +1997,7 @@ class SlitGroup:
             slit.xcen,
             slit.ycen,
             grating=self.grating,
-            verbose=verbose,
+            verbose=VERBOSE_LOG,
         )
 
         self.normalization = corr
@@ -1942,17 +2008,12 @@ class SlitGroup:
 
         self.var_total = self.var_poisson + self.var_rnoise
 
-    def apply_spline_bar_correction(self, verbose=True):
+    def apply_spline_bar_correction(self):
         """
         Own bar shadow correction for PRISM derived from empty background shutters
         and implemented as a flexible bspline
 
         See `~msaexp.utils.get_prism_bar_correction`.
-
-        Parameters
-        ----------
-        verbose : bool
-            Messaging
 
         Returns
         -------
@@ -1966,7 +2027,7 @@ class SlitGroup:
                     " apply_spline_bar_correction: "
                     + f" grating {self.grating.upper()} not in {SPLINE_BAR_GRATINGS}"
                 ),
-                verbose=verbose,
+                verbose=VERBOSE_LOG,
             )
             return None
 
@@ -1976,7 +2037,7 @@ class SlitGroup:
                 " apply_spline_bar_correction"
                 + "(mode='{bar_corr_mode}')".format(**self.meta)
             ),
-            verbose=verbose,
+            verbose=VERBOSE_LOG,
         )
 
         num_shutters = len(self.info["shutter_state"][0])
@@ -2070,14 +2131,10 @@ class SlitGroup:
 
         self.apply_bad_shutter_mask()
 
-    def apply_bad_shutter_mask(self, verbose=True):
+    def apply_bad_shutter_mask(self):
         """
         Mask ``sci`` array for ``bad_shutter_names`` shutters
 
-        Parameters
-        ----------
-        verbose : bool, optional
-            Status messages
         """
         if len(self.meta["bad_shutter_names"]) == 0:
             return None
@@ -2085,7 +2142,7 @@ class SlitGroup:
         utils.log_comment(
             utils.LOGFILE,
             f""" PRISM: stuck bad shutters {self.meta["bad_shutter_names"]}""",
-            verbose=verbose,
+            verbose=VERBOSE_LOG,
         )
 
         for i in self.meta["bad_shutter_names"]:
@@ -2372,9 +2429,7 @@ class SlitGroup:
         fig.tight_layout(pad=1)
         return fig
 
-    def fit_all_traces(
-        self, niter=3, dchi_threshold=-25, ref_exp=2, verbose=True, **kwargs
-    ):
+    def fit_all_traces(self, niter=3, dchi_threshold=-25, ref_exp=2, **kwargs):
         """
         Fit all traces in the group
 
@@ -2389,9 +2444,6 @@ class SlitGroup:
 
         ref_exp : int
             Reference exposure for fitting the traces (default: 2)
-
-        verbose : bool
-            Status messages
 
         kwargs : dict
             Additional keyword arguments for the fitting process
@@ -2419,7 +2471,9 @@ class SlitGroup:
 
         for k in range(niter):
             utils.log_comment(
-                utils.LOGFILE, f"   fit_all_traces, iter {k}", verbose=verbose
+                utils.LOGFILE,
+                f"   fit_all_traces, iter {k}",
+                verbose=VERBOSE_LOG,
             )
 
             for i, exp in enumerate(exp_groups):
@@ -2451,7 +2505,7 @@ class SlitGroup:
                 else:
                     msg += "*\n"
 
-                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
             if ref_exp is not None:
                 # Match all fits
@@ -2689,7 +2743,6 @@ class SlitGroup:
         sn_percentile=80,
         sigma_threshold=5,
         degree_sn=[[-1000], [0]],
-        verbose=True,
         **kwargs,
     ):
         """
@@ -2709,9 +2762,6 @@ class SlitGroup:
             The two arrays/lists ``x_sn, y_degree = degree_sn`` define the S/N
             thresholds ``x_sn`` below which a polynomial degree ``y_degree``
             is used
-
-        verbose : bool
-            Status messages
 
         kwargs : dict
             Keyword arguments passed to the ``get_trace_sn`` method
@@ -2754,7 +2804,7 @@ class SlitGroup:
         )
         msg += f"  SN({sn_percentile:.0f}%) = {sn_value:.1f}  fix_sigma={fix_sigma}"
         msg += f"  degree={interp_degree} "
-        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         return tfit["sn"], sn_value, fix_sigma, interp_degree
 
@@ -3030,7 +3080,6 @@ def combine_grating_group(
     xobj,
     grating_keys,
     drizzle_kws=DRIZZLE_KWS,
-    verbose=True,
 ):
     """
     Make pseudo-drizzled outputs from a set of `msaexp.slit_combine.SlitGroup`
@@ -3116,7 +3165,7 @@ def combine_grating_group(
         offset_for_chi2=1.0,
         max_wht_percentile=None,
         max_med_wht_factor=10,
-        verbose=True,
+        verbose=VERBOSE_LOG,
         find_line_kws={},
         ap_radius=None,
         ap_center=None,
@@ -3157,7 +3206,7 @@ def combine_grating_group(
     msg = "msaexp.drizzle.extract_from_hdul:  Output center = "
     msg += f" {header['PROFCEN']:6.2f}, sigma = {header['PROFSIG']:6.2f}"
     grizli.utils.log_comment(
-        grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+        grizli.utils.LOGFILE, msg, verbose=VERBOSE_LOG, show_date=False
     )
 
     hdul = pyfits.HDUList()
@@ -3590,6 +3639,7 @@ def extract_spectra(
     undo_pathloss=True,
     undo_barshadow=False,
     sky_arrays=None,
+    use_first_sky=False,
     drizzle_kws=DRIZZLE_KWS,
     get_xobj=False,
     trace_with_xpos=False,
@@ -3742,12 +3792,12 @@ def extract_spectra(
     for i in range(len(files))[::-1]:
         if "jw04246003001_03101_00001_nrs2" in files[i]:
             utils.log_comment(
-                utils.LOGFILE, f"Exclude {files[i]}", verbose=True
+                utils.LOGFILE, f"Exclude {files[i]}", verbose=VERBOSE_LOG
             )
             files.pop(i)
         elif (target == "1210_9849") & ("jw01210001001" in files[i]):
             utils.log_comment(
-                utils.LOGFILE, f"Exclude {files[i]}", verbose=True
+                utils.LOGFILE, f"Exclude {files[i]}", verbose=VERBOSE_LOG
             )
             files.pop(i)
 
@@ -3756,7 +3806,7 @@ def extract_spectra(
     utils.log_comment(
         utils.LOGFILE,
         f"{root}   target: {target}   Files: {len(files)}",
-        verbose=True,
+        verbose=VERBOSE_LOG,
     )
 
     groups = split_visit_groups(
@@ -3777,7 +3827,7 @@ def extract_spectra(
         msg = f"\n* Group {g}   "
         msg += f"N={len(groups[g])}\n"
         msg += "=================================="
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         if nod_offset is None:
             if ("glazebrook" in root) | ("suspense" in root):
@@ -3791,17 +3841,19 @@ def extract_spectra(
 
         if root.startswith("glazebrook-v"):
             utils.log_comment(
-                utils.LOGFILE, "  ! Auto glazebrook", verbose=True
+                utils.LOGFILE, "  ! Auto glazebrook", verbose=VERBOSE_LOG
             )
             trace_from_yoffset = True
 
         elif "maseda" in root:
-            utils.log_comment(utils.LOGFILE, "  ! Auto maseda", verbose=True)
+            utils.log_comment(
+                utils.LOGFILE, "  ! Auto maseda", verbose=VERBOSE_LOG
+            )
             trace_from_yoffset = True
 
         elif "smacs0723-ero-v" in root:
             utils.log_comment(
-                utils.LOGFILE, "  ! Auto SMACS0723", verbose=True
+                utils.LOGFILE, "  ! Auto SMACS0723", verbose=VERBOSE_LOG
             )
             trace_from_yoffset = True
 
@@ -3828,12 +3880,12 @@ def extract_spectra(
                 obj.sh[1] < 83 * 2 ** (obj.grating not in ["PRISM"])
             ):
                 msg = f"\n    skip shape=({obj.sh}) {obj.grating}\n"
-                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
                 continue
 
         if obj.mask.sum() < 256:
             msg = f"\n    skip npix={obj.mask.sum()} shape=({obj.sh}) {obj.grating}\n"
-            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             continue
 
         if obj.meta["diffs"]:
@@ -3843,7 +3895,7 @@ def extract_spectra(
                 utils.log_comment(
                     utils.LOGFILE,
                     f"\n    skip N=1 {obj.grating}\n",
-                    verbose=True,
+                    verbose=VERBOSE_LOG,
                 )
                 continue
 
@@ -3851,7 +3903,7 @@ def extract_spectra(
                 utils.log_comment(
                     utils.LOGFILE,
                     f"\n    skip all bad {obj.grating}\n",
-                    verbose=True,
+                    verbose=VERBOSE_LOG,
                 )
                 continue
 
@@ -3859,7 +3911,7 @@ def extract_spectra(
                 utils.log_comment(
                     utils.LOGFILE,
                     f"\n    one position {obj.grating}\n",
-                    verbose=True,
+                    verbose=VERBOSE_LOG,
                 )
                 continue
 
@@ -3867,7 +3919,7 @@ def extract_spectra(
                 utils.log_comment(
                     utils.LOGFILE,
                     f"\n    uncover {obj.files[0]}\n",
-                    verbose=True,
+                    verbose=VERBOSE_LOG,
                 )
                 continue
 
@@ -3875,7 +3927,7 @@ def extract_spectra(
                 utils.log_comment(
                     utils.LOGFILE,
                     f"\n    masked pixels {valid_frac:.2f}\n",
-                    verbose=True,
+                    verbose=VERBOSE_LOG,
                 )
                 continue
 
@@ -3885,7 +3937,7 @@ def extract_spectra(
                 utils.log_comment(
                     utils.LOGFILE,
                     "\n    single background shutter\n",
-                    verbose=True,
+                    verbose=VERBOSE_LOG,
                 )
                 continue
 
@@ -3911,7 +3963,9 @@ def extract_spectra(
         #     CENTER_WIDTH = 2
 
     if len(xobj) == 0:
-        utils.log_comment(utils.LOGFILE, "No valid spectra", verbose=True)
+        utils.log_comment(
+            utils.LOGFILE, "No valid spectra", verbose=VERBOSE_LOG
+        )
         return None
 
     if ("macs0417" in root) & (target == "1208_234"):
@@ -3933,7 +3987,7 @@ def extract_spectra(
     if mask_cross_dispersion is not None:
         msg = f"slit_combine: mask_cross_dispersion {mask_cross_dispersion}"
         msg += f"  cross_dispersion_mask_type={cross_dispersion_mask_type}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         for k in xobj:
             obj = xobj[k]["obj"]
@@ -3990,7 +4044,7 @@ def extract_spectra(
 
     keys = [xkeys[j] for j in so]
 
-    utils.log_comment(utils.LOGFILE, f"\nkeys: {keys}", verbose=True)
+    utils.log_comment(utils.LOGFILE, f"\nkeys: {keys}", verbose=VERBOSE_LOG)
 
     if fit_params_kwargs is not None:
         obj0 = xobj[keys[0]]["obj"]
@@ -4024,7 +4078,7 @@ def extract_spectra(
 
     for i, k in enumerate(keys):
         msg = f"\n##### Group #{i+1} / {len(xobj)}: {k} ####\n"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         obj = xobj[k]["obj"]
 
@@ -4074,7 +4128,7 @@ def extract_spectra(
             tfit = obj.fit_all_traces(**kws)
 
         xobj[k] = {"obj": obj, "fit": tfit}
-    
+
     ######
     # List of gratings
     gratings = {}
@@ -4102,7 +4156,7 @@ def extract_spectra(
                 fit = xobj[k]["fit"]
             else:
                 fit = None
-                
+
             fig2d = obj.plot_2d_differences(fit=fit)
             fileroot = f"{root}_{obj.grating}-{obj.filter}_{target}".lower()
             fig2d.savefig(f"{fileroot}.d2d.png")
@@ -4110,7 +4164,9 @@ def extract_spectra(
     # for k in xobj:
     #     xobj[k]["obj"].sky_arrays = None
 
-    utils.log_comment(utils.LOGFILE, f"\ngratings: {gratings}", verbose=True)
+    utils.log_comment(
+        utils.LOGFILE, f"\ngratings: {gratings}", verbose=VERBOSE_LOG
+    )
 
     hdul = {}
 
@@ -4120,7 +4176,7 @@ def extract_spectra(
     else:
         if len(plot_kws) == 0:
             plot_kws = {
-                "vmin": -0.05,
+                "vmin": -0.1,
                 #'ny': 7,
                 #'ymax_sigma_scale':5, 'ymax_percentile': 90, 'ymax_scale': 1.5,
             }
@@ -4137,7 +4193,7 @@ def extract_spectra(
             "background_", "b"
         )
 
-        utils.log_comment(utils.LOGFILE, specfile, verbose=True)
+        utils.log_comment(utils.LOGFILE, specfile, verbose=VERBOSE_LOG)
         hdul[g].writeto(specfile, overwrite=True)
 
         if g.upper() == "PRISM":

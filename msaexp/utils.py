@@ -1,9 +1,14 @@
 import os
+import yaml
+
 import warnings
 import numpy as np
 import astropy.io.fits as pyfits
 
 import grizli.utils
+
+
+MSAEXP_BADPIX = None
 
 
 def summary_from_metafiles():
@@ -3027,6 +3032,82 @@ def get_prism_wave_bar_correction(
             bar[extra_mask] = np.nan
 
     return bar, is_wrapped
+
+
+def cache_badpix_arrays():
+    """
+    Load badpixel arrays into global data
+    """
+    global MSAEXP_BADPIX
+
+    MSAEXP_BADPIX = {}
+
+    for detector in ["NRS1", "NRS2"]:
+        path_to_ref = os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            f"msaexp_badpix_{detector}.yaml".lower(),
+        )
+
+        with open(path_to_ref) as fp:
+            dq_data = yaml.load(fp, Loader=yaml.Loader)
+
+        dq_arr = np.zeros(dq_data["shape"], dtype=int).flatten()
+        dq_arr[dq_data["pixel_index"]] = dq_data["pixel_value"]
+
+        MSAEXP_BADPIX[detector] = (
+            dq_arr.reshape(dq_data["shape"]),
+            dq_data["flags"],
+            path_to_ref,
+        )
+
+
+def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
+    """
+    Set extra DQ flags, including a big stuck open shutter on NRS1
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data
+
+    dq_arr : array-like
+        Full-frame dq array for the appropriate detector.  If not specified,
+        read from the reference files in ``msaexp/data``.
+
+    Returns
+    -------
+    dq : array-like
+        Extra DQ flags
+
+    flags : dict
+        Description of DQ flags
+    """
+    import yaml
+
+    global MSAEXP_BADPIX
+
+    if MSAEXP_BADPIX is None:
+        cache_badpix_arrays()
+
+    if dq_arr is None:
+        dq_arr, flags, path_to_ref = MSAEXP_BADPIX[
+            slit.meta.instrument.detector
+        ]
+        path_to_ref = os.path.basename(path_to_ref)
+    else:
+        path_to_ref = "(user-supplied)"
+        flags = {}
+
+    slx = slice(slit.xstart - 1, slit.xstart - 1 + slit.xsize)
+    sly = slice(slit.ystart - 1, slit.ystart - 1 + slit.ysize)
+
+    dq = dq_arr[sly, slx]  # .reshape(dq_data["shape"])[sly, slx]
+
+    msg = f" extra_slit_dq_flags: ({os.path.basename(path_to_ref)})  N={(dq > 0).sum()}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    return dq, flags
 
 
 def slit_normalization_correction(slit, verbose=True):

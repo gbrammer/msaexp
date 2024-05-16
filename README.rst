@@ -28,18 +28,23 @@ Documentation will be here: https://msaexp.readthedocs.io/, though it's essentia
 
 The overall procedure is demonstrated in these notebooks:
 
-- `drizzled-nirspec.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/drizzled-nirspec.ipynb>`_: Demo of new drizzling and combination code (`0.6.0`) with prism data from JWST program `GO-1433 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=1433&observatory=JWST>`_ (PI: Dan Coe)
-- `process-rxj2129.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-rxj2129.ipynb>`_: Demo with prism data from JWST program `DD-2767 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2756&observatory=JWST>`_ (PI: Pat Kelly)
-- `process-smacs0723.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-smacs0723.ipynb>`_: Demo with medium resolution data from the JWST `ERO-2736 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2736&observatory=JWST>`_ program on the cluster SMACS-0723 (PI: Klaus Pontoppidon)
+- `spectral-pipeline-2024.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/spectral-pipeline-2024.ipynb>`_: Run the pipeline from scratch on an example dataset from GO-4233 (RUBIES)
+- `spectral-extractions-2024.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/spectral-extractions-2024.ipynb>`_: Brief demo of some fitting applications to the reduced spectra
 
-Try running the RXJ2129 demo notebook directly on GitHub in a Codespace: 
+Try running the 2024 demo notebooks directly on GitHub in a Codespace: 
   1. Fork the repository from https://github.com/gbrammer/msaexp
   2. "<> Code" pulldown > "Codespaces" > "+" to start the codespace
   3. Wait for the initialization to complete
   4. Navigate to the "docs/examples/" directory in the codespace
-  5. Open "process-rxj2129.ipynb" and run it
+  5. Open "spectral-pipeline-2024.ipynb" and run it
   6. Commit to your forked repository any changes to the notebook itself or files created that you want to save outside the codespace
   7. Profit!
+
+The notebooks below use some of the older deprecated methodolgy for spectral combination and extraction:
+
+- `drizzled-nirspec.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/drizzled-nirspec.ipynb>`_: Demo of new drizzling and combination code (`0.6.0`) with prism data from JWST program `GO-1433 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=1433&observatory=JWST>`_ (PI: Dan Coe)
+- `process-rxj2129.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-rxj2129.ipynb>`_: Demo with prism data from JWST program `DD-2767 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2756&observatory=JWST>`_ (PI: Pat Kelly)
+- `process-smacs0723.ipynb <https://github.com/gbrammer/msaexp/blob/main/docs/examples/process-smacs0723.ipynb>`_: Demo with medium resolution data from the JWST `ERO-2736 <https://www.stsci.edu/cgi-bin/get-proposal-info?id=2736&observatory=JWST>`_ program on the cluster SMACS-0723 (PI: Klaus Pontoppidon)
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Extracted spectra from public datasets
