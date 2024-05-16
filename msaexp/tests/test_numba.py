@@ -6,10 +6,12 @@ def test_igm():
     Test IGM implementation
     """
 
-    try:
-        from ..resample_numba import compute_igm
-    except ImportError:
-        return None
+    from ..resample_numba import compute_igm
+
+    # try:
+    #     from ..resample_numba import compute_igm
+    # except ImportError:
+    #     return None
 
     wobs = np.linspace(0.2, 1.0, 32) * 1.0e4
 
@@ -49,11 +51,12 @@ def test_prf():
     """
     Test pixel-integrated Gaussian
     """
+    from ..resample_numba import pixel_integrated_gaussian_numba
 
-    try:
-        from ..resample_numba import pixel_integrated_gaussian_numba
-    except ImportError:
-        return None
+    # try:
+    #     from ..resample_numba import pixel_integrated_gaussian_numba
+    # except ImportError:
+    #     return None
 
     #########
     # 1D
@@ -108,10 +111,11 @@ def test_prf_line():
     """
     Test pixel-integrated emission line model
     """
-    try:
-        from ..resample_numba import sample_gaussian_line_numba
-    except ImportError:
-        return None
+    from ..resample_numba import sample_gaussian_line_numba
+    # try:
+    #     from ..resample_numba import sample_gaussian_line_numba
+    # except ImportError:
+    #     return None
 
     N = 80
     rtol = 1.0e-4
