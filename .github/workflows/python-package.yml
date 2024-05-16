@@ -61,7 +61,7 @@ jobs:
     - name: Install packages
       run: |
         pip install -e .[test]
-        pip install pytest coverage 
+        pip install pytest coverage numba
     - name: Run tests with coverage
       run: |
         coverage run -m pytest
