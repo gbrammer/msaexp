@@ -530,7 +530,7 @@ class SlitGroup:
         fix_prism_norm=True,
         sky_arrays=None,
         estimate_sky_kwargs=None,
-        flag_profile_kwargs={},
+        flag_profile_kwargs=None,
         undo_pathloss=True,
         trace_with_xpos=False,
         trace_with_ypos=True,
@@ -1842,7 +1842,7 @@ class SlitGroup:
         self,
         grow=2,
         nfilt=-32,
-        require_multiple=False,
+        require_multiple=True,
         make_plot=False,
     ):
         """
