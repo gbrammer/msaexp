@@ -2731,6 +2731,7 @@ class SlitGroup:
             "ineg": ineg,
             "diff": diff,
             "vdiff": vdiff,
+            "wdiff": wdiff,
             "snum": snum,
             "sden": sden,
             "smod": smod,
