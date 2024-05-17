@@ -1851,15 +1851,15 @@ class SlitGroup:
         return fig
 
     def flag_percentile_outliers(
-        self, plev=[0.95, 0.995, 0.99999], update=True
+        self, plev=[0.95, 0.995, 0.99999], scale=1, update=True
     ):
         """
-        Flag outliers based on a normal distribution
+        Flag outliers based on a normal distribution.
 
         Parameters
         ----------
         plev : [float, float, float]
-            Percentile levels
+            Percentile levels.
 
         update : bool
             Update ``mask`` attribute
@@ -1879,7 +1879,7 @@ class SlitGroup:
         pval = np.nanpercentile(self.data[self.mask], np.array(plev) * 100)
 
         delta = (pval[1] - pval[0]) / (ppf[1] - ppf[0]) * (ppf[2] - ppf[0])
-        high_level = pval[0] + delta
+        high_level = pval[0] + delta * scale
 
         outlier = self.data > high_level
 
