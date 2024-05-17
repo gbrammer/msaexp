@@ -531,6 +531,7 @@ class SlitGroup:
         sky_arrays=None,
         estimate_sky_kwargs=None,
         flag_profile_kwargs=None,
+        flag_percentile_kwargs=None,
         undo_pathloss=True,
         trace_with_xpos=False,
         trace_with_ypos=True,
@@ -601,6 +602,11 @@ class SlitGroup:
         estimate_sky_kwargs : None, dict
             Arguments to pass to `~msaexp.slit_combine.SlitGroup.estimate_sky` to
             estimate sky directly from the slit data
+
+        flag_percentile_kwargs : None, dict
+            Arguments to pass to
+            `~msaexp.slit_combine.SlitGroup.flag_percentile_outliers` to
+            flag extreme values
 
         undo_pathloss : bool
             Undo pipeline pathloss correction (should usually be the
@@ -813,9 +819,15 @@ class SlitGroup:
             self.meta["nhot"] = nhot
             self.meta["ncold"] = ncold
 
+        if flag_percentile_kwargs is not None:
+            self.flag_percentile_outliers(**flag_percentile_kwargs)
+
         if estimate_sky_kwargs is not None:
             try:
                 self.estimate_sky(**estimate_sky_kwargs)
+                if flag_percentile_kwargs is not None:
+                    self.flag_percentile_outliers(**flag_percentile_kwargs)
+
             except ValueError:
                 pass
 
@@ -1837,6 +1849,48 @@ class SlitGroup:
             fig = None
 
         return fig
+
+    def flag_percentile_outliers(
+        self, plev=[0.95, 0.995, 0.99999], update=True
+    ):
+        """
+        Flag outliers based on a normal distribution
+
+        Parameters
+        ----------
+        plev : [float, float, float]
+            Percentile levels
+
+        update : bool
+            Update ``mask`` attribute
+
+        Returns
+        -------
+        outlier : array-like
+            Pixel outliers
+
+        high_level : float
+            Threshold level
+
+        """
+        from scipy.stats import norm
+
+        ppf = norm.ppf(plev)
+        pval = np.nanpercentile(self.data[self.mask], np.array(plev) * 100)
+
+        delta = (pval[1] - pval[0]) / (ppf[1] - ppf[0]) * (ppf[2] - ppf[0])
+        high_level = pval[0] + delta
+
+        outlier = self.data > high_level
+
+        msg = f"flag_percentile_outliers: {plev} threshold={high_level:.3f} "
+        msg += f" N={outlier.sum()}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+        if update:
+            self.mask &= ~outlier
+
+        return outlier, high_level
 
     def flag_from_profile(
         self,
