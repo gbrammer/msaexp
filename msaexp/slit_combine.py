@@ -1897,7 +1897,7 @@ class SlitGroup:
 
         if outlier.sum() & dilate:
             for i in range(self.N):
-                outlier |= nd.binary_dilation(
+                outlier[i,:] |= nd.binary_dilation(
                     outlier[i, :].reshape(self.sh), iterations=dilate * 1
                 ).flatten()
 
