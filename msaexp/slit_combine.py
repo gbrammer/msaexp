@@ -748,6 +748,7 @@ class SlitGroup:
             "ncold": 0,
             "has_sky_arrays": (sky_arrays is not None),
             "weight_type": weight_type,
+            "percentile_outliers": 0,
         }
 
         # Comments on meta for header keywords
@@ -775,6 +776,7 @@ class SlitGroup:
             "ncold": "Number of flagged cold pixels",
             "has_sky_arrays": "sky arrays specified",
             "weight_type": "Weighting scheme for 2D combination",
+            "percentile_outliers": "Masked pixels from flag_percentile_outliers",
         }
 
         self.shapes = []
@@ -1851,7 +1853,7 @@ class SlitGroup:
         return fig
 
     def flag_percentile_outliers(
-        self, plev=[0.95, 0.995, 0.99999], scale=1, update=True
+        self, plev=[0.95, 0.995, 0.99999], scale=2, dilate=False, update=True
     ):
         """
         Flag outliers based on a normal distribution.
@@ -1860,6 +1862,12 @@ class SlitGroup:
         ----------
         plev : [float, float, float]
             Percentile levels.
+
+        scale : float
+            scale factor
+
+        dilate : bool
+            dilate outlier mask
 
         update : bool
             Update ``mask`` attribute
@@ -1884,11 +1892,18 @@ class SlitGroup:
         outlier = self.data > high_level
 
         msg = f"flag_percentile_outliers: {plev} threshold={high_level:.3f} "
-        msg += f" N={outlier.sum()}"
+        msg += f" N={outlier.sum()} (dilate={dilate})"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+        if outlier.sum() & dilate:
+            for i in range(self.N):
+                outlier |= nd.binary_dilation(
+                    outlier[i, :].reshape(self.sh), iterations=dilate * 1
+                ).flatten()
 
         if update:
             self.mask &= ~outlier
+            self.meta["percentile_outliers"] = outlier.sum()
 
         return outlier, high_level
 
