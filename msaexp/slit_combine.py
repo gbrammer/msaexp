@@ -20,17 +20,17 @@ import msaexp.utils as msautils
 
 BAD_PIXEL_NAMES = [
     "DO_NOT_USE",
-    "OTHER_BAD_PIXEL",
+    # "OTHER_BAD_PIXEL",
     "MSA_FAILED_OPEN",
-    "UNRELIABLE_SLOPE",
-    "UNRELIABLE_BIAS",
-    "NO_SAT_CHECK",
-    "NO_GAIN_VALUE",
+    # "UNRELIABLE_SLOPE",
+    # "UNRELIABLE_BIAS",
+    # "NO_SAT_CHECK",
+    # "NO_GAIN_VALUE",
     "HOT",
     "DEAD",
-    # "TELEGRAPH",
-    "RC",
-    "LOW_QE",
+    # # "TELEGRAPH", # lots of these, doesn't seem necessary
+    # "RC",
+    # "LOW_QE",
     "OPEN",
     "ADJ_OPEN",
     "SATURATED",
@@ -2135,8 +2135,9 @@ class SlitGroup:
         self.meta["own_barshadow"] = True
 
         self.sci *= self.bar / bar
-        self.var_poisson *= (self.bar / bar) ** 2
-        self.var_total = self.var_poisson + self.var_rnoise
+        # self.var_poisson *= (self.bar / bar) ** 2
+        # self.var_rnoise *= (self.bar / bar) ** 2
+        self.var_total = (self.var_poisson + self.var_rnoise) * (self.bar / bar)**2
         self.orig_bar = self.bar * 1
         self.bar = bar * 1
         self.mask &= np.isfinite(self.sci)
