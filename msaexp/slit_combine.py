@@ -446,9 +446,13 @@ def objfun_prof_trace(
         else:
             pneg = np.zeros_like(ppos)
     else:
-        ppos = np.nansum(ppos, axis=0) / np.nansum(mask[ipos, :], axis=0)
+        ppos = np.nansum(ppos * mask[ipos, :], axis=0) / np.nansum(
+            mask[ipos, :], axis=0
+        )
         if ineg.sum() > 0:
-            pneg = np.nansum(pneg, axis=0) / np.nansum(mask[ineg, :], axis=0)
+            pneg = np.nansum(pneg * mask[ineg, :], axis=0) / np.nansum(
+                mask[ineg, :], axis=0
+            )
         else:
             pneg = np.zeros_like(ppos)
 
@@ -463,7 +467,7 @@ def objfun_prof_trace(
         pdiff *= pdiff > 0
 
     # Remove any masked pixels
-    pmask = mask.sum(axis=0) == mask.shape[0]
+    pmask = mask.sum(axis=0) > 0
 
     snum = np.nansum(
         ((diff - bkg) * pdiff / vdiff * pmask).reshape(sh), axis=0
