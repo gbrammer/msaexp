@@ -642,9 +642,9 @@ class SlitGroup:
         weight_type : str
             Weighting scheme for 2D resampling
                 - ``ivm`` : Use weights from ``var_rnoise``, like `jwst.resample <https://github.com/spacetelescope/jwst/blob/4342988027ee0811b57d3641bda4c8486d7da1f5/jwst/resample/resample_utils.py#L168>`_
-                - ``ivm_bar`` : Use a modified weight ``var_rnoise / barshadow**2``
                 - ``poisson`` : Weight with ``var_poisson``, msaexp extractions v1, v2
                 - ``exptime`` : Use ``slit.meta.exposure.exposure_time * mask``
+                - ``exptime_bar`` : ``wht = exposure_time * mask / bar``
                 - ``mask`` : Just use the bad pixel mask
 
         pad_border : int
@@ -719,7 +719,6 @@ class SlitGroup:
             "poisson",
             "mask",
             "ivm",
-            "ivm_bar",
             "exptime",
             "exptime_bar",
         ]:
@@ -1901,7 +1900,7 @@ class SlitGroup:
 
         if outlier.sum() & dilate:
             for i in range(self.N):
-                outlier[i,:] |= nd.binary_dilation(
+                outlier[i, :] |= nd.binary_dilation(
                     outlier[i, :].reshape(self.sh), iterations=dilate * 1
                 ).flatten()
 
@@ -2077,6 +2076,8 @@ class SlitGroup:
         self.sci *= corr
         self.var_rnoise *= corr**2
         self.var_poisson *= corr**2
+        self.var_total = self.var_rnoise + self.var_poisson
+
         self.mask &= np.isfinite(corr)
 
         self.var_total = self.var_poisson + self.var_rnoise
@@ -2139,9 +2140,10 @@ class SlitGroup:
         self.meta["own_barshadow"] = True
 
         self.sci *= self.bar / bar
-        # self.var_poisson *= (self.bar / bar) ** 2
-        # self.var_rnoise *= (self.bar / bar) ** 2
-        self.var_total = (self.var_poisson + self.var_rnoise) * (self.bar / bar)**2
+        self.var_poisson *= (self.bar / bar) ** 2
+        self.var_rnoise *= (self.bar / bar) ** 2
+        self.var_total = self.var_poisson + self.var_rnoise
+
         self.orig_bar = self.bar * 1
         self.bar = bar * 1
         self.mask &= np.isfinite(self.sci)
@@ -2323,40 +2325,31 @@ class SlitGroup:
             / np.nansum(self.mask[ipos, :], axis=0) ** 2
         )
 
-        if self.meta["weight_type"] == "ivm_bar":
-            wpos = (
-                np.nansum((self.var_rnoise / self.bar**2)[ipos, :], axis=0)
-                / np.nansum(self.mask[ipos, :], axis=0) ** 2
-            )
-        else:
-            wpos = (
-                np.nansum(self.var_rnoise[ipos, :], axis=0)
-                / np.nansum(self.mask[ipos, :], axis=0) ** 2
-            )
+        wpos = (
+            np.nansum(self.var_rnoise[ipos, :], axis=0)
+            / np.nansum(self.mask[ipos, :], axis=0) ** 2
+        )
 
         if self.meta["diffs"]:
             ineg = ~self.unp[exp]
+
             neg = np.nansum(self.data[ineg, :], axis=0) / np.nansum(
                 self.bkg_mask[ineg, :], axis=0
             )
+
             bneg = np.nansum(self.sky_background[ineg, :], axis=0) / np.nansum(
                 self.bkg_mask[ineg, :], axis=0
             )
+
             vneg = (
                 np.nansum(self.var_total[ineg, :], axis=0)
                 / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
             )
 
-            if self.meta["weight_type"] == "ivm_bar":
-                wneg = (
-                    np.nansum((self.var_rnoise / self.bar**2)[ineg, :], axis=0)
-                    / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
-                )
-            else:
-                wneg = (
-                    np.nansum(self.var_rnoise[ineg, :], axis=0)
-                    / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
-                )
+            wneg = (
+                np.nansum((self.var_rnoise / self.bar**2)[ineg, :], axis=0)
+                / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
+            )
         else:
             ineg = np.zeros(self.N, dtype=bool)
             neg = np.zeros_like(pos)
@@ -3454,7 +3447,7 @@ def drizzle_grating_group(
             elif obj.meta["weight_type"].lower() == "exptime_bar":
                 wht = (vdiff > 0.0) * obj.exptime[ipos].sum()
                 wht *= obj.bar[ip, :] ** 2
-            elif obj.meta["weight_type"].lower() in ["ivm", "ivm_bar"]:
+            elif obj.meta["weight_type"].lower() == "ivm":
                 # Weighting by var_rnoise or compound
                 wht = 1.0 / wdiff
             else:
