@@ -2064,6 +2064,46 @@ def extract_all():
         hdul.flush()
 
 
+def array_to_bin_edges(array):
+    """
+    Compute bin edges of an input array where the bin widths are the array steps
+
+    Parameters
+    ----------
+    array : array-like
+        Input array with length ``N``
+
+    Returns
+    -------
+    bins : array-like
+        Bin edges with length ``N+1``
+
+    """
+    dw = np.diff(array)
+    bins = np.hstack(
+        [
+            array[0] - dw[0] / 2,
+            array[:-1] + dw / 2.0,
+            array[-1] + dw[-1] / 2.0,
+        ]
+    )
+    return bins
+
+
+def pixfrac_steps(oversample, pixfrac):
+    """
+    Grid for oversampling cross dispersion axis
+    """
+    steps = (
+        np.linspace(
+            1.0 / oversample,
+            2 + 1.0 / oversample,
+            oversample + 1
+        )[:-1] - 1
+    ) * pixfrac
+    return steps
+
+
 def calculate_psf_fwhm():
     """
     Use WebbPSF to calculate the FWHM as a function of wavelength assuming

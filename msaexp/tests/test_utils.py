@@ -149,7 +149,8 @@ def test_bar_correction():
     assert np.allclose(bar.flatten(), bar_flat)
 
     assert np.allclose(
-        bar, bar_flat.reshape((2, 2)),
+        bar,
+        bar_flat.reshape((2, 2)),
     )
 
     # Wavelength
@@ -230,7 +231,7 @@ def test_normalization():
         assert corr.min() > 0.9
         assert corr.max() < 1.15
 
-    for grating in ['G140M','G235M','G395M']:
+    for grating in ["G140M", "G235M", "G395M"]:
         corr = utils.get_normalization_correction(
             wavelengths,
             q,
@@ -239,17 +240,49 @@ def test_normalization():
             grating="G235M",
             verbose=True,
         )
-    
-        assert np.allclose(corr, 1.)
-    
+
+        assert np.allclose(corr, 1.0)
+
+
 def test_badpix():
-    
+
     utils.cache_badpix_arrays()
-    
-    for detector in ['NRS1','NRS2']:
+
+    for detector in ["NRS1", "NRS2"]:
         assert detector in utils.MSAEXP_BADPIX
-        
+
         assert len(utils.MSAEXP_BADPIX[detector]) == 3
         assert utils.MSAEXP_BADPIX[detector][0].shape == (2048, 2048)
-        assert 'yaml' in utils.MSAEXP_BADPIX[detector][2]
-        
+        assert "yaml" in utils.MSAEXP_BADPIX[detector][2]
+
+
+def test_array_bins():
+
+    step = 2
+    array = np.arange(0, 11, step)
+    bins = utils.array_to_bin_edges(array)
+
+    assert len(bins) == len(array) + 1
+    assert np.allclose(bins[:-1], array - step / 2.0)
+    assert np.allclose(bins[1:], array + step / 2.0)
+    assert np.allclose(np.diff(bins), step)
+
+
+def test_pixfrac():
+
+    oversample = 8
+    pixfrac = 0.5
+
+    steps = utils.pixfrac_steps(oversample, pixfrac)
+
+    assert len(steps) == oversample
+    assert steps[0] == -pixfrac + 1.0 / oversample * pixfrac
+    assert steps[-1] == pixfrac - 1.0 / oversample * pixfrac
+
+    for oversample in [4, 8, 9, 16]:
+        for pixfrac in [0.1, 0.5, 1.0]:
+            steps = utils.pixfrac_steps(oversample, pixfrac)
+
+            assert len(steps) == oversample
+            assert steps[0] == -pixfrac + 1.0 / oversample * pixfrac
+            assert steps[-1] == pixfrac - 1.0 / oversample * pixfrac
