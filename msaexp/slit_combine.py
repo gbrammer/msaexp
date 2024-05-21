@@ -3469,7 +3469,7 @@ def pixel_table_to_1d(pixtab, wave_grid, weight=None, y_range=[-3, 3]):
     wave_bins = array_to_bin_edges(wave_grid)
 
     if weight is None:
-        weight = tab["var_rnoise"]
+        weight = pixtab["var_rnoise"]
 
     mask_dy = np.isfinite(
         pixtab["sci"]
