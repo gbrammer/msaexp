@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from scipy.stats import uniform
 
@@ -286,3 +287,27 @@ def test_pixfrac():
             assert len(steps) == oversample
             assert steps[0] == -pixfrac + 1.0 / oversample * pixfrac
             assert steps[-1] == pixfrac - 1.0 / oversample * pixfrac
+
+
+def data_path():
+    return os.path.join(os.path.dirname(__file__), "data")
+
+def test_slit_things():
+    
+    import jwst.datamodels
+    
+    os.chdir(data_path())
+    
+    file = 'jw01345062001_03101_00001_nrs2_phot.138.1345_933.fits'
+    with jwst.datamodels.open(file) as slit:
+        utils.update_slit_metadata(slit)
+    
+    with jwst.datamodels.open(file) as slit:
+        corr = utils.slit_normalization_correction(slit, verbose=True)
+        
+        sign = utils.get_slit_sign(slit)
+        assert sign == -1
+        
+        
+    
+    
