@@ -3826,7 +3826,13 @@ def combine_grating_group(
     # Prefer optimal extraction without resampling
     if oned is not None:
         for c in oned.colnames:
+            if c in spec.colnames:
+                oned[c].unit = spec[c].unit
+                oned[c].description = spec[c].description
+                oned[c].format = spec[c].format
+
             spec[c] = oned[c]
+
         for k in oned.meta:
             spec.meta[k] = oned.meta[k]
 
@@ -4536,7 +4542,7 @@ def extract_spectra(
             elif valid_frac < 0.2:
                 utils.log_comment(
                     utils.LOGFILE,
-                    f"\n    masked pixels {valid_frac:.2f}\n",
+                    f"\n    valid pixels {valid_frac:.2f}\n",
                     verbose=VERBOSE_LOG,
                 )
                 continue
