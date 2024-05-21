@@ -315,6 +315,8 @@ def test_slit_group():
     obj.meta["bar_corr_mode"] = "wave"
     obj.apply_spline_bar_correction()
 
+    obj.flag_hot_cold_pixels()
+
     obj.flag_percentile_outliers(
         plev=[0.95, 0.999, 0.99999],
         scale=2,
@@ -350,6 +352,17 @@ def test_slit_group():
         require_multiple=False,
         make_plot=True,
     )
+
+    # With wavecorr
+    default_kwargs["trace_with_xpos"] = True
+    wobj = slit_combine.SlitGroup(files, "stest", **default_kwargs)
+
+    mask = obj.mask & wobj.mask
+    assert ~np.allclose(wobj.wave[mask], obj.wave[mask])
+
+    default_kwargs["trace_with_xpos"] = False
+    default_kwargs["undo_pathloss"] = 2
+    pobj = slit_combine.SlitGroup(files, "stest", **default_kwargs)
 
 
 def test_full_script():
@@ -406,28 +419,27 @@ def test_full_script():
         plot_kws={},
     )
 
-    default_kwargs['diffs'] = True
+    default_kwargs["diffs"] = True
     _ = slit_combine.extract_spectra(**default_kwargs)
-    
+
     _ = slit_combine.extract_spectra(
-        **default_kwargs,
-        estimate_sky_kwargs={'make_plot': True}
+        **default_kwargs, estimate_sky_kwargs={"make_plot": True}
     )
-    
-    default_kwargs['diffs'] = False
+
+    default_kwargs["diffs"] = False
     _ = slit_combine.extract_spectra(
-        **default_kwargs,
-        estimate_sky_kwargs={'make_plot': True}
+        **default_kwargs, estimate_sky_kwargs={"make_plot": True}
     )
-    plt.close('all')
-    
+    plt.close("all")
+
     # Fit redshift
-    spec = spectrum.read_spectrum(f'nirspec_prism-clear_{TARGETS[0]}.spec.fits')
-    
+    spec = spectrum.read_spectrum(
+        f"nirspec_prism-clear_{TARGETS[0]}.spec.fits"
+    )
+
     _ = spectrum.fit_redshift(
-        f'nirspec_prism-clear_{TARGETS[0]}.spec.fits',
+        f"nirspec_prism-clear_{TARGETS[0]}.spec.fits",
         z0=(4.1, 4.4),
     )
-    
-    assert np.allclose(_[2]['z'], 4.2337, rtol=1.e2)
-    
+
+    assert np.allclose(_[2]["z"], 4.2337, rtol=1.0e2)
