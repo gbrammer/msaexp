@@ -18,7 +18,7 @@ import astropy.io.fits as pyfits
 import jwst.datamodels
 
 from grizli import utils
-import msaexp.utils as msautils
+from . import utils as msautils
 
 BAD_PIXEL_NAMES = [
     "DO_NOT_USE",

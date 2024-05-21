@@ -7,6 +7,7 @@ import astropy.io.fits as pyfits
 
 import grizli.utils
 
+from .. import utils as msautils
 
 def summary_from_metafiles():
     """
@@ -111,14 +112,14 @@ def update_output_files(mode):
             continue
 
         yaml_data[src]["slit_index"] = i
-        new = rename_source(src)
+        new = msautils.rename_source(src)
         print(f"{i:>2d}   {src}  >>>  {new}")
 
         yaml_data[new] = yaml_data.pop(src)
 
     # Move phot files
     for i, src in enumerate(orig_sources):
-        new = rename_source(src)
+        new = msautils.rename_source(src)
         print(f"{i:>2} {src} >> {new}")
 
         for file in files:
