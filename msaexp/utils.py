@@ -647,7 +647,7 @@ def slit_trace_center(
 
     with_source_xpos : bool
         Apply wavelength correction based on source centering within the
-        shutter
+        shutter assuming ``source_type = POINT``
 
     with_source_ypos : bool
         Get center of trace accounting for source y offset in the shutter
