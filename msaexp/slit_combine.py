@@ -1431,6 +1431,12 @@ class SlitGroup:
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
                         )
                         self.meta["removed_pathloss"] = pl_ext
+                    else:
+                        msg = f"   {self.files[j]} source_type={slit.source_type} "
+                        msg += f" no {pl_ext} found"
+                        utils.log_comment(
+                            utils.LOGFILE, msg, verbose=VERBOSE_LOG
+                        )
 
                     if self.meta["undo_pathloss"] == 2:
                         # Apply point source
