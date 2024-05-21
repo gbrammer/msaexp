@@ -3268,39 +3268,6 @@ class SlitGroup:
         return fig
 
 
-def array_to_bin_edges(array):
-    """
-    Compute bin edges of an input array where the bin widths are the array steps
-
-    Parameters
-    ----------
-    array : array-like
-        Input array with length ``N``
-
-    Returns
-    -------
-    bins : array-like
-        Bin edges with length ``N+1``
-
-    """
-    dw = np.diff(array)
-    bins = np.hstack(
-        [
-            array[0] - dw[0] / 2,
-            array[:-1] + dw / 2.0,
-            array[-1] + dw[-1] / 2.0,
-        ]
-    )
-    return bins
-
-
-def xstep_func(x, pf):
-    """
-    Grid for oversampling cross dispersion axis
-    """
-    return (np.linspace(1.0 / x, 2 + 1.0 / x, x + 1)[:-1] - 1) * pf
-
-
 def pseudo_drizzle(
     xpix,
     ypix,
@@ -3376,7 +3343,7 @@ def pseudo_drizzle(
     else:
         num, vnum, den, ntot = arrays
 
-    samples = xstep_func(oversample, pixfrac)
+    samples = msautils.pixfrac_steps(oversample, pixfrac)
 
     gx = np.gradient(xbin)
     gy = np.gradient(ybin)
@@ -3472,7 +3439,7 @@ def pixel_table_to_1d(pixtab, wave_grid, weight=None, y_range=[-3, 3]):
     """
     from scipy.stats import binned_statistic
 
-    wave_bins = array_to_bin_edges(wave_grid)
+    wave_bins = msautils.array_to_bin_edges(wave_grid)
 
     if weight is None:
         weight = pixtab["var_rnoise"]
@@ -3996,7 +3963,7 @@ def drizzle_grating_group(
         obj.grating, sample=wave_sample
     )
 
-    xbin = array_to_bin_edges(wave_bin)
+    xbin = msautils.array_to_bin_edges(wave_bin)
 
     ybin = np.arange(-ny, ny + step * 1.01, step) - 0.5
 
