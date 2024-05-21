@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 import scipy.ndimage as nd
 from scipy.special import huber
+from scipy.optimize import minimize
 
 import astropy.io.fits as pyfits
 
@@ -233,6 +234,7 @@ def objfun_prof_trace(
     yslit0,
     diff,
     vdiff,
+    wdiff,
     mask,
     ipos,
     ineg,
@@ -271,6 +273,9 @@ def objfun_prof_trace(
     vdiff : array-like
         Propagated variance of the difference image
 
+    wdiff : array-like
+        Propagated weight image
+
     mask : array-like
         Valid pixel mask
 
@@ -303,6 +308,9 @@ def objfun_prof_trace(
         snum : array-like
             Numerator of the objective function.  The estimated 1D
             spectrum is ``snum/sden``.
+
+        svnum : array-like
+            The estimated 1D variance is ``svnum/sden**2``.
 
         sden : array-like
             Denominator of the objective function.
@@ -470,9 +478,12 @@ def objfun_prof_trace(
     pmask = mask.sum(axis=0) > 0
 
     snum = np.nansum(
-        ((diff - bkg) * pdiff / vdiff * pmask).reshape(sh), axis=0
+        ((diff - bkg) * pdiff / wdiff * pmask).reshape(sh), axis=0
     )
-    sden = np.nansum((pdiff**2 / vdiff * pmask).reshape(sh), axis=0)
+    svnum = np.nansum(
+        (vdiff * pdiff**2 / wdiff**2 * pmask).reshape(sh), axis=0
+    )
+    sden = np.nansum((pdiff**2 / wdiff * pmask).reshape(sh), axis=0)
     smod = snum / sden * pdiff.reshape(sh)
 
     chi = (diff - (smod + bkg).flatten()) / np.sqrt(vdiff)
@@ -511,7 +522,7 @@ def objfun_prof_trace(
 
     if ret == 1:
         trace_coeffs = theta[i0:]
-        return snum, sden, smod, sigma, trace_coeffs, chi2
+        return snum, svnum, sden, smod, sigma, trace_coeffs, chi2
     else:
         return chi2
 
@@ -534,6 +545,7 @@ class SlitGroup:
         fix_prism_norm=True,
         sky_arrays=None,
         estimate_sky_kwargs=None,
+        do_fit_shutter_offset=False,
         flag_profile_kwargs=None,
         flag_percentile_kwargs=None,
         undo_pathloss=True,
@@ -824,13 +836,19 @@ class SlitGroup:
             self.meta["nhot"] = nhot
             self.meta["ncold"] = ncold
 
-        if flag_percentile_kwargs is not None:
+        if (flag_percentile_kwargs is not None) & (self.mask.sum() > 100):
             self.flag_percentile_outliers(**flag_percentile_kwargs)
 
         if estimate_sky_kwargs is not None:
             try:
                 self.estimate_sky(**estimate_sky_kwargs)
-                if flag_percentile_kwargs is not None:
+
+                if do_fit_shutter_offset:
+                    self.fit_shutter_offset()
+
+                if (flag_percentile_kwargs is not None) & (
+                    self.mask.sum() > 100
+                ):
                     self.flag_percentile_outliers(**flag_percentile_kwargs)
 
             except ValueError:
@@ -1346,9 +1364,12 @@ class SlitGroup:
             bad |= sci > PRISM_MAX_VALID
             bad |= sci < PRISM_MIN_VALID_SN * np.sqrt(var_rnoise + var_poisson)
 
-        bad |= sci < -5 * np.sqrt(
-            np.nanmedian((var_rnoise + var_poisson)[~bad])
-        )
+        if (~bad).sum() > 0:
+            bad |= sci < -5 * np.sqrt(
+                np.nanmedian((var_rnoise + var_poisson)[~bad])
+            )
+
+            bad |= var_rnoise > 10 * np.nanpercentile(var_rnoise[~bad], 95)
 
         if self.meta["pad_border"] > 0:
             # grow mask around edges
@@ -1855,6 +1876,79 @@ class SlitGroup:
 
         return fig
 
+    def fit_shutter_offset(
+        self, minimizer_kwargs={"method": "bfgs", "tol": 1.0e-5}, update=True
+    ):
+        """
+        Fit for an offset of the `slit_frame_y` coordinate using sky residuals
+        """
+
+        if not hasattr(self, "sky_data"):
+            msg = f" fit_shutter_offset: no `sky_data` found"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            return None
+
+        mask = np.abs(self.slit_frame_y / self.slit_shutter_scale / 5.0) < 1.4
+        mask &= self.mask
+
+        var_total = self.var_poisson + self.var_rnoise
+
+        dy_array = []
+        chi2_array = []
+
+        def _objfun_shutter(theta):
+            """
+            objective function for fitting the shutter offset
+            """
+
+            dy = theta[0] / 100.0
+
+            shutter_y = (
+                self.slit_frame_y / self.slit_shutter_scale + dy
+            ) / 5.0
+
+            bar, bar_wrapped = msautils.get_prism_wave_bar_correction(
+                shutter_y[mask],
+                self.wave[mask],
+                num_shutters=3,
+                wrap=False,
+            )
+
+            resid = (self.sci * self.bar)[mask] - self.sky_data["sky2d"][
+                mask
+            ] * bar
+            resid /= np.sqrt(var_total[mask])
+
+            chi2 = np.nansum(resid**2)
+            dy_array.append(dy)
+            chi2_array.append(chi2)
+
+            return chi2
+
+        x0 = [
+            0.0,
+        ]
+
+        res = minimize(_objfun_shutter, x0=x0, **minimizer_kwargs)
+
+        so = np.argsort(dy_array)
+        res.samples = np.array(dy_array)[so]
+        res.sample_chi2 = np.array(chi2_array)[so]
+
+        if 0:
+            fig, ax = plt.subplots(1, 1)
+            ax.plot(res.samples, res.sample_chi2)
+
+        msg = f" fit_shutter_offset: fixed_offset = {res.x[0]/100:.2f} pixels"
+        msg += f" (update={update})"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+        if update:
+            self.meta["fixed_offset"] = res.x[0] / 100.0
+            self.apply_spline_bar_correction()
+
+        return res
+
     def flag_percentile_outliers(
         self, plev=[0.95, 0.995, 0.99999], scale=2, dilate=False, update=True
     ):
@@ -1894,7 +1988,7 @@ class SlitGroup:
 
         outlier = self.data > high_level
 
-        msg = f"flag_percentile_outliers: {plev} threshold={high_level:.3f} "
+        msg = f" flag_percentile_outliers: {plev} threshold={high_level:.3f} "
         msg += f" N={outlier.sum()} (dilate={dilate})"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
@@ -2076,7 +2170,6 @@ class SlitGroup:
         self.sci *= corr
         self.var_rnoise *= corr**2
         self.var_poisson *= corr**2
-        self.var_total = self.var_rnoise + self.var_poisson
 
         self.mask &= np.isfinite(corr)
 
@@ -2140,8 +2233,8 @@ class SlitGroup:
         self.meta["own_barshadow"] = True
 
         self.sci *= self.bar / bar
-        self.var_poisson *= (self.bar / bar) ** 2
         self.var_rnoise *= (self.bar / bar) ** 2
+        self.var_poisson *= (self.bar / bar) ** 2
         self.var_total = self.var_poisson + self.var_rnoise
 
         self.orig_bar = self.bar * 1
@@ -2279,7 +2372,7 @@ class SlitGroup:
         clean[~self.mask] = np.nan
         return clean
 
-    def make_diff_image(self, exp=1):
+    def make_diff_image(self, exp=1, separate=False):
         """
         Make a difference image for an individual exposure group
 
@@ -2287,6 +2380,10 @@ class SlitGroup:
         ----------
         exp : int
             Exposure group
+
+        separate : bool
+            Return separate values of each pair of images, e.g., the ``pos, neg``
+            components of ``diff = pos - neg``
 
         Returns
         -------
@@ -2300,7 +2397,7 @@ class SlitGroup:
         diff : array-like
             Flattened difference image
 
-        diff : array-like
+        bdiff : array-like
             Flattened sky background difference image
 
         vdiff : array-like
@@ -2312,42 +2409,42 @@ class SlitGroup:
         """
         ipos = self.unp[exp]
 
-        pos = np.nansum(self.data[ipos, :], axis=0) / np.nansum(
+        pos = np.nansum((self.data * self.mask)[ipos, :], axis=0) / np.nansum(
             self.mask[ipos, :], axis=0
         )
 
-        bpos = np.nansum(self.sky_background[ipos, :], axis=0) / np.nansum(
-            self.mask[ipos, :], axis=0
-        )
+        bpos = np.nansum(
+            (self.sky_background * self.mask)[ipos, :], axis=0
+        ) / np.nansum(self.mask[ipos, :], axis=0)
 
         vpos = (
-            np.nansum(self.var_total[ipos, :], axis=0)
+            np.nansum((self.var_total * self.mask)[ipos, :], axis=0)
             / np.nansum(self.mask[ipos, :], axis=0) ** 2
         )
 
         wpos = (
-            np.nansum(self.var_rnoise[ipos, :], axis=0)
+            np.nansum((self.var_rnoise * self.mask)[ipos, :], axis=0)
             / np.nansum(self.mask[ipos, :], axis=0) ** 2
         )
 
         if self.meta["diffs"]:
             ineg = ~self.unp[exp]
 
-            neg = np.nansum(self.data[ineg, :], axis=0) / np.nansum(
-                self.bkg_mask[ineg, :], axis=0
-            )
+            neg = np.nansum(
+                (self.data * self.mask)[ineg, :], axis=0
+            ) / np.nansum(self.bkg_mask[ineg, :], axis=0)
 
-            bneg = np.nansum(self.sky_background[ineg, :], axis=0) / np.nansum(
-                self.bkg_mask[ineg, :], axis=0
-            )
+            bneg = np.nansum(
+                (self.sky_background * self.mask)[ineg, :], axis=0
+            ) / np.nansum(self.bkg_mask[ineg, :], axis=0)
 
             vneg = (
-                np.nansum(self.var_total[ineg, :], axis=0)
+                np.nansum((self.var_total * self.mask)[ineg, :], axis=0)
                 / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
             )
 
             wneg = (
-                np.nansum((self.var_rnoise / self.bar**2)[ineg, :], axis=0)
+                np.nansum((self.var_rnoise * self.mask)[ineg, :], axis=0)
                 / np.nansum(self.bkg_mask[ineg, :], axis=0) ** 2
             )
         else:
@@ -2357,12 +2454,21 @@ class SlitGroup:
             vneg = np.zeros_like(vpos)
             wneg = np.zeros_like(wpos)
 
-        diff = pos - neg
-        bdiff = bpos - bneg
-        vdiff = vpos + vneg
-        wdiff = wpos + wneg
-
-        return ipos, ineg, diff, bdiff, vdiff, wdiff
+        if separate:
+            return (
+                ipos,
+                ineg,
+                (pos, neg),
+                (bpos, bneg),
+                (vpos, vneg),
+                (wpos, wneg),
+            )
+        else:
+            diff = pos - neg
+            bdiff = bpos - bneg
+            vdiff = vpos + vneg
+            wdiff = wpos + wneg
+            return ipos, ineg, diff, bdiff, vdiff, wdiff
 
     def plot_2d_differences(
         self,
@@ -2668,6 +2774,7 @@ class SlitGroup:
             self.yslit,
             diff,
             vdiff,
+            wdiff,
             self.mask,
             ipos,
             ineg,
@@ -2686,6 +2793,7 @@ class SlitGroup:
             self.yslit,
             diff,
             vdiff,
+            wdiff,
             self.mask,
             ipos,
             ineg,
@@ -2728,11 +2836,11 @@ class SlitGroup:
 
         # Initial values
         _ = objfun_prof_trace(x0, *xargs)
-        snum, sden, smod, sigma, trace_coeffs, chi2_init = _
+        snum, svnum, sden, smod, sigma, trace_coeffs, chi2_init = _
 
         # Evaluated
         _ = objfun_prof_trace(theta, *xargs)
-        snum, sden, smod, sigma, trace_coeffs, chi2_fit = _
+        snum, svnum, sden, smod, sigma, trace_coeffs, chi2_fit = _
 
         out = {
             "theta": theta,
@@ -2746,6 +2854,7 @@ class SlitGroup:
             "vdiff": vdiff,
             "wdiff": wdiff,
             "snum": snum,
+            "svnum": svnum,
             "sden": sden,
             "smod": smod,
             "force_positive": force_positive,
@@ -2802,7 +2911,7 @@ class SlitGroup:
             verbose=False,
         )
 
-        tfit["sn"] = tfit["snum"] / np.sqrt(tfit["sden"])
+        tfit["sn"] = tfit["snum"] / np.sqrt(tfit["svnum"])
 
         return tfit
 
@@ -2941,6 +3050,7 @@ def pseudo_drizzle(
     arrays=None,
     oversample=4,
     pixfrac=1,
+    sample_axes="y",
 ):
     """
     2D histogram analogous to drizzle.  Oversamples along cross-dispersion axis
@@ -2975,6 +3085,9 @@ def pseudo_drizzle(
     pixfrac : float, optional
         Pixel fraction. Default is 1.
 
+    sample_axes : str, 'x','y','xy'
+        Axes to sample
+
     Returns
     -------
     num : array-like
@@ -2982,7 +3095,7 @@ def pseudo_drizzle(
 
     vnum : array-like
         Weighted variance numerator.  The full weighted variance is
-        ``vnum / den / ntot``.
+        ``vnum / den**2``.
 
     den : array-like
         Weighted denominator
@@ -2993,8 +3106,6 @@ def pseudo_drizzle(
     """
     from scipy.stats import binned_statistic_2d
 
-    xs = xstep_func(oversample, pixfrac)
-
     if arrays is None:
         num = np.zeros((len(ybin) - 1, len(xbin) - 1))
         vnum = num * 0.0
@@ -3003,58 +3114,70 @@ def pseudo_drizzle(
     else:
         num, vnum, den, ntot = arrays
 
-    dx = 0
-    for dy in xs:
+    samples = xstep_func(oversample, pixfrac)
 
-        ####
-        # Total weight
-        res = binned_statistic_2d(
-            ypix + dy,
-            xpix + dx,
-            (wht / oversample),
-            statistic="sum",
-            bins=(ybin, xbin),
-        )
+    gx = np.gradient(xbin)
+    gy = np.gradient(ybin)
 
-        ok = np.isfinite(res.statistic) & (res.statistic > 0)
-        den[ok] += res.statistic[ok]
+    if "x" in sample_axes:
+        xsamples = samples
+    else:
+        xsamples = [0.0]
 
-        ####
-        # Weighted data
-        res = binned_statistic_2d(
-            ypix + dy,
-            xpix + dx,
-            (data * wht / oversample),
-            statistic="sum",
-            bins=(ybin, xbin),
-        )
+    if "y" in sample_axes:
+        ysamples = samples
+    else:
+        ysamples = [0.0]
 
-        # ok = np.isfinite(res.statistic)
-        num[ok] += res.statistic[ok]
+    nsamp = len(xsamples) * len(ysamples)
 
-        ####
-        # Weighted variance
-        res = binned_statistic_2d(
-            ypix + dy,
-            xpix + dx,
-            (var * wht / oversample),
-            statistic="sum",
-            bins=(ybin, xbin),
-        )
+    for xo in xsamples:
+        for yo in ysamples:
 
-        vnum[ok] += res.statistic[ok]
+            ####
+            # Total weight
+            res = binned_statistic_2d(
+                ypix,
+                xpix,
+                (wht / nsamp),
+                statistic="sum",
+                bins=(ybin + yo * gy, xbin + xo * gx),
+            )
+            ok = np.isfinite(res.statistic) & (res.statistic > 0)
+            den[ok] += res.statistic[ok]
 
-        ####
-        # Counts
-        res = binned_statistic_2d(
-            ypix + dy,
-            xpix + dx,
-            ((var + wht) > 0) * 1.0,
-            statistic="sum",
-            bins=(ybin, xbin),
-        )
+            ####
+            # Weighted data
+            res = binned_statistic_2d(
+                ypix,
+                xpix,
+                (data * wht / nsamp),
+                statistic="sum",
+                bins=(ybin + yo * gy, xbin + xo * gx),
+            )
+            num[ok] += res.statistic[ok]
 
-        ntot[ok] += res.statistic[ok] / len(xs)
+            ####
+            # Weighted variance
+            res = binned_statistic_2d(
+                ypix,
+                xpix,
+                (var * wht**2 / nsamp),
+                statistic="sum",
+                bins=(ybin + yo * gy, xbin + xo * gx),
+            )
+            vnum[ok] += res.statistic[ok]
+
+            ####
+            # Counts
+            res = binned_statistic_2d(
+                ypix,
+                xpix,
+                ((var + wht) > 0) * 1.0,
+                statistic="sum",
+                bins=(ybin + yo * gy, xbin + xo * gx),
+            )
+            ntot[ok] += res.statistic[ok] / nsamp
 
     return (num, vnum, den, ntot)
 
@@ -3186,22 +3309,21 @@ def combine_grating_group(
     bkg2d = bnum / den
     # wht2d = den * 1
 
-    var2d = vnum / den / ntot
+    var2d = vnum / den**2
     wht2d = 1 / var2d
 
     pmask = mnum / den > 0
-    snum = np.nansum((num / den) * mnum * pmask, axis=0)
-    bnum = np.nansum((bnum / den) * mnum * pmask, axis=0)
-    svnum = np.nansum((vnum / den / ntot) * mnum * pmask, axis=0)
-    sden = np.nansum(mnum**2 / den * pmask, axis=0)
+    snum = np.nansum(num * mnum / vnum * pmask, axis=0)
+    bnum = np.nansum(bnum * mnum / vnum * pmask, axis=0)
+    sden = np.nansum(mnum**2 / vnum * pmask, axis=0)
 
     smsk = nd.binary_erosion(np.isfinite(snum / sden), iterations=2) * 1.0
     smsk[smsk < 1] = np.nan
     snum *= smsk
 
-    snmask = snum / sden / np.sqrt(svnum / sden) > 3
+    snmask = snum / np.sqrt(sden) > 3
     if snmask.sum() < 10:
-        snmask = snum / sden / np.sqrt(svnum / sden) > 1
+        snmask = snum / np.sqrt(sden) > 1
 
     pdata = np.nansum((num / den) * snmask * den, axis=1)
     pdata /= np.nansum(snmask * den, axis=1)
@@ -3244,7 +3366,7 @@ def combine_grating_group(
 
     spec["flux"] = snum / sden
     # spec["err"] = 1.0 / np.sqrt(sden)
-    spec["err"] = np.sqrt(svnum / sden)
+    spec["err"] = np.sqrt(1.0 / sden)
     spec["flux"].unit = u.microJansky
     spec["err"].unit = u.microJansky
     spec["wave"].unit = u.micron
@@ -3309,7 +3431,7 @@ def drizzle_grating_group(
     with_pathloss=True,
     wave_sample=1.05,
     ny=13,
-    dkws=dict(oversample=16, pixfrac=0.8),
+    dkws=dict(oversample=16, pixfrac=0.8, sample_axes="y"),
     **kwargs,
 ):
     """
@@ -3466,7 +3588,7 @@ def drizzle_grating_group(
 
             ysl = (obj.yslit[ip, :].reshape(obj.sh) + 0.0).flatten()[ok]
 
-            xsl = obj.xslit[ip, :][ok]
+            # xsl = obj.xslit[ip, :][ok]
             xsl = obj.wave[ip, :][ok]
 
             # path loss
