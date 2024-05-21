@@ -742,55 +742,6 @@ def slit_trace_center(
     return x, ytr, wtr, rs, ds
 
 
-def get_slit_corners(slit, wave=None, verbose=False):
-    """
-    Get sky coordinates of slit corners.
-
-    Parameters:
-    -----------
-    slit : `jwst.datamodels.SlitModel`
-        The slit object containing the data and WCS information.
-    wave : float, optional
-        The wavelength value to use for calculating the corners. If not
-        provided, the median wavelength value of the slit data will be used.
-    verbose : bool, optional
-        If True, print additional information about the slit corners.
-
-    Returns:
-    --------
-    sky_corners : array
-        An array containing the RA and Dec coordinates of the slit corners.
-
-    """
-    from gwcs import wcstools
-
-    _wcs = slit.meta.wcs
-
-    d2s = _wcs.get_transform("detector", "slit_frame")
-    s2w = _wcs.get_transform("slit_frame", "world")
-
-    bbox = _wcs.bounding_box
-    grid = wcstools.grid_from_bounding_box(bbox)
-    _, sy, slam = np.array(d2s(*grid))
-
-    smi = np.nanmin(sy)
-    sma = np.nanmax(sy)
-
-    if verbose:
-        print(f"yslit: {smi:.2f} {sma:.2f}")
-
-    slit_x = np.array([-0.5, 0.5, 0.5, -0.5])
-    slit_y = np.array([smi, smi, sma, sma])
-
-    if wave is None:
-        wave = np.nanmedian(slam)
-
-    ra_corner, dec_corner, _w = s2w(slit_x, slit_y, wave)
-    sky_corners = np.array([ra_corner, dec_corner])
-
-    return sky_corners
-
-
 GRATING_LIMITS = {
     "prism": [0.58, 5.33, 0.01],
     "g140m": [0.68, 1.9, 0.00063],
@@ -1280,39 +1231,6 @@ def build_regular_wavelength_wcs(
         header = fixed_rectified_slit_header(slits[0].meta.wcs, output_wcs)
 
     return target_waves, header, data_size, output_wcs
-
-
-def get_slit_trace_wavelengths(slit):
-    """
-    Get wavelengths along the trace of a slit where the `slit_frame` coordinate
-    is at a minimum in the cross-dispersion axis
-
-    Parameters
-    ----------
-    slit : `jwst.datamodels.SlitModel`
-        Slit object
-
-    Returns
-    -------
-    waves : array-like
-        Wavelength array, microns
-
-    """
-    from gwcs import wcstools
-
-    refwcs = slit.meta.wcs
-    d2s = refwcs.get_transform("detector", "slit_frame")
-
-    bbox = refwcs.bounding_box
-    grid = wcstools.grid_from_bounding_box(bbox)
-    _, s, lam = np.array(d2s(*grid))
-
-    s[~np.isfinite(s)] = 10000
-    itr = np.nanargmin(np.abs(s), axis=0)
-    waves = np.array([lam[j, i] for i, j in enumerate(itr)]) * 1.0e6
-    waves = waves[np.isfinite(waves)]
-
-    return waves
 
 
 def build_slit_centered_wcs(
