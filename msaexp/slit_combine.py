@@ -3708,7 +3708,7 @@ DRIZZLE_KWS = dict(
 
 
 def combine_grating_group(
-    xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, include_full_pixtab=True
+    xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, include_full_pixtab=True, **kwargs,
 ):
     """
     Make pseudo-drizzled outputs from a set of `msaexp.slit_combine.SlitGroup`
@@ -3724,6 +3724,9 @@ def combine_grating_group(
 
     drizzle_kws : dict
         Keyword arguments passed to `msaexp.slit_combine.drizzle_grating_group`
+
+    include_full_pixtab : bool
+        Include full pixel table in `PIXTAB` extension of the output file
 
     Returns
     -------
@@ -4262,6 +4265,7 @@ def extract_spectra(
     trace_with_ypos="auto",
     get_background=False,
     make_2d_plots=True,
+    include_full_pixtab=True,
     plot_kws={},
     **kwargs,
 ):
@@ -4374,7 +4378,10 @@ def extract_spectra(
         Get background value
 
     make_2d_plots : bool, optional
-        Make 2D plots value
+        Make 2D plots
+
+    include_full_pixtab : bool
+        Include full pixel table in output
 
     Returns
     -------
@@ -4804,7 +4811,10 @@ def extract_spectra(
 
     for g in gratings:
         hdul[g] = combine_grating_group(
-            xobj, gratings[g], drizzle_kws=drizzle_kws
+            xobj,
+            gratings[g],
+            drizzle_kws=drizzle_kws,
+            include_full_pixtab=include_full_pixtab
         )
 
         _head = hdul[g][1].header
