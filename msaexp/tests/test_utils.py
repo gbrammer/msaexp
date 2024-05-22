@@ -306,13 +306,13 @@ def test_update_slit_metadata():
         """
         Helper function to assert that the slit data is clean i.e.
         does not hit any of the 'if' cases in the method, before we 
-        taper with it.
+        tamper with it.
         """
         
         meta = slit.meta.instance
         is_fixed = meta["instrument"]["lamp_mode"] == "FIXEDSLIT"
 
-        # needed for the current file used, in order to make
+        # needed for the current file used,
         # in order to make 'source_type' not None. 
         # allowed options are: "POINT", "EXTENDED" and "UNKNOWN"
         slit.source_type = "UNKNOWN"
@@ -368,7 +368,7 @@ def test_update_slit_metadata():
 
         assert slit_3.source_type == "EXTENDED"
 
-    #case: slitledid is missing:
+    #case: slitled_id is missing:
 
     with jwst.datamodels.open(file) as slit_4:
 
