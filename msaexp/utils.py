@@ -72,8 +72,11 @@ def update_slit_metadata(slit):
 
     if slit.source_type is None:
         slit.source_type = "EXTENDED"
-
-    if not hasattr(slit, "slitlet_id"):
+    
+    #TODO Needs review. When 'slitlet_id' = None or 
+    # deleted, it is by default reset to 0 by the
+    # jwst datamodel. Is this a good solution? (K.V.) 
+    if slit.slitlet_id == 0:
         slit.slitlet_id = 9999
 
 

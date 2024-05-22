@@ -292,15 +292,101 @@ def test_pixfrac():
 def data_path():
     return os.path.join(os.path.dirname(__file__), "data")
 
-def test_slit_things():
+
+def test_update_slit_metadata():
     
     import jwst.datamodels
     
     os.chdir(data_path())
     
     file = 'jw01345062001_03101_00001_nrs2_phot.138.1345_933.fits'
-    with jwst.datamodels.open(file) as slit:
-        utils.update_slit_metadata(slit)
+
+    def _assert_clean_data(slit):
+
+        """
+        Helper function to assert that the slit data is clean i.e.
+        does not hit any of the 'if' cases in the method, before we 
+        taper with it.
+        """
+        
+        meta = slit.meta.instance
+        is_fixed = meta["instrument"]["lamp_mode"] == "FIXEDSLIT"
+
+        # needed for the current file used, in order to make
+        # in order to make 'source_type' not None. 
+        # allowed options are: "POINT", "EXTENDED" and "UNKNOWN"
+        slit.source_type = "UNKNOWN"
+
+        assert not (is_fixed & (slit.source_name is None))
+        assert hasattr(slit, "source_type")
+        assert not (slit.source_type is None)
+        assert slit.slitlet_id != 0
+
+
+
+    # there are 4 'if' cases in the method. First assert that the data
+    # does not hit any, and then we tamper with it to hit every 'if' case
+
+    #case 1: FIXEDSLIT & source__name is None:
+
+    with jwst.datamodels.open(file) as slit_1:
+        
+        _assert_clean_data(slit_1)
+        slit_1.meta.instance["instrument"]["lamp_mode"] = "FIXEDSLIT"
+        slit_1.source_name = None
+        utils.update_slit_metadata(slit_1)
+
+        targ = slit_1.meta.instance["target"]
+        
+        assert slit_1.source_name == \
+            f"{targ['proposer_name'].lower()}_{slit_1.name}".lower()
+        
+        assert slit_1.source_ra == targ["ra"]
+        assert slit_1.source_dec == targ["dec"]
+
+
+
+    #case 2: source type is missing:
+    with jwst.datamodels.open(file) as slit_2:
+
+        _assert_clean_data(slit_2)
+        del slit_2.source_type
+
+        utils.update_slit_metadata(slit_2)
+
+        assert slit_2.source_type == "EXTENDED"
+
+
+    #case 3: source type is None:
+    with jwst.datamodels.open(file) as slit_3:
+        
+        _assert_clean_data(slit_3)
+        slit_3.source_type = None
+        assert(slit_3.source_type == None)
+
+        utils.update_slit_metadata(slit_3)
+
+        assert slit_3.source_type == "EXTENDED"
+
+    #case: slitledid is missing:
+
+    with jwst.datamodels.open(file) as slit_4:
+
+        _assert_clean_data(slit_4)
+        del slit_4.slitlet_id
+
+        utils.update_slit_metadata(slit_4)
+
+        assert slit_4.slitlet_id == 9999
+
+
+def test_slit_things():
+
+    import jwst.datamodels
+    
+    os.chdir(data_path())
+    
+    file = 'jw01345062001_03101_00001_nrs2_phot.138.1345_933.fits'
     
     with jwst.datamodels.open(file) as slit:
         corr = utils.slit_normalization_correction(slit, verbose=True)
