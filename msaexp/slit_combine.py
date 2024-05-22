@@ -4473,23 +4473,28 @@ def extract_spectra(
             )
             trace_from_yoffset = True
 
-        obj = SlitGroup(
-            groups[g],
-            g,
-            position_key=position_key,
-            diffs=diffs,  # (True & (~isinstance(id, str))),
-            stuck_threshold=stuck_threshold,
-            undo_barshadow=undo_barshadow,
-            undo_pathloss=undo_pathloss,
-            sky_arrays=sky_arrays,
-            trace_with_xpos=trace_with_xpos,
-            trace_with_ypos=trace_with_ypos,
-            trace_from_yoffset=trace_from_yoffset,
-            nod_offset=nod_offset,
-            reference_exposure=reference_exposure,
-            pad_border=pad_border,
-            **kwargs,
-        )
+        try:
+            obj = SlitGroup(
+                groups[g],
+                g,
+                position_key=position_key,
+                diffs=diffs,  # (True & (~isinstance(id, str))),
+                stuck_threshold=stuck_threshold,
+                undo_barshadow=undo_barshadow,
+                undo_pathloss=undo_pathloss,
+                sky_arrays=sky_arrays,
+                trace_with_xpos=trace_with_xpos,
+                trace_with_ypos=trace_with_ypos,
+                trace_from_yoffset=trace_from_yoffset,
+                nod_offset=nod_offset,
+                reference_exposure=reference_exposure,
+                pad_border=pad_border,
+                **kwargs,
+            )
+        except RuntimeError:
+            msg = f"\n    failed\n"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            continue
 
         if 0:
             if (obj.grating not in do_gratings) | (
