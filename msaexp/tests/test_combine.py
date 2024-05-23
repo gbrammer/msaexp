@@ -5,12 +5,12 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 from .. import utils
 from .. import slit_combine
 from .. import spectrum
 
 TARGETS = ["1345_933"]
-
 
 def data_path():
     return os.path.join(os.path.dirname(__file__), "data")
@@ -18,7 +18,7 @@ def data_path():
 
 def test_globals():
 
-    assert slit_combine.BAD_PIXEL_FLAG & 1025 == 1025
+    assert utils.BAD_PIXEL_FLAG & 1025 == 1025
 
 
 def test_split():
@@ -194,7 +194,7 @@ def test_slit_group():
     ]:
         assert getattr(obj, attr).shape == (obj.N, obj.sh[0] * obj.sh[1])
 
-    assert np.abs(obj.mask.sum() - 13967) < 32
+    assert np.abs(obj.mask.sum() - (13967 - 82)) < 32
 
     meta = {
         "diffs": True,

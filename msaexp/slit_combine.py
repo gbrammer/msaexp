@@ -20,28 +20,6 @@ import jwst.datamodels
 from grizli import utils
 from . import utils as msautils
 
-BAD_PIXEL_NAMES = [
-    "DO_NOT_USE",
-    # "OTHER_BAD_PIXEL",
-    "MSA_FAILED_OPEN",
-    # "UNRELIABLE_SLOPE",
-    # "UNRELIABLE_BIAS",
-    # "NO_SAT_CHECK",
-    # "NO_GAIN_VALUE",
-    "HOT",
-    "DEAD",
-    # # "TELEGRAPH", # lots of these, doesn't seem necessary
-    # "RC",
-    # "LOW_QE",
-    "OPEN",
-    "ADJ_OPEN",
-    "SATURATED",
-]
-
-BAD_PIXEL_FLAG = 1024
-for _bp in BAD_PIXEL_NAMES:
-    BAD_PIXEL_FLAG |= jwst.datamodels.dqflags.pixel[_bp]
-
 utils.LOGFILE = "/tmp/msaexp_slit_combine.log.txt"
 VERBOSE_LOG = True
 
@@ -536,7 +514,7 @@ class SlitGroup:
         position_key="y_index",
         diffs=True,
         grating_diffs=True,
-        stuck_threshold=0.5,
+        stuck_threshold=0.3,
         hot_cold_kwargs=None,
         bad_shutter_names=None,
         dilate_failed_open=True,
@@ -544,9 +522,11 @@ class SlitGroup:
         min_bar=0.4,
         bar_corr_mode="wave",
         fix_prism_norm=True,
+        slit_hotpix_kwargs={},
         sky_arrays=None,
         estimate_sky_kwargs=None,
-        flag_profile_kwargs={},
+        flag_profile_kwargs=None,
+        flag_trace_kwargs={},
         flag_percentile_kwargs={},
         undo_pathloss=True,
         trace_with_xpos=False,
@@ -796,9 +776,14 @@ class SlitGroup:
         }
 
         self.shapes = []
-
+        self.flagged_hot_pixels = []
         for i, file in enumerate(files):
             slit = jwst.datamodels.open(file)
+            if slit_hotpix_kwargs is not None:
+                _ = msautils.slit_hot_pixels(slit, **slit_hotpix_kwargs)
+                self.flagged_hot_pixels.append(_)  # dq, count, status
+            else:
+                self.flagged_hot_pixels.append(None, 0, 0)
 
             self.slits.append(slit)
             keep_files.append(file)
@@ -831,12 +816,20 @@ class SlitGroup:
             self.meta["nhot"] = nhot
             self.meta["ncold"] = ncold
 
+        if (flag_trace_kwargs is not None) & (self.mask.sum() > 100):
+            if self.meta["position_key"] != "manual_position":
+                self.flag_trace_outliers(**flag_trace_kwargs)
+
         if (flag_percentile_kwargs is not None) & (self.mask.sum() > 100):
             self.flag_percentile_outliers(**flag_percentile_kwargs)
 
         if estimate_sky_kwargs is not None:
             try:
                 self.estimate_sky(**estimate_sky_kwargs)
+
+                if (flag_trace_kwargs is not None) & (self.mask.sum() > 100):
+                    if self.meta["position_key"] != "manual_position":
+                        self.flag_trace_outliers(**flag_trace_kwargs)
 
                 if (flag_percentile_kwargs is not None) & (
                     self.mask.sum() > 100
@@ -858,7 +851,7 @@ class SlitGroup:
             nexp_thresh = 2 * (self.N // 3)
             all_bad = nbad >= nexp_thresh
             all_bad &= nbad < self.N
-            msg = f" {'last mask':<28}: {all_bad.sum()} pixels in"
+            msg = f" {'multiple mask':<28}: {all_bad.sum()} pixels in"
             msg += f" >= {nexp_thresh} exposures"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
@@ -1128,7 +1121,9 @@ class SlitGroup:
         """
         rows = []
         for i, slit in enumerate(self.slits):
+            _nbp = self.flagged_hot_pixels[i][1]
             msg = f"{i:>2} {slit.meta.filename} {slit.data.shape}"
+            msg += f" {_nbp:>2} flagged hot pixels"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
             md = slit.meta.dither.instance
@@ -1196,7 +1191,7 @@ class SlitGroup:
         """
         import scipy.ndimage as nd
 
-        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN, BAD_PIXEL_FLAG, BAD_PIXEL_NAMES
+        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN
 
         slits = self.slits
 
@@ -1343,7 +1338,7 @@ class SlitGroup:
         ytr = np.array(ytr)
         wtr = np.array(wtr)
 
-        bad = (dq & BAD_PIXEL_FLAG) > 0
+        bad = (dq & msautils.BAD_PIXEL_FLAG) > 0
 
         # Extra bad pix
         for i, slit in enumerate(slits):
@@ -1354,7 +1349,7 @@ class SlitGroup:
             bad[i, :] |= dqi[slit.slice].flatten() > 0
 
         # Dilate stuck open pixels
-        if ("MSA_FAILED_OPEN" in BAD_PIXEL_NAMES) & self.meta[
+        if ("MSA_FAILED_OPEN" in msautils.BAD_PIXEL_NAMES) & self.meta[
             "dilate_failed_open"
         ]:
             _bp = jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"]
@@ -1548,7 +1543,9 @@ class SlitGroup:
             self.mask &= self.bar > self.meta["min_bar"]
 
         if self.meta["bad_shutter_names"] is None:
-            self.mask_stuck_closed_shutters()
+            self.mask_stuck_closed_shutters(
+                stuck_threshold=self.meta["stuck_threshold"],
+            )
         else:
             self.apply_bad_shutter_mask()
 
@@ -1754,7 +1751,7 @@ class SlitGroup:
             spl_full = (spl_full.T * _sky_interp).T
 
         if ok_sky.sum() == 0:
-            msg = f" {'estimate_sky':<28}: no valid pixels"
+            msg = f" {'estimate_sky':<28}: no valid sky pixels"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             return None
 
@@ -1838,7 +1835,7 @@ class SlitGroup:
             "mask": ok_sky,
         }
 
-        msg = f" {'estimate_sky':<28}: N = {ok_sky.sum()} "
+        msg = f" {'estimate_sky':<28}: "
         if outlier_threshold is not None:
             sky_outliers = np.abs(
                 self.sci - sky2d
@@ -1849,10 +1846,11 @@ class SlitGroup:
 
             self.mask &= ~sky_outliers
 
-            msg += f", outliers > {outlier_threshold}: {sky_outliers.sum()}"
+            msg += f"{sky_outliers.sum()} outliers > {outlier_threshold}  / "
         else:
             sky_outliers = None
 
+        msg += f"N={ok_sky.sum()} sky pixels "
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         if make_plot:
@@ -1996,22 +1994,84 @@ class SlitGroup:
 
         return res
 
+    def flag_trace_outliers(
+        self, yslit=[-2, 2], filter_size=-2, threshold=1.5
+    ):
+        """
+        Flag pixels outside of the trace that are greater than the maximum inside
+        the trace
+
+        Parameters
+        ----------
+        yslit : [float, float]
+            Trace range around the source center
+
+        filter_size : int
+            Size of the maximum filter as a function of wavelength.  If negative,
+            then the filter size is ``-filter_size * N files``
+
+        threshold : float
+            Outlier threshold relative to the trace maximum
+
+        Returns
+        -------
+        outlier : array-like, None
+            Outliers, None if too few pixels found.  Also adds outliers to ``self.mask``
+        """
+        trace_mask = (self.yslit > yslit[0]) & (self.yslit < yslit[1])
+
+        data = self.data * 1
+        in_trace = self.mask & np.isfinite(data) & trace_mask
+
+        if in_trace.sum() < 100:
+            msg = f" {'flag_trace_outliers':<28}: too few pixels {in_trace.sum()}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            return None
+
+        so = np.argsort(self.wave[in_trace])
+
+        fsize = filter_size if filter_size > 0 else -filter_size * self.N
+        max_sort = nd.maximum_filter(self.data[in_trace][so], fsize)
+
+        max_interp = np.interp(self.wave, self.wave[in_trace][so], max_sort)
+
+        outlier = (data > max_interp * threshold) & (
+            data > 3 * np.sqrt(self.var_total)
+        )
+
+        outlier &= ~trace_mask
+
+        self.mask &= ~outlier
+
+        msg = f" {'flag_trace_outliers':<28}: {outlier.sum()} pixels  / yslit = {yslit}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+        return outlier
+
     def flag_percentile_outliers(
-        self, plev=[0.95, 0.999, 0.99999], scale=2, dilate=True, update=True
+        self,
+        plevels=[0.95, -4, -0.1],
+        scale=2,
+        yslit=[-2.0, 2.0],
+        dilate=np.ones((3, 3), dtype=int),
+        update=True,
+        **kwargs,
     ):
         """
         Flag outliers based on a normal distribution.
 
         Parameters
         ----------
-        plev : [float, float, float]
-            Percentile levels.
+        plevels : [float, float, float]
+            Percentile levels (0.0, 1.0).  If the values are < 0, then interpret as an
+            absolute number of pixels relative to the total:
+            ``plevels[i] = 1 + plevels[i] / (mask.sum() / Nslits)``
 
         scale : float
             scale factor
 
-        dilate : bool
-            dilate outlier mask
+        dilate : array, None
+            Footprint of binary dilated outlier mask
 
         update : bool
             Update ``mask`` attribute
@@ -2027,22 +2087,50 @@ class SlitGroup:
         """
         from scipy.stats import norm
 
+        trace_mask = (
+            self.mask & (self.yslit > yslit[0]) & (self.yslit < yslit[1])
+        )
+        if trace_mask.sum() < 100:
+            msg = f" {'flag_percentile_outliers':<28}: pixels {trace_mask.sum()} < 100"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            return np.zeros(self.sci.shape, dtype=bool), np.nan
+
+        N_per_slit = trace_mask.sum() / self.N
+        plev = np.array(plevels) * 1.0
+        for i in range(3):
+            if plevels[i] < 0:
+                plev[i] = 1.0 + plevels[i] / N_per_slit
+
+        if plev[1] < plev[0]:
+            msg = f" {'flag_percentile_outliers':<28}: {plev[1]:.3f} < {plev[0]:.3f}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            return np.zeros(self.sci.shape, dtype=bool), np.nan
+
         ppf = norm.ppf(plev)
-        pval = np.nanpercentile(self.data[self.mask], np.array(plev) * 100)
+        pval = np.nanpercentile(self.data[trace_mask], np.array(plev) * 100)
 
         delta = (pval[1] - pval[0]) / (ppf[1] - ppf[0]) * (ppf[2] - ppf[0])
         high_level = pval[0] + delta * scale
 
         outlier = self.data > high_level
 
-        msg = f" {'flag_percentile_outliers':<28}: {plev} threshold={high_level:.3f} "
-        msg += f" N={outlier.sum()} (dilate={dilate})"
+        msg = f" {'flag_percentile_outliers':<28}: {outlier.sum()} pixels"
+        msg += f"  / plevels {plevels} threshold={high_level:.3f}"
+        msg += f" (dilate={dilate is not None})"
+
+        if ~np.allclose(np.array(plevels), plev):
+            msg += f"\n {'flag_percentile_outliers':<28}: calculated "
+            msg += f"{plev[0]:.6f} {plev[1]:.6f} {plev[2]:.6f}"
+
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
-        if outlier.sum() & dilate:
+        if outlier.sum() & (dilate is not None):
+            if not hasattr(dilate, "shape"):
+                dilate = np.ones((3, 3), dtype=int)
             for i in range(self.N):
                 outlier[i, :] |= nd.binary_dilation(
-                    outlier[i, :].reshape(self.sh), iterations=dilate * 1
+                    outlier[i, :].reshape(self.sh),
+                    structure=dilate.astype(int),
                 ).flatten()
 
         if update:
@@ -2357,7 +2445,7 @@ class SlitGroup:
 
         utils.log_comment(
             utils.LOGFILE,
-            f""" PRISM: stuck bad shutters {self.meta["bad_shutter_names"]}""",
+            f"""!{'apply_bad_shutter_mask':<27}: PRISM stuck bad shutters {self.meta["bad_shutter_names"]}""",
             verbose=VERBOSE_LOG,
         )
 
@@ -3708,7 +3796,11 @@ DRIZZLE_KWS = dict(
 
 
 def combine_grating_group(
-    xobj, grating_keys, drizzle_kws=DRIZZLE_KWS, include_full_pixtab=True, **kwargs,
+    xobj,
+    grating_keys,
+    drizzle_kws=DRIZZLE_KWS,
+    include_full_pixtab=["PRISM"],
+    **kwargs,
 ):
     """
     Make pseudo-drizzled outputs from a set of `msaexp.slit_combine.SlitGroup`
@@ -3725,8 +3817,8 @@ def combine_grating_group(
     drizzle_kws : dict
         Keyword arguments passed to `msaexp.slit_combine.drizzle_grating_group`
 
-    include_full_pixtab : bool
-        Include full pixel table in `PIXTAB` extension of the output file
+    include_full_pixtab : list
+        List of dispersers to full pixel table ``PIXTAB`` in output
 
     Returns
     -------
@@ -3876,7 +3968,7 @@ def combine_grating_group(
             pyfits.ImageHDU(data=bkg2d, header=header, name="BACKGROUND")
         )
 
-    if (pixtab is not None) & (include_full_pixtab):
+    if (pixtab is not None) & (header["GRATING"] in include_full_pixtab):
         hdul.append(pyfits.BinTableHDU(data=pixtab, name="PIXTAB"))
 
     if slit_info is not None:
@@ -4235,7 +4327,7 @@ def extract_spectra(
     do_gratings=["PRISM", "G395H", "G395M", "G235M", "G140M"],
     join=[0, 3, 5],
     split_uncover=True,
-    stuck_threshold=0.0,
+    stuck_threshold=0.3,
     pad_border=2,
     sort_by_sn=False,
     position_key="y_index",
@@ -4265,7 +4357,7 @@ def extract_spectra(
     trace_with_ypos="auto",
     get_background=False,
     make_2d_plots=True,
-    include_full_pixtab=True,
+    include_full_pixtab=["PRISM"],
     plot_kws={},
     **kwargs,
 ):
@@ -4380,8 +4472,8 @@ def extract_spectra(
     make_2d_plots : bool, optional
         Make 2D plots
 
-    include_full_pixtab : bool
-        Include full pixel table in output
+    include_full_pixtab : list
+        List of dispersers to full pixel table in output
 
     Returns
     -------
@@ -4814,7 +4906,7 @@ def extract_spectra(
             xobj,
             gratings[g],
             drizzle_kws=drizzle_kws,
-            include_full_pixtab=include_full_pixtab
+            include_full_pixtab=include_full_pixtab,
         )
 
         _head = hdul[g][1].header
@@ -4825,7 +4917,17 @@ def extract_spectra(
         )
 
         utils.log_comment(utils.LOGFILE, specfile, verbose=VERBOSE_LOG)
+        if "PIXTAB" in hdul[g]:
+            ptab = hdul[g].pop("PIXTAB")
+            ptabfile = specfile.replace(".spec", ".pixtab")
+            utils.log_comment(utils.LOGFILE, ptabfile, verbose=VERBOSE_LOG)
+            ptab.writeto(ptabfile, overwrite=True)
+        else:
+            ptab = None
+
         hdul[g].writeto(specfile, overwrite=True)
+        if ptab is not None:
+            hdul[g].append(ptab)
 
         if g.upper() == "PRISM":
             plot_kws["interpolation"] = "nearest"

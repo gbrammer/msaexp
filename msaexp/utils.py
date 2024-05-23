@@ -5,10 +5,44 @@ import warnings
 import numpy as np
 import astropy.io.fits as pyfits
 
+import jwst.datamodels
+
 import grizli.utils
 
 
 MSAEXP_BADPIX = None
+
+BAD_PIXEL_NAMES = [
+    "DO_NOT_USE",
+    # "OTHER_BAD_PIXEL",
+    "MSA_FAILED_OPEN",
+    # "UNRELIABLE_SLOPE",
+    # "UNRELIABLE_BIAS",
+    # "NO_SAT_CHECK",
+    # "NO_GAIN_VALUE",
+    "HOT",
+    "DEAD",
+    # # "TELEGRAPH", # lots of these, doesn't seem necessary
+    # "RC",
+    # "LOW_QE",
+    "OPEN",
+    "ADJ_OPEN",
+    "SATURATED",
+]
+
+BAD_PIXEL_FLAG = 1 | 1024
+
+
+def _set_bad_pixel_flag():
+    """
+    Set the global ``BAD_PIXEL_FLAG`` variable"""
+    global BAD_PIXEL_FLAG
+
+    for _bp in BAD_PIXEL_NAMES:
+        BAD_PIXEL_FLAG |= jwst.datamodels.dqflags.pixel[_bp]
+
+
+_set_bad_pixel_flag()
 
 
 def rename_source(source_name):
@@ -2095,11 +2129,10 @@ def pixfrac_steps(oversample, pixfrac):
     Grid for oversampling cross dispersion axis
     """
     steps = (
-        np.linspace(
-            1.0 / oversample,
-            2 + 1.0 / oversample,
-            oversample + 1
-        )[:-1] - 1
+        np.linspace(1.0 / oversample, 2 + 1.0 / oversample, oversample + 1)[
+            :-1
+        ]
+        - 1
     ) * pixfrac
     return steps
 
@@ -2597,6 +2630,70 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     return dq, flags
 
 
+def slit_hot_pixels(
+    slit, max_allowed_flagged=128, dq_flags=BAD_PIXEL_NAMES, **kwargs
+):
+    """
+    Flag hot pixels with `grizli.jwst_utils.flag_nirspec_hot_pixels`
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data
+
+    max_allowed_flagged : int
+        Maximum number of flagged pixels to allow
+
+    dq_flags : list
+        Full list of flag names to consider as bad pixels
+
+    kwargs : dict
+        Keyword args passed to `grizli.jwst_utils.flag_nirspec_hot_pixels`
+
+    Returns
+    -------
+    dq : array-like
+        DQ flags
+
+    count : int
+        Number of flagged pixels
+
+    status : int
+        - 0: Failed to import `flag_nirspec_hot_pixels`
+        - 1: ``count > max_allowed_flagged``
+        - 2: ``dq`` was added to ``slit.dq``
+    """
+    from stdatamodels import fits_support
+
+    try:
+        from grizli.jwst_utils import flag_nirspec_hot_pixels, PLUS_FOOTPRINT
+    except ImportError:
+        status = 0
+        return (slit.dq & 0, 0, status)
+
+    hdulist = fits_support.to_fits(slit._instance, slit._schema)
+    hdulist["DQ"].data[~np.isfinite(hdulist["SCI"].data)] |= 1
+    hdulist["SCI"].header["MDRIZSKY"] = 0.0
+
+    if "dilate_footprint" not in kwargs:
+        kwargs["dilate_footprint"] = PLUS_FOOTPRINT
+
+    if "jwst_dq_flags" not in kwargs:
+        kwargs["jwst_dq_flags"] = dq_flags
+
+    if "verbose" not in kwargs:
+        kwargs["verbose"] = False
+
+    sn, dq, count = flag_nirspec_hot_pixels(hdulist, **kwargs)
+    if count < max_allowed_flagged:
+        slit.dq |= dq.astype(slit.dq.dtype)
+        status = 2
+    else:
+        status = 1
+
+    return dq, count, status
+
+
 def slit_normalization_correction(slit, verbose=True):
     """
     Run `~msaexp.utils.get_normalization_correction` for a ``SlitModel`` object
@@ -2932,4 +3029,3 @@ def objfun_prf(
         return chi[ok].flatten()
     elif ret == 3:
         return chi2
-
