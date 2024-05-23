@@ -2672,6 +2672,9 @@ def slit_hot_pixels(
         return (slit.dq & 0, 0, status)
 
     hdulist = fits_support.to_fits(slit._instance, slit._schema)
+    hdulist["DQ"].data[~np.isfinite(hdulist["SCI"].data)] |= 1
+    hdulist["SCI"].header["MDRIZSKY"] = 0.0
+
     if "dilate_footprint" not in kwargs:
         kwargs["dilate_footprint"] = PLUS_FOOTPRINT
 
