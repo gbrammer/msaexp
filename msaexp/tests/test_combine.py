@@ -5,12 +5,12 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 from .. import utils
 from .. import slit_combine
 from .. import spectrum
 
 TARGETS = ["1345_933"]
-
 
 def data_path():
     return os.path.join(os.path.dirname(__file__), "data")
@@ -18,7 +18,7 @@ def data_path():
 
 def test_globals():
 
-    assert slit_combine.BAD_PIXEL_FLAG & 1025 == 1025
+    assert utils.BAD_PIXEL_FLAG & 1025 == 1025
 
 
 def test_split():
