@@ -827,6 +827,10 @@ class SlitGroup:
             try:
                 self.estimate_sky(**estimate_sky_kwargs)
 
+                if (flag_trace_kwargs is not None) & (self.mask.sum() > 100):
+                    if self.meta["position_key"] != "manual_position":
+                        self.flag_trace_outliers(**flag_trace_kwargs)
+
                 if (flag_percentile_kwargs is not None) & (
                     self.mask.sum() > 100
                 ):
@@ -2029,8 +2033,10 @@ class SlitGroup:
         fsize = filter_size if filter_size > 0 else -filter_size * self.N
         max_sort = nd.maximum_filter(self.data[in_trace][so], fsize)
 
-        outlier = data > np.interp(
-            self.wave, self.wave[in_trace][so], max_sort * threshold
+        max_interp = np.interp(self.wave, self.wave[in_trace][so], max_sort)
+
+        outlier = (data > max_interp * threshold) & (
+            data > 3 * np.sqrt(self.var_total)
         )
 
         outlier &= ~trace_mask
