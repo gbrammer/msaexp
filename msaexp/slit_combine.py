@@ -600,14 +600,14 @@ class SlitGroup:
 
         sky_file : str, None
             - Filename of a tabulated global sky
-            - `"read"`: try to find a file provided with `msaexp` in 
+            - `"read"`: try to find a file provided with `msaexp` in
               ``msaexp/data/sky_data``
             - None: ignore
-        
+
         global_sky_df : int
             If a ``sky_file`` is available and ``estimate_sky_kwargs`` are specified,
             use this as the degrees of freedom in ``estimate_sky_kwargs``
-    
+
         estimate_sky_kwargs : None, dict
             Arguments to pass to `~msaexp.slit_combine.SlitGroup.estimate_sky` to
             estimate sky directly from the slit data
@@ -1179,21 +1179,19 @@ class SlitGroup:
         Try to read a global sky file from ``msaexp/data/msa_sky``
         """
         if sky_file in [None, "read"]:
-            visit = os.path.basename(self.files[0]).split('_')[0]
+            visit = os.path.basename(self.files[0]).split("_")[0]
             sky_file = os.path.join(
                 os.path.dirname(__file__),
-                'data',
-                'msa_sky',
-                f'{visit}_sky.csv'
+                "data",
+                "msa_sky",
+                f"{visit}_sky.csv",
             )
 
         if os.path.exists(sky_file):
             sky_data = utils.read_catalog(sky_file)
-            msg = (
-                f" {'get_global_sky':<28}: {os.path.basename(sky_file)} to sky_arrays"
-            )
+            msg = f" {'get_global_sky':<28}: {os.path.basename(sky_file)} to sky_arrays"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
-            self.sky_arrays = (sky_data['wave'], sky_data['flux'])
+            self.sky_arrays = (sky_data["wave"], sky_data["flux"])
             self.meta["sky_file"] = os.path.basename(sky_file)
             self.meta["has_sky_arrays"] = True
 

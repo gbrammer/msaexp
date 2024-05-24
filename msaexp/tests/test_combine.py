@@ -12,6 +12,7 @@ from .. import spectrum
 
 TARGETS = ["1345_933"]
 
+
 def data_path():
     return os.path.join(os.path.dirname(__file__), "data")
 
@@ -234,7 +235,7 @@ def test_slit_group():
     assert np.allclose(np.nanmax(obj.wave), 5.3821, rtol=1.0e-3)
 
     assert np.nanmin(obj.bar[obj.mask]) > default_kwargs["min_bar"]
-    
+
     # These are the same if there is no sky model
     assert np.allclose(obj.data[obj.mask], obj.sci[obj.mask])
 
@@ -309,11 +310,11 @@ def test_slit_group():
         absolute_threshold=0.2,
         make_plot=False,
     )
-    
+
     # Read global sky
     obj.get_global_sky(sky_file="read")
     assert obj.meta["sky_file"] == "jw01345062001_sky.csv"
-    
+
     obj.apply_normalization_correction()
 
     obj.meta["bar_corr_mode"] = "slit"
