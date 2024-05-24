@@ -219,7 +219,7 @@ def test_slit_group():
         "position_key": "y_index",
         "nhot": 0,
         "ncold": 0,
-        "has_sky_arrays": False,
+        # "has_sky_arrays": False,
         "weight_type": "ivm",
         "percentile_outliers": 0,
         "removed_pathloss": "PATHLOSS_UN",
