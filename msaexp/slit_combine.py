@@ -524,6 +524,8 @@ class SlitGroup:
         fix_prism_norm=True,
         slit_hotpix_kwargs={},
         sky_arrays=None,
+        sky_file="read",
+        global_sky_df=7,
         estimate_sky_kwargs=None,
         flag_profile_kwargs=None,
         flag_trace_kwargs={},
@@ -596,6 +598,16 @@ class SlitGroup:
         sky_arrays : array-like
             Optional sky data (in progress)
 
+        sky_file : str, None
+            - Filename of a tabulated global sky
+            - `"read"`: try to find a file provided with `msaexp` in 
+              ``msaexp/data/sky_data``
+            - None: ignore
+        
+        global_sky_df : int
+            If a ``sky_file`` is available and ``estimate_sky_kwargs`` are specified,
+            use this as the degrees of freedom in ``estimate_sky_kwargs``
+    
         estimate_sky_kwargs : None, dict
             Arguments to pass to `~msaexp.slit_combine.SlitGroup.estimate_sky` to
             estimate sky directly from the slit data
@@ -745,6 +757,8 @@ class SlitGroup:
             "has_sky_arrays": (sky_arrays is not None),
             "weight_type": weight_type,
             "percentile_outliers": 0,
+            "sky_file": "N/A",
+            "global_sky_df": global_sky_df,
         }
 
         # Comments on meta for header keywords
@@ -773,6 +787,8 @@ class SlitGroup:
             "has_sky_arrays": "sky arrays specified",
             "weight_type": "Weighting scheme for 2D combination",
             "percentile_outliers": "Masked pixels from flag_percentile_outliers",
+            "sky_file": "Filename of a global sky background table",
+            "global_sky_df": "Degrees of freedom of fit with global sky",
         }
 
         self.shapes = []
@@ -794,6 +810,9 @@ class SlitGroup:
         self.calculate_slices()
 
         self.parse_data()
+
+        if sky_file is not None:
+            self.get_global_sky(sky_file=sky_file)
 
         if self.grating.startswith("G"):
             self.meta["diffs"] |= self.meta["grating_diffs"]
@@ -1154,6 +1173,29 @@ class SlitGroup:
         )
 
         return info
+
+    def get_global_sky(self, sky_file=None):
+        """
+        Try to read a global sky file from ``msaexp/data/msa_sky``
+        """
+        if sky_file in [None, "read"]:
+            visit = os.path.basename(self.files[0]).split('_')[0]
+            sky_file = os.path.join(
+                os.path.dirname(__file__),
+                'data',
+                'msa_sky',
+                f'{visit}_sky.csv'
+            )
+
+        if os.path.exists(sky_file):
+            sky_data = utils.read_catalog(sky_file)
+            msg = (
+                f" {'get_global_sky':<28}: {os.path.basename(sky_file)} to sky_arrays"
+            )
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            self.sky_arrays = (sky_data['wave'], sky_data['flux'])
+            self.meta["sky_file"] = os.path.basename(sky_file)
+            self.meta["has_sky_arrays"] = True
 
     def calculate_slices(self):
         """
@@ -1730,12 +1772,17 @@ class SlitGroup:
         nbin = sky_wave.shape[0]
         xbin = np.interp(self.wave, sky_wave, np.arange(nbin) / nbin)
 
-        if df <= 0:  # | (self.sky_arrays is not None):
+        if self.meta["sky_file"] is not "N/A":
+            df_use = self.meta["global_sky_df"]
+        else:
+            df_use = df
+
+        if df_use <= 0:  # | (self.sky_arrays is not None):
             spl_full = np.ones(xbin.size)[:, None]
         else:
             spl_full = utils.bspline_templates(
                 xbin.flatten(),
-                df=df,
+                df=df_use,
                 minmax=(0, 1),
                 get_matrix=True,
             )
@@ -1762,7 +1809,7 @@ class SlitGroup:
 
         AxT = (spl_full[ok_skyf, :].T / np.sqrt(self.var_rnoise[ok_sky])).T
         yx = (self.sci / np.sqrt(self.var_rnoise))[ok_sky]
-        if df < 0:  # | (self.sky_arrays is not None):
+        if df_use < 0:  # | (self.sky_arrays is not None):
             sky_coeffs = np.array([1.0])
         else:
             sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)[0]
@@ -1775,12 +1822,12 @@ class SlitGroup:
             ok_sky &= ~sky_bad
             ok_skyf = ok_sky.flatten()
 
-            if df <= 0:
+            if df_use <= 0:
                 spl_full = np.ones(xbin.size)[:, None]
             else:
                 spl_full = utils.bspline_templates(
                     xbin.flatten(),
-                    df=df,
+                    df=df_use,
                     minmax=(0, 1),
                     get_matrix=True,
                 )
@@ -1793,12 +1840,12 @@ class SlitGroup:
 
             AxT = (spl_full[ok_skyf, :].T / np.sqrt(self.var_rnoise[ok_sky])).T
             yx = (self.sci / np.sqrt(self.var_rnoise))[ok_sky]
-            if df < 0:
+            if df_use < 0:
                 sky_coeffs = np.array([1.0])
             else:
                 sky_coeffs = np.linalg.lstsq(AxT, yx, rcond=None)[0]
 
-        if df <= 0:
+        if df_use <= 0:
             spl_array = np.ones(nbin)[:, None]
             sky_covar = np.array([1.0])
         else:
@@ -1806,7 +1853,7 @@ class SlitGroup:
 
             spl_array = utils.bspline_templates(
                 np.arange(nbin) / nbin,
-                df=df,
+                df=df_use,
                 minmax=(0, 1),
                 get_matrix=True,
             )
@@ -1828,7 +1875,7 @@ class SlitGroup:
             "sky_coeffs": sky_coeffs,
             "sky_covar": sky_covar,
             "spl_trim": spl_trim,
-            "df": df,
+            "df": df_use,
             "sky2d": sky2d,
             "use": use,
             "npix": ok_sky.sum(),
