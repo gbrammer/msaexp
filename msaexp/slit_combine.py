@@ -1772,7 +1772,7 @@ class SlitGroup:
         nbin = sky_wave.shape[0]
         xbin = np.interp(self.wave, sky_wave, np.arange(nbin) / nbin)
 
-        if self.meta["sky_file"] is not "N/A":
+        if self.meta["sky_file"] not in [None, "N/A"]:
             df_use = self.meta["global_sky_df"]
         else:
             df_use = df
