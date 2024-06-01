@@ -112,6 +112,7 @@ def test_prf_line():
     Test pixel-integrated emission line model
     """
     from ..resample_numba import sample_gaussian_line_numba
+
     # try:
     #     from ..resample_numba import sample_gaussian_line_numba
     # except ImportError:
@@ -184,3 +185,15 @@ def test_prf_line():
             # if 1:
             #     pl = plt.plot(spec_wobs, line, color=c, alpha=0.5)
             #     c = pl[0].get_color()
+
+
+def test_trapz():
+    """
+    test trapz integration
+    """
+    from ..resample_numba import trapz
+
+    x = np.linspace(-1, 1, 4096, dtype=np.float32)
+    y = x**2
+
+    assert np.allclose(np.trapz(y, x), trapz(y, x), rtol=1.0e-4)
