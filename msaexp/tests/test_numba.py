@@ -197,3 +197,43 @@ def test_trapz():
     y = x**2
 
     assert np.allclose(np.trapz(y, x), trapz(y, x), rtol=1.0e-4)
+
+
+def test_dust_models():
+    """ """
+    from ..resample_numba import calzetti2000_alambda, calzetti2000_attenuation
+    from ..resample_numba import (
+        smc_alambda,
+        salim_alambda,
+        salim2018_fit_alambda,
+    )
+
+    wrest = np.array([1100, 2175.0, 5500.0, 4.0e4]) / 1.0e4
+
+    z = 2.0
+    A_lambda = calzetti2000_alambda(wrest * (1 + z), z)
+    assert np.allclose(
+        A_lambda, [3.22864163, 2.10829655, 0.99947205, 0.0], rtol=1.0e-3
+    )
+
+    A_linear = calzetti2000_attenuation(wrest * (1 + z), z, 1.0)
+    assert np.allclose(A_linear[2], 10**-0.4, rtol=1.0e-3)
+
+    assert np.allclose(
+        A_linear, [0.05111441, 0.14344367, 0.3983008, 1.0], rtol=1.0e-3
+    )
+
+    A_salim = salim_alambda(wrest * (1 + z), z, 0.0, 0.0)
+    assert np.allclose(A_salim, A_lambda)
+
+    A_bump = salim_alambda(wrest * (1 + z), z, 0.0, 1.0)
+    assert np.all(A_bump[:-1] > A_salim[:-1])
+
+    for ind in range(8):
+        A_fit = salim2018_fit_alambda(wrest * (1 + z), z, ind)
+        assert np.allclose(A_fit[2], 1.0, rtol=1.0e-1)
+        assert A_fit[0] > 3
+        assert A_fit[3] == 0.0
+
+    A_smc = smc_alambda(wrest * (1 + z), z)
+    assert np.allclose(A_smc, [7.93700997, 3.13109021, 1.0, 0.0], rtol=1.0e-3)
