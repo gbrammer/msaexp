@@ -93,8 +93,90 @@ __all__ = [
     "plot_spectrum",
     "read_spectrum",
     "calc_uncertainty_scale",
+    "resample_bagpipes_model",
     "SpectrumSampler",
 ]
+
+
+def resample_bagpipes_model(
+    model_galaxy,
+    model_comp,
+    spec_wavs=None,
+    R_curve=None,
+    nsig=5,
+    scale_disp=1.3,
+):
+    """
+
+    Parameters
+    ----------
+    model_galaxy : `bagpipes.models.model_galaxy.model_galaxy`
+
+    model_comp : dict
+        Model components dictionary
+
+    spec_wavs : array-like, None
+        Spectrum wavelengths, Angstroms. If not specified, try to use
+        ``model_galaxy.spec_wavs``
+
+    R_curve : array-like, None
+        Spectral resolution FWHM curve.  If not specified, try to use
+        ``model_comp["R_curve"][:,1]``.
+
+    nsig : int
+        Number of sigmas for resample.
+
+    Returns
+    -------
+    spectrum : array-like
+        Resampled.  If ``model_galaxy.spec_wavs`` is found and has same length
+        as ``spec_wavs``, also set ``model_galaxy.spectrum = spectrum`` along with the
+        wavelength array.
+
+        The units of ``spectrum`` returned by the function are always microJansky, but
+        the units of ``model_galaxy.spectrum`` are set as appropriate given
+        ``model_galaxy.spec_units``.
+
+    """
+    from .resample_numba import resample_template_numba
+
+    zplusone = model_comp["redshift"] + 1.0
+
+    if "veldisp" in model_comp:
+        velocity_sigma = model_comp["veldisp"]
+    else:
+        velocity_sigma = 0.0
+
+    redshifted_wavs = zplusone * model_galaxy.wavelengths
+
+    if spec_wavs is None:
+        spec_wavs = model_galaxy.spec_wavs
+
+    if R_curve is None:
+        R_curve = model_comp["R_curve"][:, 1] * scale_disp
+
+    fluxes = resample_template_numba(
+        spec_wavs,
+        R_curve,
+        redshifted_wavs,
+        model_galaxy.spectrum_full,
+        velocity_sigma=velocity_sigma,
+        nsig=nsig,
+        fill_value=0.0,
+    )
+
+    to_mujy = 10**-29 * 2.9979 * 10**18 / spec_wavs**2
+
+    if model_galaxy.spec_wavs is not None:
+        if len(model_galaxy.spec_wavs) == len(spec_wavs):
+            if model_galaxy.spec_units == "mujy":
+                spectrum = np.c_[spec_wavs, fluxes / to_mujy]
+            else:
+                spectrum = np.c_[spec_wavs, fluxes]
+
+            model_galaxy.spectrum = spectrum
+
+    return fluxes / to_mujy
 
 
 class SpectrumSampler(object):
@@ -503,6 +585,28 @@ class SpectrumSampler(object):
                 fig = msautils.drizzled_hdu_figure(hdul, **kwargs)
 
         return fig
+
+    def resample_bagpipes_model(
+        self, model_galaxy, model_comp, nsig=5, scale_disp=1.3
+    ):
+        """
+        Resample a `bagpipes` model to the wavelength grid of the spectrum.
+
+        See ``msaexp.spectrum.resample_bagpipes_model``.
+        """
+
+        if "scale_disp" in model_comp:
+            scale_disp = model_comp["scale_disp"]
+
+        spectrum = resample_bagpipes_model(
+            model_galaxy,
+            model_comp,
+            spec_wavs=self.spec["wave"] * 1.0e4,
+            R_curve=self.spec["R"] * scale_disp,
+            nsig=nsig,
+        )
+
+        return spectrum
 
 
 def smooth_template_disp_eazy(
