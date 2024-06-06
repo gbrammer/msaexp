@@ -1,6 +1,6 @@
 import numpy as np
 from numba import jit
-from math import erf
+from math import erf, pow as _pow
 
 __all__ = [
     "simpson",
@@ -10,6 +10,12 @@ __all__ = [
     "sample_gaussian_line_numba",
     "pixel_integrated_gaussian_numba",
     "compute_igm",
+    "calzetti2000_alambda",
+    "calzetti2000_attenuation",
+    "drude_profile",
+    "salim_alambda",
+    "smc_alambda",
+    "smc_attenuation",
 ]
 
 
@@ -461,8 +467,8 @@ def compute_igm(z, wobs, scale_tau=1.0):
     ADLA1 = _DLA[2]
     ADLA2 = _DLA[3]
 
-    def _pow(a, b):
-        return a**b
+    # def _pow(a, b):
+    #     return a**b
 
     ####
     # Lyman series, Lyman-alpha forest
@@ -577,3 +583,375 @@ def compute_igm(z, wobs, scale_tau=1.0):
     igmz = np.exp(-scale_tau * tau)
 
     return igmz
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def _calzetti2000_alambda(wrest):
+    """
+    Calzetti (2000) attenuation law adapted from `bagpipes` (A. Carnall)
+
+    Parameters
+    ----------
+    wrest : float
+        Rest-frame wavelength in microns
+
+    Returns
+    -------
+    Alam : float
+        A(wrest) / Av
+    """
+    if wrest < 0.1200:
+        Alam = (wrest / 0.12) ** -0.77 * (
+            4.05
+            + 2.695
+            * (-2.156 + 1.509 / 0.12 - 0.198 / 0.12**2 + 0.011 / 0.12**3)
+        )
+    elif wrest < 0.6300:
+        Alam = 4.05 + 2.695 * (
+            -2.156 + 1.509 / wrest - 0.198 / wrest**2 + 0.011 / wrest**3
+        )
+    elif wrest < 3.1:
+        Alam = 2.659 * (-1.857 + 1.040 / wrest) + 4.05
+
+    else:
+        Alam = 0.0
+
+    Alam /= 4.05
+
+    return Alam
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def calzetti2000_alambda(wobs, z):
+    """
+    Calzetti (2000) attenuation law adapted from `bagpipes` (A. Carnall)
+
+    Parameters
+    ----------
+    wobs : array-like
+        Observed-frame wavelength, microns
+
+    z : float
+        Redshift
+
+    Returns
+    -------
+    A_lambda : array-like
+        Attenuation A(lam)/Av as a function of wavelength, magnitudes
+
+    """
+
+    A_lambda = np.zeros_like(wobs)
+
+    for i, w in enumerate(wobs):
+        A_lambda[i] = _calzetti2000_alambda(w / (1 + z))
+
+    return A_lambda
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def calzetti2000_attenuation(wobs, z, Av):
+    """
+    Calzetti (2000) attenuation law adapted from `bagpipes` (A. Carnall)
+
+    Parameters
+    ----------
+    wobs : array-like
+        Observed-frame wavelength, microns
+
+    z : float
+        Redshift
+
+    Av : float
+        Extinction in the V band, magnitudes.
+
+    Returns
+    -------
+    A_linear : array-like
+        Linear attenuation as a function of wavelength
+    """
+    A_lambda = calzetti2000_alambda(wobs, z)
+    A_linear = 10 ** (-0.4 * A_lambda * Av)
+
+    return A_linear
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def drude_profile(wrest, center, width):
+    """
+    Drude profile
+
+    Parameters
+    ----------
+    wrest : float
+        Rest-frame wavelength
+
+    center : float
+        Center of the profile, e.g., 0.2175 microns
+
+    width : float
+        Width of the profile, e.g., 0.035 microns
+
+    Returns
+    -------
+    drude : float
+        Drude profile
+    """
+    drude = wrest**2 * width**2
+    drude /= (wrest**2 - center**2) ** 2 + wrest**2 * width**2
+    return drude
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def salim_alambda(wobs, z, delta, B):
+    """
+    Salim (2018) attenuation law adapted from `bagpipes` (A. Carnall)
+
+    Parameters
+    ----------
+    wobs : array-like
+        Observed-frame wavelength, microns
+
+    z : float
+        Redshift
+
+    delta : float
+        Modification of slope w.r.t. Calzetti (2000)
+
+    B : float
+        Amplitude of the dust bump Drude profile
+
+    Returns
+    -------
+    A_lambda : array-like
+        Attenuation as a function of wavelength, magnitudes
+    """
+    Rv_m = 4.05 / ((4.05 + 1) * (4400.0 / 5500.0) ** delta - 4.05)
+
+    drude_center = 0.2175  # microns
+    drude_width = 0.035  # microns
+
+    A_lambda = np.zeros_like(wobs)
+
+    for i, w in enumerate(wobs):
+        wrest = w / (1 + z)
+        A_lambda[i] = (
+            _calzetti2000_alambda(wrest) * Rv_m * (wrest / 0.55) ** delta
+            + B * drude_profile(wrest, drude_center, drude_width)
+        ) / Rv_m
+
+    return A_lambda
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def salim_polynomial_klambda(w, Rv, B, a0, a1, a2, a3):
+    """
+    Generalized Salim+2018 attenuation curve
+
+    Parameters
+    ----------
+    w : float, array-like
+        Rest-frame wavelength
+
+    Returns
+    -------
+    k_lambda : float, array-like
+
+        ``k_lambda = = a0 + a1 / w + a2 / w**2 + a3 / w**3 + B * Drude(w) + Rv``
+
+    """
+    drude_center = 0.2175  # microns
+    drude_width = 0.035  # microns
+
+    k_lambda = (
+        a0
+        + a1 / w
+        + a2 / w**2
+        + a3 / w**3
+        + B * drude_profile(w, drude_center, drude_width)
+        + Rv
+    )
+
+    return k_lambda
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def salim2018_fit_alambda(wobs, z, index):
+    """
+    Attenuation curve fits with coefficients from Salim+2018, Table 1
+
+    Parameters
+    ----------
+    wobs : array-like
+        Observed-frame wavelength, microns
+
+    z : float
+        Redshift
+
+    index : int, [0 - 7]
+        Set of coefficients to use:
+            0: Star-forming galaxies
+            1: 8.5 < logM* < 9.5.
+            2: 9.5 < logM* < 10.5
+            3: 10.5 < logM* < 11.5
+            4: High-z analogs
+            5: logM* < 10
+            6: logM* > 10
+            7: Quiescent galaxies
+
+    Returns
+    -------
+    A_lambda : array-like
+        Attenuation A(lam)/Av as a function of wavelength, magnitudes
+
+    """
+
+    ############
+    #       Rv     B     a0    a1      a2      a3   lmax    n
+    table1 = [
+        [3.15, 1.57, -4.30, 2.71, -0.191, 0.0121, 2.28, 1.15],
+        [2.61, 2.62, -3.66, 2.13, -0.043, 0.0086, 2.01, 1.43],
+        [2.99, 1.73, -4.13, 2.56, -0.153, 0.0105, 2.18, 1.20],
+        [3.47, 1.09, -4.66, 3.03, -0.271, 0.0147, 2.45, 1.00],
+        [2.88, 2.27, -4.01, 2.46, -0.128, 0.0098, 2.12, 1.24],
+        [2.72, 2.74, -3.80, 2.25, -0.073, 0.0092, 2.05, 1.38],
+        [2.93, 2.11, -4.12, 2.56, -0.152, 0.0104, 2.09, 1.19],
+        [2.61, 2.21, -3.72, 2.20, -0.062, 0.0080, 1.95, 1.35],
+    ]
+
+    Rv, B, a0, a1, a2, a3, lmax, _n = table1[index]
+    k_lambda = np.zeros_like(wobs)
+    for i, w in enumerate(wobs):
+        if w < lmax:
+            k_lambda[i] = salim_polynomial_klambda(
+                w / (1 + z), Rv, B, a0, a1, a2, a3
+            )
+
+    return k_lambda / Rv
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def smc_alambda(wobs, z):
+    """
+    SMC extinction law from Gordon (2003) attenuation law adapted from
+    `bagpipes` (A. Carnall)
+
+    Parameters
+    ----------
+    wobs : array-like
+        Observed-frame wavelength, microns
+
+    z : float
+        Redshift
+
+    Returns
+    -------
+    A_lambda : array-like
+        Attenuation A(lam)/Av as a function of wavelength, magnitudes
+
+    """
+
+    A_lambda = np.zeros_like(wobs)
+
+    c1 = -4.959
+    c2 = 2.264
+    c3 = 0.389
+    c4 = 0.461
+    x0 = 4.6
+
+    gamma = 1.0
+    Rv = 2.74
+
+    #####
+    # Interpolate beyond 2760 Angstroms
+    Nint = 11
+
+    int_w = [
+        0.2760,
+        0.296,
+        0.37,
+        0.44,
+        0.55,
+        0.65,
+        0.81,
+        1.25,
+        1.65,
+        2.198,
+        3.1,
+    ]
+
+    int_y = [
+        2.220,
+        2.000,
+        1.672,
+        1.374,
+        1.00,
+        0.801,
+        0.567,
+        0.25,
+        0.169,
+        0.11,
+        0.0,
+    ]
+
+    # Precompute slopes for interpolation
+    interp_m = [
+        (int_y[j] - int_y[j - 1]) / (int_w[j] - int_w[j - 1])
+        for j in range(1, Nint)
+    ]
+
+    for i, w in enumerate(wobs):
+        # k = 1 / wave_microns
+        wrest = w / (1 + z)
+        k = 1.0 / wrest
+
+        if w > 0.2760:
+
+            alam = 0.0
+
+            for j in range(1, Nint):
+                if int_w[j] > w:
+                    # Linear interpolation
+                    alam = (w - int_w[j - 1]) * interp_m[j - 1] + int_y[j - 1]
+                    break
+
+            A_lambda[i] = alam
+
+        else:
+            D = k**2 / ((k**2 - x0**2) ** 2 + k**2 * gamma**2)
+            if k < 5.9:
+                F = 0.0
+            else:
+                F = 0.5392 * (k - 5.9) ** 2 + 0.05644 * (k - 5.9) ** 3
+
+            A_lambda[i] = (c1 + c2 * k + c3 * D + c4 * F) / Rv + 1.0
+
+    return A_lambda
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def smc_attenuation(wobs, z, Av):
+    """
+    SMC extinction law from Gordon (2003) attenuation law adapted from
+    `bagpipes` (A. Carnall)
+
+    Parameters
+    ----------
+    wobs : array-like
+        Observed-frame wavelength, microns
+
+    z : float
+        Redshift
+
+    Av : float
+        Extinction in the V band, magnitudes.
+
+    Returns
+    -------
+    A_linear : array-like
+        Linear attenuation as a function of wavelength
+    """
+    A_lambda = smc_alambda(wobs, z)
+    A_linear = 10 ** (-0.4 * A_lambda * Av)
+
+    return A_linear
