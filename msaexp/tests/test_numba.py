@@ -236,4 +236,4 @@ def test_dust_models():
         assert A_fit[3] == 0.0
 
     A_smc = smc_alambda(wrest * (1 + z), z)
-    assert np.allclose(A_smc, [1.8492973, 0.79734375, 0.169, 0.0], rtol=1.0e-3)
+    assert np.allclose(A_smc, [7.93700997, 3.13109021, 1.0, 0.0], rtol=1.0e-3)

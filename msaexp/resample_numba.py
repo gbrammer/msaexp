@@ -586,32 +586,32 @@ def compute_igm(z, wobs, scale_tau=1.0):
 
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
-def _calzetti2000_alambda(wrest):
+def _calzetti2000_alambda(w0):
     """
     Calzetti (2000) attenuation law adapted from `bagpipes` (A. Carnall)
 
     Parameters
     ----------
-    wrest : float
+    w0 : float
         Rest-frame wavelength in microns
 
     Returns
     -------
     Alam : float
-        A(wrest) / Av
+        A(w0) / Av
     """
-    if wrest < 0.1200:
-        Alam = (wrest / 0.12) ** -0.77 * (
+    if w0 < 0.1200:
+        Alam = (w0 / 0.12) ** -0.77 * (
             4.05
             + 2.695
             * (-2.156 + 1.509 / 0.12 - 0.198 / 0.12**2 + 0.011 / 0.12**3)
         )
-    elif wrest < 0.6300:
+    elif w0 < 0.6300:
         Alam = 4.05 + 2.695 * (
-            -2.156 + 1.509 / wrest - 0.198 / wrest**2 + 0.011 / wrest**3
+            -2.156 + 1.509 / w0 - 0.198 / w0**2 + 0.011 / w0**3
         )
-    elif wrest < 3.1:
-        Alam = 2.659 * (-1.857 + 1.040 / wrest) + 4.05
+    elif w0 < 3.1:
+        Alam = 2.659 * (-1.857 + 1.040 / w0) + 4.05
 
     else:
         Alam = 0.0
@@ -677,13 +677,13 @@ def calzetti2000_attenuation(wobs, z, Av):
 
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
-def drude_profile(wrest, center, width):
+def drude_profile(w0, center, width):
     """
     Drude profile
 
     Parameters
     ----------
-    wrest : float
+    w0 : float
         Rest-frame wavelength
 
     center : float
@@ -697,8 +697,8 @@ def drude_profile(wrest, center, width):
     drude : float
         Drude profile
     """
-    drude = wrest**2 * width**2
-    drude /= (wrest**2 - center**2) ** 2 + wrest**2 * width**2
+    drude = w0**2 * width**2
+    drude /= (w0**2 - center**2) ** 2 + w0**2 * width**2
     return drude
 
 
@@ -734,10 +734,10 @@ def salim_alambda(wobs, z, delta, B):
     A_lambda = np.zeros_like(wobs)
 
     for i, w in enumerate(wobs):
-        wrest = w / (1 + z)
+        w0 = w / (1 + z)
         A_lambda[i] = (
-            _calzetti2000_alambda(wrest) * Rv_m * (wrest / 0.55) ** delta
-            + B * drude_profile(wrest, drude_center, drude_width)
+            _calzetti2000_alambda(w0) * Rv_m * (w0 / 0.55) ** delta
+            + B * drude_profile(w0, drude_center, drude_width)
         ) / Rv_m
 
     return A_lambda
@@ -822,10 +822,9 @@ def salim2018_fit_alambda(wobs, z, index):
     Rv, B, a0, a1, a2, a3, lmax, _n = table1[index]
     k_lambda = np.zeros_like(wobs)
     for i, w in enumerate(wobs):
-        if w < lmax:
-            k_lambda[i] = salim_polynomial_klambda(
-                w / (1 + z), Rv, B, a0, a1, a2, a3
-            )
+        w0 = w / (1 + z)
+        if w0 < lmax:
+            k_lambda[i] = salim_polynomial_klambda(w0, Rv, B, a0, a1, a2, a3)
 
     return k_lambda / Rv
 
@@ -902,17 +901,17 @@ def smc_alambda(wobs, z):
 
     for i, w in enumerate(wobs):
         # k = 1 / wave_microns
-        wrest = w / (1 + z)
-        k = 1.0 / wrest
+        w0 = w / (1 + z)
+        k = 1.0 / w0
 
-        if w > 0.2760:
+        if w0 > 0.2760:
 
             alam = 0.0
 
             for j in range(1, Nint):
-                if int_w[j] > w:
+                if int_w[j] > w0:
                     # Linear interpolation
-                    alam = (w - int_w[j - 1]) * interp_m[j - 1] + int_y[j - 1]
+                    alam = (w0 - int_w[j - 1]) * interp_m[j - 1] + int_y[j - 1]
                     break
 
             A_lambda[i] = alam
