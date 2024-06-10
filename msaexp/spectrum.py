@@ -77,11 +77,21 @@ from . import utils as msautils
 try:
     from .resample_numba import compute_igm
 
-    igm_func = compute_igm
-
+    IGM_FUNC = compute_igm
 except ImportError:
     igm = eazy.igm.Inoue14()
-    igm_func = igm.full_IGM
+    IGM_FUNC = igm.full_IGM
+
+try:
+    from .resample_numba import (
+        resample_template_numba as RESAMPLE_FUNC,
+    )
+    from .resample_numba import (
+        sample_gaussian_line_numba as SAMPLE_LINE_FUNC,
+    )
+except ImportError:
+    from .resample import resample_template as RESAMPLE_FUNC
+    from .resample import sample_gaussian_line as SAMPLE_LINE_FUNC
 
 SCALE_UNCERTAINTY = 1.0
 
@@ -186,7 +196,9 @@ class SpectrumSampler(object):
     spec_R_fwhm = None
     valid = None
 
-    def __init__(self, spec_input, **kwargs):
+    def __init__(
+        self, spec_input, oversample_kwargs=dict(factor=5, pad=12), **kwargs
+    ):
         """
         Helper functions for sampling templates onto the wavelength grid
         of an observed spectrum
@@ -199,18 +211,12 @@ class SpectrumSampler(object):
 
         Attributes
         ----------
-        resample_func : func
-            Template resampling function, from
-            `~msaexp.resample_template_numba.msaexp.resample_numba` if possible
-            and `~msaexp.resample.resample_template` otherwise
-
-        sample_line_func : func
-            Emission line function, from
-            `~msaexp.resample_template_numba.msaexp.sample_gaussian_line_numba`
-             if possible and `~msaexp.resample.sample_line_func` otherwise
 
         spec : `~astropy.table.Table`
             1D spectrum table from the `SPEC1D HDU of ``file``
+
+        meta : dict
+            Metadata from ``spec.meta``
 
         spec_wobs : array-like
             Observed wavelengths, microns
@@ -223,21 +229,11 @@ class SpectrumSampler(object):
             Boolean array of valid 1D data
 
         """
-        try:
-            from .resample_numba import (
-                resample_template_numba as resample_func,
-            )
-            from .resample_numba import (
-                sample_gaussian_line_numba as sample_line_func,
-            )
-        except ImportError:
-            from .resample import resample_template as resample_func
-            from .resample import sample_gaussian_line as sample_line_func
-
-        self.resample_func = resample_func
-        self.sample_line_func = sample_line_func
-
         self.initialize_spec(spec_input, **kwargs)
+
+        self.NSPEC = len(self.spec)
+
+        self.oversamp_wobs = self.oversampled_wavelengths(**oversample_kwargs)
 
         self.initialize_emission_line()
 
@@ -291,10 +287,48 @@ class SpectrumSampler(object):
             self.file = None
 
         self.spec = read_spectrum(spec_input, **kwargs)
+
         self.spec_wobs = self.spec["wave"].astype(np.float32)
         self.spec_R_fwhm = self.spec["R"].astype(np.float32)
 
         self.valid = np.isfinite(self.spec["flux"] / self.spec["full_err"])
+        if "valid" in self.spec.colnames:
+            self.valid &= self.spec["valid"]
+
+    def oversampled_wavelengths(self, factor=5, pad=12):
+        """
+        Generate a wavelength grid that oversamples the spectrum wavelengths
+
+        Parameters
+        ----------
+        factor : int
+            Oversampling factor
+
+        Returns
+        -------
+        waves : array-like
+            Oversampled wavelengths
+        """
+        dx = np.gradient(self.spec["wave"])
+        xin = np.linspace(0, 1, self.NSPEC)
+        xout = np.linspace(0, 1, (self.NSPEC) * factor)
+        dxout = np.interp(xout, xin, dx) / factor
+
+        waves = (
+            self.spec["wave"][0] - (dx[0] + dxout[0]) / 2 + np.cumsum(dxout)
+        )
+        if pad > 0:
+            waves = np.pad(
+                waves,
+                pad * factor,
+                mode="linear_ramp",
+                end_values=(
+                    waves[0] - pad * factor * dxout[0],
+                    waves[-1] + pad * factor * dxout[-1],
+                ),
+            )
+
+        return waves
 
     def resample_eazy_template(
         self,
@@ -347,7 +381,7 @@ class SpectrumSampler(object):
         # Turn off
         igmz = 1.0
 
-        res = self.resample_func(
+        res = RESAMPLE_FUNC(
             self.spec_wobs,
             self.spec_R_fwhm * scale_disp,
             templ_wobs,
@@ -391,7 +425,7 @@ class SpectrumSampler(object):
         res : array-like
             Gaussian emission line sampled at the spectrum wavelengths
         """
-        res = self.resample_func(
+        res = RESAMPLE_FUNC(
             self.spec_wobs,
             self.spec_R_fwhm * scale_disp,
             self.xline * line_um,
@@ -428,7 +462,7 @@ class SpectrumSampler(object):
         res : array-like
             Gaussian emission line sampled at the spectrum wavelengths
         """
-        res = self.sample_line_func(
+        res = SAMPLE_LINE_FUNC(
             self.spec_wobs,
             self.spec_R_fwhm * scale_disp,
             line_um,
@@ -601,12 +635,53 @@ class SpectrumSampler(object):
         spectrum = resample_bagpipes_model(
             model_galaxy,
             model_comp,
-            spec_wavs=self.spec["wave"] * 1.0e4,
+            spec_wavs=self.spec_wobs * 1.0e4,
             R_curve=self.spec["R"] * scale_disp,
             nsig=nsig,
         )
 
         return spectrum
+
+    def igm_absorption(self, z, scale_tau=1.0, scale_disp=1.3):
+        """
+        `Inoue+ (2014) <https://ui.adsabs.harvard.edu/abs/2014MNRAS.442.1805I>`_ IGM
+        absorption
+
+        Parameters
+        ----------
+        z : float
+            Redshift
+
+        scale_tau : float
+            Factor to scale $\tau_\mathrm{IGM}$
+
+        scale_disp : float
+            Dispersion R rescaling
+
+        Returns
+        -------
+        igm : array-like
+            IGM model transmission at observed-frame wavelengths
+        """
+        from .resample_numba import compute_igm, resample_template_numba
+
+        igm_raw = IGM_FUNC(z, self.oversamp_wobs * 1.0e4)
+
+        igm = np.ones(self.NSPEC)
+
+        igm = RESAMPLE_FUNC(
+            self.spec_wobs,
+            self.spec["R"] * scale_disp,
+            self.oversamp_wobs,
+            igm_raw,
+            velocity_sigma=0.0,
+            wave_min=0.0800 * (1 + z),
+            wave_max=0.1350 * (1 + z),
+            left=0.0,
+            right=1.0,
+        )
+
+        return igm
 
 
 def smooth_template_disp_eazy(
@@ -1385,7 +1460,7 @@ def make_templates(
 
         _A = np.vstack(_A)
 
-        igmz = igm_func(z, wobs.value * 1.0e4)
+        igmz = IGM_FUNC(z, wobs.value * 1.0e4)
         _A *= np.maximum(igmz, 0.001)
 
     else:
@@ -1435,7 +1510,7 @@ def make_templates(
 
             _A = np.vstack(_A)
 
-            igmz = igm_func(z, wobs.value * 1.0e4)
+            igmz = IGM_FUNC(z, wobs.value * 1.0e4)
             _A *= np.maximum(igmz, 0.001)
 
         elif len(eazy_templates) == 1:
@@ -1456,7 +1531,7 @@ def make_templates(
 
             _A = np.vstack([bspl * tflam])
 
-            igmz = igm_func(z, wobs.value * 1.0e4)
+            igmz = IGM_FUNC(z, wobs.value * 1.0e4)
             _A *= np.maximum(igmz, 0.001)
 
         else:
@@ -1479,7 +1554,7 @@ def make_templates(
                 tline.append(False)
 
             _A = np.vstack(_A)
-            igmz = igm_func(z, wobs.value * 1.0e4)
+            igmz = IGM_FUNC(z, wobs.value * 1.0e4)
             _A *= np.maximum(igmz, 0.001)
 
     return templates, np.array(tline), _A
@@ -1737,7 +1812,7 @@ def old_make_templates(
             apply_igm=False,
         )
 
-        igmz = igm_func(z, wobs.value * 1.0e4)
+        igmz = IGM_FUNC(z, wobs.value * 1.0e4)
         _A *= np.maximum(igmz, 0.01)
     else:
         templates = {}
