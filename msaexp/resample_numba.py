@@ -147,6 +147,10 @@ def resample_template_numba(
     velocity_sigma=100,
     nsig=5,
     fill_value=0.0,
+    wave_min=0.0,
+    wave_max=1.0e6,
+    left=0.0,
+    right=0.0,
 ):
     """
     Resample a high resolution template/model on the wavelength grid of a
@@ -176,6 +180,15 @@ def resample_template_numba(
     fill_value : float
         Value to fill in the resampled array where no template data is available
 
+    wave_min : float
+        Minimum wavelength to consider
+
+    wave_max : float
+        Maximum wavelength to consider
+
+    left, right : float
+        Fill values when wavelengths less (greater) than wave_min (wave_max)
+
     Returns
     -------
     resamp : array-like
@@ -200,12 +213,18 @@ def resample_template_numba(
     ihi = 1
 
     N = len(spec_wobs)
-    resamp = np.zeros_like(spec_wobs) * fill_value
+    resamp = np.ones_like(spec_wobs) * fill_value
 
     Nt = len(templ_wobs)
 
     for i in range(N):
-        # sl = slice(ilo[i], ihi[i])
+        if spec_wobs[i] < wave_min:
+            resamp[i] = left
+            continue
+        elif spec_wobs[i] > wave_max:
+            resamp[i] = right
+            continue
+
         ilo_i = ilo
         while (templ_wobs[ilo] < spec_wobs[i] - nsig * dw[i]) & (ilo < Nt - 1):
             ilo += 1

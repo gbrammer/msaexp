@@ -8,7 +8,17 @@ __all__ = [
 
 
 def resample_template(
-    spec_wobs, spec_R_fwhm, templ_wobs, templ_flux, velocity_sigma=100, nsig=5
+    spec_wobs,
+    spec_R_fwhm,
+    templ_wobs,
+    templ_flux,
+    velocity_sigma=100,
+    nsig=5,
+    fill_value=0.0,
+    wave_min=0.0,
+    wave_max=1.0e6,
+    left=0.0,
+    right=0.0,
 ):
     """
     Resample a high resolution template/model on the wavelength grid of a
@@ -35,6 +45,15 @@ def resample_template(
     nsig : float
         Number of sigmas of the Gaussian convolution kernel to sample
 
+    wave_min : float
+        Minimum wavelength to consider
+
+    wave_max : float
+        Maximum wavelength to consider
+
+    left, right : float
+        Fill values when wavelengths less (greater) than wave_min (wave_max)
+
     Returns
     -------
     resamp : array-like
@@ -57,13 +76,18 @@ def resample_template(
     ihi = np.cast[int](np.interp(spec_wobs + nsig * dw, templ_wobs, ix)) + 1
 
     N = len(spec_wobs)
-    fres = np.zeros(N)
-    for i in range(N):
+    fres = np.ones(N) * fill_value
+    range_idx = np.where((spec_wobs >= wave_min) & (spec_wobs <= wave_max))[0]
+
+    for i in range_idx:
         sl = slice(ilo[i], ihi[i])
         lsl = templ_wobs[sl]
         g = np.exp(-((lsl - spec_wobs[i]) ** 2) / 2 / dw[i] ** 2)
         g *= 1.0 / np.sqrt(2 * np.pi * dw[i] ** 2)
         fres[i] = np.trapz(templ_flux[sl] * g, lsl)
+
+    fres[spec_wobs < wave_min] = left
+    fres[spec_wobs > wave_max] = right
 
     return fres
 
