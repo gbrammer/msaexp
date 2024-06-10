@@ -142,12 +142,30 @@ def test_sampler_object():
     sampler_checks(new)
 
     # Initialized from HDUList
-    with pyfits.open(SPECTRUM_FILE) as hdul:
-        spec = spectrum.SpectrumSampler(hdul)
-        sampler_checks(spec)
+    for with_numba in [True, False]:
+        with pyfits.open(SPECTRUM_FILE) as hdul:
+            spec = spectrum.SpectrumSampler(hdul)
+            sampler_checks(spec, with_numba=with_numba)
 
 
-def sampler_checks(spec):
+def sampler_checks(spec, with_numba=False):
+
+    from ..resample import resample_template as RESAMPLE_FUNC
+    from ..resample import sample_gaussian_line as SAMPLE_LINE_FUNC
+
+    if with_numba:
+        try:
+            from ..resample_numba import (
+                resample_template_numba as RESAMPLE_FUNC,
+            )
+            from ..resample_numba import (
+                sample_gaussian_line_numba as SAMPLE_LINE_FUNC,
+            )
+        except ImportError:
+            return True
+
+    spectrum.RESAMPLE_FUNC = RESAMPLE_FUNC
+    spectrum.SAMPLE_LINE_FUNC = SAMPLE_LINE_FUNC
 
     assert np.allclose(spec.valid.sum(), 327, atol=5)
 
@@ -166,3 +184,13 @@ def sampler_checks(spec):
             assert np.allclose(
                 np.trapz(gau2, spec.spec_wobs), 1.0, rtol=1.0e-3
             )
+
+    igm1 = spec.igm_absorption(1.0)
+    assert np.allclose(igm1, 1.0)
+
+    igm7 = spec.igm_absorption(7.0)
+    assert (igm7[40] < 1.0) & (igm7[40] > 0)
+
+    igm10 = spec.igm_absorption(10.0)
+    n10 = igm10 < 1
+    assert n10.sum() == 82
