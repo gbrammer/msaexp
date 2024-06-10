@@ -110,7 +110,7 @@ __all__ = [
 
 def resample_bagpipes_model(
     model_galaxy,
-    model_comp,
+    model_comp=None,
     spec_wavs=None,
     R_curve=None,
     nsig=5,
@@ -123,7 +123,9 @@ def resample_bagpipes_model(
     model_galaxy : `bagpipes.models.model_galaxy.model_galaxy`
 
     model_comp : dict
-        Model components dictionary
+        Model components dictionary.  If specified, run
+        ``model_galaxy.update(model_comp)``, otherwise get from
+        ``model_galaxy.model_comp``
 
     spec_wavs : array-like, None
         Spectrum wavelengths, Angstroms. If not specified, try to use
@@ -149,6 +151,11 @@ def resample_bagpipes_model(
 
     """
     from .resample_numba import resample_template_numba
+
+    if model_comp is not None:
+        model_galaxy.update(model_comp)
+
+    model_comp = model_galaxy.model_comp
 
     zplusone = model_comp["redshift"] + 1.0
 
@@ -621,7 +628,7 @@ class SpectrumSampler(object):
         return fig
 
     def resample_bagpipes_model(
-        self, model_galaxy, model_comp, nsig=5, scale_disp=1.3
+        self, model_galaxy, model_comp=None, nsig=5, scale_disp=1.3
     ):
         """
         Resample a `bagpipes` model to the wavelength grid of the spectrum.
@@ -634,7 +641,7 @@ class SpectrumSampler(object):
 
         spectrum = resample_bagpipes_model(
             model_galaxy,
-            model_comp,
+            model_comp=model_comp,
             spec_wavs=self.spec_wobs * 1.0e4,
             R_curve=self.spec["R"] * scale_disp,
             nsig=nsig,
