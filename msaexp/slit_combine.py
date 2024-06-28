@@ -522,6 +522,7 @@ class SlitGroup:
         hot_cold_kwargs=None,
         bad_shutter_names=None,
         dilate_failed_open=True,
+        num_shutters=-1,
         undo_barshadow=2,
         min_bar=0.4,
         bar_corr_mode="wave",
@@ -581,7 +582,12 @@ class SlitGroup:
         dilate_failed_open : bool, int
             Dilate the mask of pixels flagged with ``MSA_FAILED_OPEN``.  If an integer,
             do ``dilate_failed_open`` dilation iterations.
-
+        
+        num_shutters : int
+            Manually specify the number of shutters in the slitlet for the bar
+            shadow correction.  If num_shutters <= 0, then compute from
+            ``len(self.info["shutter_state"][0])``.
+    
         undo_barshadow : bool, 2
             Undo the ``BarShadow`` correction if an extension found in the
             slit model files.  If ``2``, then apply internal barshadow correction
@@ -745,6 +751,7 @@ class SlitGroup:
             "stuck_threshold": stuck_threshold,
             "bad_shutter_names": bad_shutter_names,
             "dilate_failed_open": dilate_failed_open,
+            "num_shutters": num_shutters,
             "undo_barshadow": undo_barshadow,
             "min_bar": min_bar,
             "bar_corr_mode": bar_corr_mode,
@@ -775,6 +782,7 @@ class SlitGroup:
             "shutter_offset": "Global offset to fixed shutter coordinate",
             "stuck_threshold": "Stuck shutter threshold",
             "dilate_failed_open": "Dilate failed open mask",
+            "num_shutters": "Number of shutters used for bar shadow model",
             "undo_barshadow": "Bar shadow update behavior",
             "min_bar": "Minimum allowed bar value",
             "bar_corr_mode": "Bar shadow correction type",
@@ -814,6 +822,11 @@ class SlitGroup:
         self.calculate_slices()
 
         self.parse_data()
+
+        if self.meta["num_shutters"] < 0:
+            self.meta["num_shutters"] = len(self.info["shutter_state"][0])
+        elif self.meta["num_shutters"] == 0:
+            self.meta["num_shutters"] = self.unp.N*1
 
         if sky_file is not None:
             self.get_global_sky(sky_file=sky_file)
@@ -1997,7 +2010,7 @@ class SlitGroup:
             bar, bar_wrapped = msautils.get_prism_wave_bar_correction(
                 shutter_y[mask],
                 self.wave[mask],
-                num_shutters=3,
+                num_shutters=self.meta["num_shutters"],
                 wrap=False,
             )
 
@@ -2390,11 +2403,14 @@ class SlitGroup:
             ),
             verbose=VERBOSE_LOG,
         )
-
-        num_shutters = len(self.info["shutter_state"][0])
+        
+        num_shutters = self.meta["num_shutters"]
         if num_shutters > 3:
             # Force use 3-shutter file
             wrap = True
+            num_shutters = 3
+        elif num_shutters <= 0:
+            wrap = False
             num_shutters = 3
         else:
             wrap = "auto"
