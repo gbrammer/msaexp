@@ -819,14 +819,15 @@ class SlitGroup:
 
         self.files = keep_files
         self.info = self.parse_metadata()
-        self.calculate_slices()
-
-        self.parse_data()
 
         if self.meta["num_shutters"] < 0:
             self.meta["num_shutters"] = len(self.info["shutter_state"][0])
         elif self.meta["num_shutters"] == 0:
             self.meta["num_shutters"] = self.unp.N*1
+
+        self.calculate_slices()
+
+        self.parse_data()
 
         if sky_file is not None:
             self.get_global_sky(sky_file=sky_file)
