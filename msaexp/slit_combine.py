@@ -124,7 +124,7 @@ def split_visit_groups(
         test_field |= (split_uncover == 16)
 
         if test_field:
-            msg = "split_visit_groups: split sub groups (uncover, glass, bluejay)"
+            msg = "split_visit_groups: split sub groups (uncover, glass, bluejay) "
             msg += f"{k} N={un[k].sum()}"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
