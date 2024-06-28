@@ -2411,7 +2411,7 @@ class SlitGroup:
             utils.LOGFILE,
             (
                 " apply_spline_bar_correction : "
-                + _msg.format(wrap=wrap, num_shutters=num_shutters, **self.meta)
+                + _msg.format(wrap=wrap, **self.meta)
             ),
             verbose=VERBOSE_LOG,
         )
