@@ -2395,15 +2395,6 @@ class SlitGroup:
             )
             return None
 
-        utils.log_comment(
-            utils.LOGFILE,
-            (
-                " apply_spline_bar_correction : "
-                + " (mode='{bar_corr_mode}')".format(**self.meta)
-            ),
-            verbose=VERBOSE_LOG,
-        )
-        
         num_shutters = self.meta["num_shutters"]
         if num_shutters > 3:
             # Force use 3-shutter file
@@ -2414,6 +2405,16 @@ class SlitGroup:
             num_shutters = 3
         else:
             wrap = "auto"
+        
+        _msg = " (mode='{bar_corr_mode}', wrap={wrap}, num_shutters={num_shutters})"
+        utils.log_comment(
+            utils.LOGFILE,
+            (
+                " apply_spline_bar_correction : "
+                + _msg.format(wrap=wrap, num_shutters=num_shutters, **self.meta)
+            ),
+            verbose=VERBOSE_LOG,
+        )
 
         if self.meta["bar_corr_mode"] == "flat":
             bar, bar_wrapped = msautils.get_prism_bar_correction(
