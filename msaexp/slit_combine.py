@@ -119,9 +119,12 @@ def split_visit_groups(
     for k in np.unique(keys):
         test_field = (un[k].sum() % 6 == 0) & ("jw02561" in files[0])
         test_field |= (un[k].sum() % 4 == 0) & ("jw01810" in files[0])
+        test_field |= (un[k].sum() % 6 == 0) & ("jw01324" in files[0])
         test_field &= split_uncover > 0
+        test_field |= (split_uncover == 16)
+
         if test_field:
-            msg = "split_visit_groups: split UNCOVER sub groups "
+            msg = "split_visit_groups: split sub groups (uncover, glass, bluejay)"
             msg += f"{k} N={un[k].sum()}"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
