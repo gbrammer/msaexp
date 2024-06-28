@@ -585,8 +585,12 @@ class SlitGroup:
         
         num_shutters : int
             Manually specify the number of shutters in the slitlet for the bar
-            shadow correction.  If num_shutters <= 0, then compute from
-            ``len(self.info["shutter_state"][0])``.
+            shadow correction.
+                - If num_shutters < 0, then compute from 
+                  ``len(self.info["shutter_state"][0])``
+                - If num_shutters = 0, then take the number of offset positions
+                  ``self.unp.N``
+                - If num_shutters > 0, then use that value
     
         undo_barshadow : bool, 2
             Undo the ``BarShadow`` correction if an extension found in the
@@ -4660,10 +4664,15 @@ def extract_spectra(
                 **kwargs,
             )
         except RuntimeError:
-            msg = f"\n    failed\n"
+            msg = f"\n    failed RuntimeError\n"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             continue
 
+        except TypeError:
+            msg = f"\n    failed TypeError\n"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            continue
+            
         if 0:
             if (obj.grating not in do_gratings) | (
                 obj.sh[1] < 83 * 2 ** (obj.grating not in ["PRISM"])
