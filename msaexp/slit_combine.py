@@ -4377,6 +4377,7 @@ def extract_spectra(
     join=[0, 3, 5],
     split_uncover=True,
     stuck_threshold=0.3,
+    valid_frac_threshold=0.1,
     pad_border=2,
     sort_by_sn=False,
     position_key="y_index",
@@ -4692,10 +4693,10 @@ def extract_spectra(
                 )
                 continue
 
-            elif valid_frac < 0.2:
+            elif valid_frac < valid_frac_threshold:
                 utils.log_comment(
                     utils.LOGFILE,
-                    f"\n    valid pixels {valid_frac:.2f}\n",
+                    f"\n    valid pixels {valid_frac:.2f} < {valid_frac_threshold}\n",
                     verbose=VERBOSE_LOG,
                 )
                 continue
