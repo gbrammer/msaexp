@@ -820,11 +820,6 @@ class SlitGroup:
         self.files = keep_files
         self.info = self.parse_metadata()
 
-        if self.meta["num_shutters"] < 0:
-            self.meta["num_shutters"] = len(self.info["shutter_state"][0])
-        elif self.meta["num_shutters"] == 0:
-            self.meta["num_shutters"] = self.unp.N*1
-
         self.calculate_slices()
 
         self.parse_data()
@@ -1592,6 +1587,12 @@ class SlitGroup:
                 self.ytr[i, :] = self.ytr[0, :] + _dyi
 
         self.set_trace_coeffs(degree=2)
+
+        # Calculate "num_shutters" for bar shadow correction
+        if self.meta["num_shutters"] < 0:
+            self.meta["num_shutters"] = len(self.info["shutter_state"][0])
+        elif self.meta["num_shutters"] == 0:
+            self.meta["num_shutters"] = self.unp.N*1
 
         if self.meta["undo_barshadow"] == 2:
             self.apply_spline_bar_correction()
