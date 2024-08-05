@@ -533,6 +533,7 @@ class SlitGroup:
         global_sky_df=7,
         estimate_sky_kwargs=None,
         flag_profile_kwargs=None,
+        do_multiple_mask=True,
         flag_trace_kwargs={},
         flag_percentile_kwargs={},
         undo_pathloss=True,
@@ -815,7 +816,7 @@ class SlitGroup:
                 _ = msautils.slit_hot_pixels(slit, **slit_hotpix_kwargs)
                 self.flagged_hot_pixels.append(_)  # dq, count, status
             else:
-                self.flagged_hot_pixels.append(None, 0, 0)
+                self.flagged_hot_pixels.append((None, 0, 0))
 
             self.slits.append(slit)
             keep_files.append(file)
@@ -881,7 +882,7 @@ class SlitGroup:
             except ValueError:
                 pass
 
-        if self.N > 2:
+        if (self.N > 2) & (do_multiple_mask):
             bad = ~self.mask
             nbad = bad.sum(axis=0)
             nexp_thresh = 2 * (self.N // 3)
@@ -1063,6 +1064,14 @@ class SlitGroup:
             [slit.meta.exposure.exposure_time for slit in self.slits]
         )
 
+    @property
+    def IS_FIXED_SLIT(self):
+        """
+        Is this a Fixed Slit spectrum?
+        """
+        return (self.info["lamp_mode"][0] == "FIXEDSLIT")
+        
+
     def slit_metadata(self):
         """
         Make a table of the slit metadata
@@ -1240,7 +1249,7 @@ class SlitGroup:
         for s, slit in zip(slices, self.slits):
             slit.slice = s
 
-    def parse_data(self):
+    def parse_data(self, debug=False):
         """
         Read science, variance and trace data from the ``slits`` SlitModel
         files
@@ -1275,6 +1284,9 @@ class SlitGroup:
         )
 
         bad = sci == 0
+        if debug:
+            print('sci == 0 ; bad = ', bad.sum())
+            
         sci[bad] = np.nan
         var_rnoise[bad] = np.nan
         var_poisson[bad] = np.nan
@@ -1395,7 +1407,11 @@ class SlitGroup:
         ytr = np.array(ytr)
         wtr = np.array(wtr)
 
-        bad = (dq & msautils.BAD_PIXEL_FLAG) > 0
+        if msautils.BAD_PIXEL_FLAG > 0:
+            bad = (dq & msautils.BAD_PIXEL_FLAG) > 0
+        
+        if debug:
+            print('msautils.BAD_PIXEL_FLAG ; bad = ', bad.sum(), dq.sum())
 
         # Extra bad pix
         for i, slit in enumerate(slits):
@@ -1404,6 +1420,9 @@ class SlitGroup:
                 slit, verbose=(VERBOSE_LOG > 1)
             )
             bad[i, :] |= dqi[slit.slice].flatten() > 0
+
+        if debug:
+            print('msautils.extra_slit_dq_flags ; bad = ', bad.sum())
 
         # Dilate stuck open pixels
         if ("MSA_FAILED_OPEN" in msautils.BAD_PIXEL_NAMES) & self.meta[
@@ -1418,11 +1437,11 @@ class SlitGroup:
                 bad[i] |= grow_open.flatten()
 
         # Bad pixels in 2 or more positions should be bad in all
-        if self.N > 2:
-            nbad = bad.sum(axis=0)
-            all_bad = nbad >= 2 * (self.N // 3)
-            for i in range(self.N):
-                bad[i, :] |= all_bad
+        # if self.N > 2:
+        #     nbad = bad.sum(axis=0)
+        #     all_bad = nbad >= 2 * (self.N // 3)
+        #     for i in range(self.N):
+        #         bad[i, :] |= all_bad
 
         bad |= ~np.isfinite(sci) | (sci == 0)
 
@@ -1431,11 +1450,13 @@ class SlitGroup:
             bad |= sci < PRISM_MIN_VALID_SN * np.sqrt(var_rnoise + var_poisson)
 
         if (~bad).sum() > 0:
+            # print('dq before threshold:', bad.sum())
             bad |= sci < -5 * np.sqrt(
                 np.nanmedian((var_rnoise + var_poisson)[~bad])
             )
 
             bad |= var_rnoise > 10 * np.nanpercentile(var_rnoise[~bad], 95)
+            # print('dq after threshold:', bad.sum())
 
         if self.meta["pad_border"] > 0:
             # grow mask around edges
@@ -1560,7 +1581,7 @@ class SlitGroup:
                 for i, _off in enumerate(offsets):
                     self.ytr[i, :] += _off  # - 1
 
-        elif (self.info["lamp_mode"][0] == "FIXEDSLIT") & (1):
+        elif self.IS_FIXED_SLIT & (1):
 
             _dy = self.info["y_offset"] - np.median(
                 self.info["y_offset"]
@@ -1593,6 +1614,13 @@ class SlitGroup:
         self.set_trace_coeffs(degree=2)
 
         # Calculate "num_shutters" for bar shadow correction
+        #if not self.IS_FIXED_SLIT:
+        if self.IS_FIXED_SLIT:
+            self.meta["num_shutters"] = 0
+            self.meta["undo_barshadow"] = False
+            self.meta["min_bar"] = None
+            self.meta["bad_shutter_names"] = []
+
         if self.meta["num_shutters"] < 0:
             self.meta["num_shutters"] = len(self.info["shutter_state"][0])
         elif self.meta["num_shutters"] == 0:
