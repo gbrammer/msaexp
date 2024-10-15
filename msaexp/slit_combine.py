@@ -1562,6 +1562,9 @@ class SlitGroup:
                 offsets = self.info["y_offset"] - self.info["y_offset"][0]
                 offsets /= self.slit_pixel_scale
 
+                if self.N == 2:
+                    offsets -= np.mean(offsets)
+
                 # offsets = np.round(offsets / 5) * 5
 
                 offstr = ", ".join(
