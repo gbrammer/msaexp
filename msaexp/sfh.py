@@ -503,20 +503,32 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
             _mass, _sfr_continuum, _sfr_halpha = template_mass_sfr(
                 _templates, c[0], z=_z
             )
-            
+
             total_mass = np.log10(_mass.sum())
             total_halpha = _sfr_halpha.sum()
-            
+
             if 1:
                 # Sum of first two bins
-                dt = np.array([0.019999  , 0.015     , 0.03298023, 0.06405724, 0.12441788,
-                    0.24165589, 0.46936636, 0.91164663, 1.77068419, 3.43918614,
-                    6.67990456])
-            
-                _sfr_continuum = _mass[:2].sum() / (dt[:2].sum()*1.e9)
+                dt = np.array(
+                    [
+                        0.019999,
+                        0.015,
+                        0.03298023,
+                        0.06405724,
+                        0.12441788,
+                        0.24165589,
+                        0.46936636,
+                        0.91164663,
+                        1.77068419,
+                        3.43918614,
+                        6.67990456,
+                    ]
+                )
+
+                _sfr_continuum = _mass[:2].sum() / (dt[:2].sum() * 1.0e9)
             else:
                 _sfr_continuum = _sfr_continuum.sum()
-            
+
             self.spec.meta["sfh_mass"] = total_mass
             self.spec.meta["sfh_sfr_continuum"] = _sfr_continuum
             self.spec.meta["sfh_sfr_halpha"] = total_halpha
@@ -1130,13 +1142,13 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
         Nc,
         cont_prior=student_t(df=2, scale=0.3),
         res=None,
-        tol=1.e-6,
+        tol=1.0e-6,
         **kwargs,
     ):
         """
         fit SFH with continuity prior
         """
-    
+
         #####
         # Priors and loss functions
         X, pnames = self.get_continuity_inputs(zb, templates, redden, **kwargs)
@@ -1254,10 +1266,10 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
         Objective function for fitting Av with continuity SFH
         """
         zb, cont_prior, templates, twave, Alam, basis, self = args
-        Avi = theta[0]/10
-    
+        Avi = theta[0] / 10
+
         redden_i = 10 ** (-0.4 * Avi * Alam)
-    
+
         res, fit_results, pnames = self.fit_continuity_sfh(
             zb,
             templates,
@@ -1266,10 +1278,12 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
             cont_prior=cont_prior,
             # **kwargs,
         )
-        print(f"    Optimize Av for continuity prior: {Avi:.3f}  {res.fun:.3f}")
-    
+        print(
+            f"    Optimize Av for continuity prior: {Avi:.3f}  {res.fun:.3f}"
+        )
+
         return res.fun
-    
+
     def continuity_sfh_pipeline(
         self,
         calib_kwargs={},
@@ -1301,12 +1315,12 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
         #         scale_uncertainty_kwargs={},
         #         return_fit_results=True,
         #     )
-        
+
         textra = [t for t in self.basis.extra_lines]
 
         if (self.spec["wave"] / (1 + self.redshift)).max() > 3.4:
             msg = f"SpectrumPhotometry: {self.basename}  Include PAH template"
-            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE)            
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE)
             textra += [self.basis.pah]
 
         if with_quasar:
@@ -1319,9 +1333,9 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
         dust_fig, dust_fit = self.fit_redshift_dust_grid(
             # self.basis.tstep, #templates,
             templates,
-            **dust_kwargs
+            **dust_kwargs,
         )
-        dust_fig.savefig(self.basename.replace('.spec.fits', '.grid.png'))
+        dust_fig.savefig(self.basename.replace(".spec.fits", ".grid.png"))
 
         zb = dust_fit["best_z"]
         Avb = dust_fit["best_Av"]
@@ -1334,16 +1348,16 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
         fig, ax = self.plot(
             flam=-2, fit_args=args, show_fit_components=True, z=zb
         )
-        fig.savefig(self.basename.replace('.spec.fits', '.sfh.flam.png'))
+        fig.savefig(self.basename.replace(".spec.fits", ".sfh.flam.png"))
 
         fig, ax = self.plot(
             flam=0, fit_args=args, show_fit_components=True, z=zb
         )
-        fig.savefig(self.basename.replace('.spec.fits', '.sfh.fnu.png'))
+        fig.savefig(self.basename.replace(".spec.fits", ".sfh.fnu.png"))
 
         _ = self.fit_templates(*args)
         c0 = _[0]
-        
+
         if optimize_av_sfh:
             twave = templates[0].wave / 1.0e4
             Alam = dust_fit["Alam"]
@@ -1351,19 +1365,19 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
 
             hyper_res = minimize(
                 self.objfun_hyper_av,
-                [Avb*10],
-                method='powell',
-                tol=1.e-4,
+                [Avb * 10],
+                method="powell",
+                tol=1.0e-4,
                 args=(_args,),
-                options={'maxfev': 16}
+                options={"maxfev": 16},
             )
 
-            Avb = hyper_res.x[0] / 10.
-            msg = f'continuity-optimized Av: {Avb:.2f}'
+            Avb = hyper_res.x[0] / 10.0
+            msg = f"continuity-optimized Av: {Avb:.2f}"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE)
 
             redden = 10 ** (-0.4 * Avb * Alam)
-            
+
         res, fit_results, pnames = self.fit_continuity_sfh(
             zb,
             templates,
@@ -1372,9 +1386,9 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
             cont_prior=cont_prior,
             # **kwargs,
         )
-        
+
         fig = self.basis.plot_sfh(zb, c0[0], res=res, file=self.file)
-        fig.savefig(self.basename.replace('.spec.fits', '.sfh.png'))
+        fig.savefig(self.basename.replace(".spec.fits", ".sfh.png"))
 
         xargs = self.fit_templates(
             templates, zb, scale_disp, redden=None, get_args=True
@@ -1387,7 +1401,7 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
             show_fit_components=True,
             z=zb,
         )
-        fig.savefig(self.basename.replace('.spec.fits', '.csfh.flam.png'))
+        fig.savefig(self.basename.replace(".spec.fits", ".csfh.flam.png"))
 
         fig, ax = self.plot(
             flam=0,
@@ -1396,20 +1410,20 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
             show_fit_components=True,
             z=zb,
         )
-        fig.savefig(self.basename.replace('.spec.fits', '.csfh.fnu.png'))
+        fig.savefig(self.basename.replace(".spec.fits", ".csfh.fnu.png"))
 
         # Add to spectrum outputs
         # _ = self.fit_templates(*args)
         c, chi2, model_phot, comps_spec, model_spec, spl_spec = fit_results
-        continuum_model = comps_spec[:, :self.basis.tstep_Nc].sum(axis=1)
+        continuum_model = comps_spec[:, : self.basis.tstep_Nc].sum(axis=1)
 
         self.spec.spec["continuum_model"] = continuum_model
         self.spec.spec["sfh_full_model"] = model_spec
 
         if self.basis.lines_mode in ("default", "separate"):
-            
+
             tcont = self.basis.tstep[:-1] + [self.basis.neb_cont] + textra
-            
+
             _res, _fit_results, pnames = self.fit_continuity_sfh(
                 zb,
                 tcont,
@@ -1421,15 +1435,15 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
             )
 
             _comps_spec = _fit_results[3]
-            continuum_model = _comps_spec[:, :self.basis.tstep_Nc].sum(axis=1)
-            continuum_model += _comps_spec[:, self.basis.tstep_Nc+1]
-            
+            continuum_model = _comps_spec[:, : self.basis.tstep_Nc].sum(axis=1)
+            continuum_model += _comps_spec[:, self.basis.tstep_Nc + 1]
+
             self.spec.spec["neb_continuum"] = (
                 self.spec.spec["continuum_model"] - continuum_model
             )
-            
+
             self.spec.spec["continuum_model"] = continuum_model
-            
+
         self.spec.spec["sfh_deredden"] = 1.0 / np.interp(
             self.spec.spec["wave"] / (1 + zb),
             self.basis.tstep[0].wave / 1.0e4,
@@ -1467,7 +1481,8 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
 
             utils.figure_timestamp(
                 cfig,
-                text_prefix=os.path.basename(self.file).split(".spec")[0] + "\n",
+                text_prefix=os.path.basename(self.file).split(".spec")[0]
+                + "\n",
                 fontsize=6,
                 x=0.97,
                 y=0.97,
@@ -1475,22 +1490,27 @@ SpectrumPhotometry: {self.basename}  photom_weight {self.photom_weight:.2f}
                 va="top",
             )
 
-            cfig.savefig(self.basename.replace('.spec.fits', '.sfh.corner.png'))
+            cfig.savefig(
+                self.basename.replace(".spec.fits", ".sfh.corner.png")
+            )
 
         ######
         # Update spectrum
-        
+
         fig, sp, data = spectrum.plot_spectrum(
             inp=self.spec,
-            z=zb, #self.redshift,
+            z=zb,  # self.redshift,
             sys_err=self.sys_err,
             scale_disp=scale_disp,
             vel_width=100,
             trim_negative=False,
         )
 
-        sp.write(self.basename.replace('.spec.fits','.spec.sfh.fits'), overwrite=True)
-        
+        sp.write(
+            self.basename.replace(".spec.fits", ".spec.sfh.fits"),
+            overwrite=True,
+        )
+
         return templates
 
 
@@ -1796,6 +1816,8 @@ class BasisTemplates:
         tstep = []
         tstep_Av = []
 
+        self.av_grid = av_grid
+
         for bf in bfiles:
             bi = eazy.templates.Template(bf)
             bi.resample(tlog, in_place=True)
@@ -1880,14 +1902,14 @@ class BasisTemplates:
         extra_lines = []
         for ln in extra_line_names:
             lf = tlog * 0.0
-            lrsum = 0.
-            
+            lrsum = 0.0
+
             for lwi, lri in zip(lw[ln], lr[ln]):
                 lf += sample_gaussian_line_numba(
                     tlog,
                     tlog**0 + spec_R,
                     lwi,
-                    line_flux=lri * 1.e10, # Put scale closer to templates
+                    line_flux=lri * 1.0e10,  # Put scale closer to templates
                     velocity_sigma=velocity_sigma,
                 )
                 lrsum += lri
@@ -1946,7 +1968,7 @@ class BasisTemplates:
         self.tstep_mass = btemp_masses
         self.tstep_sfh_halpha = btemp_sfr_halpha
         self.tstep_Nc = Ncontinuum
-    
+
     @staticmethod
     def effective_Av(self, coeffs_fit, templates_av):
         """
@@ -1967,46 +1989,51 @@ class BasisTemplates:
 
         effective_av : float
             Effective Av of the combination
-    
+
         """
 
-        coeffs_av = coeffs_fit[:len(templates_av)]
-    
+        coeffs_av = coeffs_fit[: len(templates_av)]
+
         fnu_array = np.array([t.fnu for t in templates_av])
 
-        redden_array = np.array([
-            t.redden_array if hasattr(t, 'redden_array') else t.wave**0
-            for t in templates_av
-        ])
+        redden_array = np.array(
+            [
+                t.redden_array if hasattr(t, "redden_array") else t.wave ** 0
+                for t in templates_av
+            ]
+        )
 
-        template_vflux = [np.interp(5500., t.wave, t.fnu) for t in templates_av]
+        template_vflux = [
+            np.interp(5500.0, t.wave, t.fnu) for t in templates_av
+        ]
 
         as_fit = (fnu_array**1).T.dot(coeffs_av)
         de_redden = (fnu_array**1 / redden_array**1).T.dot(coeffs_av)
 
         effective_redden = as_fit / de_redden
-    
-        tau = np.array([
-            10**(-0.4*t.redden_Av) if hasattr(t, 'redden_Av') else 1.
-            for t in templates_av
-        ])
-        
-        tau_fit = (
-            (template_vflux * coeffs_av).sum()
-            / (template_vflux / tau * coeffs_av).sum()
+
+        tau = np.array(
+            [
+                10 ** (-0.4 * t.redden_Av) if hasattr(t, "redden_Av") else 1.0
+                for t in templates_av
+            ]
         )
 
-        effective_av = -2.5*np.log10(tau_fit)
-    
-        print('Effective Av: ', effective_av)
-    
+        tau_fit = (template_vflux * coeffs_av).sum() / (
+            template_vflux / tau * coeffs_av
+        ).sum()
+
+        effective_av = -2.5 * np.log10(tau_fit)
+
+        print("Effective Av: ", effective_av)
+
         # w = templates_av[0].wave
         # plt.plot(w, effective_redden)
         # # plt.plot(w, de_redden, alpha=0.5)
         # plt.scatter(5500, 10**(-0.4*effective_av), color='r', zorder=100)
         # plt.ylim(0, 1.05)
         # plt.plot(w, 10**(-0.4 * Alam * effective_av), color='0.5', alpha=0.5)
-    
+
         return (w, effective_redden), effective_av
 
     def plot_sfh(self, zb, coeffs, file=None, res=None, **kwargs):
