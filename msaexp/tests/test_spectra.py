@@ -10,14 +10,18 @@ import matplotlib.pyplot as plt
 plt.ioff()
 
 import astropy.io.fits as pyfits
+import jwst
 
 from .. import utils, spectrum
 
 eazy_templates = None
 
-# SPECTRUM_FILE = f'ceers-prism.1345_933.v0.spec.fits'
-SPECTRUM_FILE = "test-driz-center-bkg_933.spec.fits"
-# SPECTRUM_FILE = 'test-driz-center_933.spec.fits'
+if jwst.__version__ < "100.16":
+    # SPECTRUM_FILE = f'ceers-prism.1345_933.v0.spec.fits'
+    SPECTRUM_FILE = "test-driz-center-bkg_933.spec.fits"
+    # SPECTRUM_FILE = 'test-driz-center_933.spec.fits'
+else:
+    SPECTRUM_FILE = "rubies-egs51-v4_prism-clear_4233_19489.spec.fits"
 
 
 def data_path():
@@ -53,8 +57,12 @@ def test_fit_redshift():
     Redshift fit with spline + line templates
     """
     global eazy_templates
+    global SPECTRUM_FILE
 
     os.chdir(data_path())
+
+    if not os.path.exists(SPECTRUM_FILE):
+        SPECTRUM_FILE = "static-" + SPECTRUM_FILE
 
     spectrum.FFTSMOOTH = True
 

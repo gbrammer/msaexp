@@ -1365,12 +1365,12 @@ class SlitGroup:
                     dwave / np.gradient(_wtr), [5, 50, 95]
                 )
 
-                # Signs of source_xpos and dwave_step should be opposite
+                # Signs of source_xpos and dwave_step should be the same
                 sign = slit.source_xpos * dwave_step[1]
-                if sign > 0:
+                if sign < 0:
                     dwave *= -1
                     dwave_step *= -1
-                    _note = "(flipped)"
+                    _note = "(flipped) "
                 else:
                     _note = ""
 
@@ -4213,6 +4213,11 @@ def drizzle_grating_group(
     if len(tabs) > 0:
         pixtab = astropy.table.vstack(tabs)
 
+        for t in tabs:
+            for k in t.meta:
+                header[k] = t.meta[k]
+                pixtab.meta[k] = t.meta[k]
+
         ############
         # wht = 1.0 / vdiff
         if obj.meta["weight_type"].lower() == "poisson":
@@ -4277,11 +4282,6 @@ def drizzle_grating_group(
             **dkws,
         )
 
-        for t in tabs:
-            for k in t.meta:
-                header[k] = t.meta[k]
-                pixtab.meta[k] = t.meta[k]
-
         # 1D extraction
         oned = pixel_table_to_1d(pixtab, wave_bin, weight=wht, y_range=y_range)
     else:
@@ -4295,6 +4295,165 @@ def drizzle_grating_group(
         header,
         slit_info,
         pixtab,
+        oned,
+        arrays,
+        barrays,
+        parrays,
+    )
+
+
+def extract_from_pixtab(
+    pixtab,
+    step=1,
+    grating='PRISM',
+    wave_sample=1.05,
+    ny=13,
+    dkws=dict(oversample=16, pixfrac=0.8, sample_axes="y"),
+    y_range=[-3, 3],
+    weight_type="ivm",
+    **kwargs,
+):
+    """
+    Run the pseudo-drizzled sampling from a set of
+    `msaexp.slit_combine.SlitGroup` objects
+
+    Parameters
+    ----------
+    pixtab : table
+        Full pixel table
+
+    step : float
+        Cross dispersion step size in units of original pixels
+
+    with_pathloss : bool
+        Compute a pathloss correction for each spectrum based on the fitted
+        profile width and the (planned) intra-shutter position of a particular
+        source
+
+    wave_sample : float
+        Wavelength sampling relative to the default grid for a particular
+        grating provided by `msaexp.utils.get_standard_wavelength_grid`
+
+    ny : int
+        Half-width in pixels of the output grid in the cross-dispersion axis
+
+    dkws : dict
+        keyword args passed to `msaexp.slit_combine.pseudo_drizzle`
+
+
+    Returns
+    -------
+    wave_bin : array-like
+        1D wavelength sample points
+
+    xbin : array-like
+        2D x (wavelength) sample points
+
+    ybin : array-like
+        2D cross-dispersion sample points
+
+    header : `~astropy.io.fits.Header`
+        Header for the combination
+
+    slit_info : `~astropy.table.Table`
+        Table of slit metadata
+
+    arrays : (array-like, array-like, array-like)
+        2D ``sci_num``, ``var_num`` and ``wht_denom`` arrays of the resampled data. The
+        weighted data is ``sci_num / wht_denom``
+
+    parrays : (array-like, array-like, array-like)
+        2D `prof2d`, `var2d` and `prof_wht2d` arrays of the profile model resampled
+        like the data
+
+    """
+
+    import astropy.io.fits as pyfits
+    import astropy.table
+
+    wave_bin = msautils.get_standard_wavelength_grid(
+        grating, sample=wave_sample
+    )
+
+    xbin = msautils.array_to_bin_edges(wave_bin)
+
+    ybin = np.arange(-ny, ny + step * 1.01, step) - 0.5
+
+    arrays = None
+    barrays = None
+    parrays = None
+
+    ############
+    # wht = 1.0 / vdiff
+    if weight_type == "poisson":
+        wht = 1.0 / pixtab["var_total"]
+    elif weight_type == "mask":
+        wht = (pixtab["var_total"] > 0.0) * 1.0
+    elif weight_type == "exptime":
+        wht = (pixtab["var_total"] > 0.0) * pixtab["exptime"]
+    elif weight_type == "exptime_bar":
+        wht = (
+            (pixtab["var_total"] > 0.0)
+            * pixtab["exptime"]
+            * pixtab["bar"] ** 2
+        )
+    elif weight_type == "ivm":
+        wht = 1.0 / pixtab["var_rnoise"]
+    else:
+        msg = f"weight_type {weight_type} not recognized"
+        raise ValueError(msg)
+
+    ok = np.isfinite(
+        pixtab["sci"] + pixtab["var_total"] + wht + pixtab["yslit"]
+    )
+    ok &= (pixtab["var_total"] > 0) & (wht > 0)
+
+    ysl = pixtab["yslit"][ok]
+    xsl = pixtab["wave"][ok]
+
+    arrays = pseudo_drizzle(
+        xsl,
+        ysl,
+        pixtab["sci"][ok] / pixtab["pathloss"][ok],
+        pixtab["var_total"][ok] / pixtab["pathloss"][ok] ** 2,
+        wht[ok],
+        xbin,
+        ybin,
+        arrays=arrays,
+        **dkws,
+    )
+
+    barrays = pseudo_drizzle(
+        xsl,
+        ysl,
+        pixtab["sky"][ok] / pixtab["pathloss"][ok],
+        pixtab["var_total"][ok] / pixtab["pathloss"][ok] ** 2,
+        wht[ok],
+        xbin,
+        ybin,
+        arrays=barrays,
+        **dkws,
+    )
+
+    parrays = pseudo_drizzle(
+        xsl,
+        ysl,
+        pixtab["profile"][ok],
+        pixtab["var_total"][ok] / pixtab["pathloss"][ok] ** 2,
+        wht[ok],
+        xbin,
+        ybin,
+        arrays=parrays,
+        **dkws,
+    )
+
+    # 1D extraction
+    oned = pixel_table_to_1d(pixtab, wave_bin, weight=wht, y_range=y_range)
+
+    return (
+        wave_bin,
+        xbin,
+        ybin,
         oned,
         arrays,
         barrays,
@@ -4657,6 +4816,7 @@ def extract_spectra(
 
         if trace_with_ypos in ["auto"]:
             trace_with_ypos = ("b" not in target) & (not get_background)
+            trace_with_ypos &= ("BKG" not in target)
 
         if root.startswith("glazebrook-v"):
             utils.log_comment(
@@ -4760,7 +4920,7 @@ def extract_spectra(
                 )
                 continue
 
-            elif ("b" in target) & (
+            elif (("b" in target) | ("BKG" in target)) & (
                 (obj.info["shutter_state"] == "x").sum() > 0
             ):
                 utils.log_comment(
