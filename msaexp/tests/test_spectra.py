@@ -57,8 +57,12 @@ def test_fit_redshift():
     Redshift fit with spline + line templates
     """
     global eazy_templates
+    global SPECTRUM_FILE
 
     os.chdir(data_path())
+
+    if not os.path.exists(SPECTRUM_FILE):
+        SPECTRUM_FILE = "static-" + SPECTRUM_FILE
 
     spectrum.FFTSMOOTH = True
 
