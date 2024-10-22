@@ -4303,7 +4303,7 @@ def drizzle_grating_group(
 
 
 def extract_from_pixtab(
-    pitab,
+    pixtab,
     step=1,
     grating='PRISM',
     wave_sample=1.05,
@@ -4383,9 +4383,6 @@ def extract_from_pixtab(
     barrays = None
     parrays = None
 
-    # Do the resampling
-    pixtab = astropy.table.vstack(tabs)
-
     ############
     # wht = 1.0 / vdiff
     if weight_type == "poisson":
@@ -4403,7 +4400,7 @@ def extract_from_pixtab(
     elif weight_type == "ivm":
         wht = 1.0 / pixtab["var_rnoise"]
     else:
-        msg = "weight_type {weight_type} not recognized".format(**obj.meta)
+        msg = f"weight_type {weight_type} not recognized"
         raise ValueError(msg)
 
     ok = np.isfinite(
