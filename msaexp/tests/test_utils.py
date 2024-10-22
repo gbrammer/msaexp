@@ -1,6 +1,9 @@
 import os
 import numpy as np
+import pytest
 from scipy.stats import uniform
+
+import jwst
 
 from .. import utils
 
@@ -292,22 +295,39 @@ def test_pixfrac():
 def data_path():
     return os.path.join(os.path.dirname(__file__), "data")
 
+
 def test_slit_things():
-    
+
     import jwst.datamodels
-    
+    import jwst
+
     os.chdir(data_path())
-    
-    file = 'jw01345062001_03101_00001_nrs2_phot.138.1345_933.fits'
+
+    if jwst.__version__ < "100.16":
+        file = "jw01345062001_03101_00001_nrs2_phot.138.1345_933.fits"
+    else:
+        file = "jw04233005001_03101_00002_nrs1_phot.140.4233_19489.fits"
+
     with jwst.datamodels.open(file) as slit:
         utils.update_slit_metadata(slit)
-    
+
     with jwst.datamodels.open(file) as slit:
         corr = utils.slit_normalization_correction(slit, verbose=True)
-        
+
+
+@pytest.mark.skipif(jwst.__version__ >= "1.16", reason="requires jwst<1.16")
+def test_slit_sign():
+
+    import jwst.datamodels
+    import jwst
+
+    os.chdir(data_path())
+
+    if jwst.__version__ < "100.16":
+        file = "jw01345062001_03101_00001_nrs2_phot.138.1345_933.fits"
+    else:
+        file = "jw04233005001_03101_00002_nrs1_phot.140.4233_19489.fits"
+
+    with jwst.datamodels.open(file) as slit:
         sign = utils.get_slit_sign(slit)
         assert sign == -1
-        
-        
-    
-    

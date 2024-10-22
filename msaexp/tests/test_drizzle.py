@@ -4,11 +4,26 @@ import copy
 import numpy as np
 import matplotlib.pyplot as plt
 
+import pytest
+import jwst
+
 from .. import utils, pipeline
 from .. import drizzle as msadrizzle
 
 pipe = None
-TARGETS = ["1345_933"]
+
+# TARGETS = ["1345_933"]
+
+if jwst.__version__ < "100.16":
+    TARGETS = ["1345_933"]
+else:
+    TARGETS = ["4233_19489"]
+
+if jwst.__version__ >= "1.16":
+    pytest.skip(
+        "Skip drizzle with jwst={jwst.__version__} >= 1.16",
+        allow_module_level=True,
+    )
 
 
 def data_path():

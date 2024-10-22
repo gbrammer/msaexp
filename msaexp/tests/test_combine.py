@@ -4,13 +4,16 @@ import glob
 
 import numpy as np
 import matplotlib.pyplot as plt
-
+import jwst
 
 from .. import utils
 from .. import slit_combine
 from .. import spectrum
 
-TARGETS = ["1345_933"]
+if jwst.__version__ < "100.16":
+    TARGETS = ["1345_933"]
+else:
+    TARGETS = ["4233_19489"]
 
 
 def data_path():
