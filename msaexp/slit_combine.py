@@ -106,7 +106,8 @@ def split_visit_groups(
                 ]
             )
 
-            key = f"{fk}-{im[0].header['GRATING']}"
+            # key = f"{fk}-{im[0].header['GRATING']}"
+            key = f"{fk}-{im[0].header['GRATING']}-{im[0].header['FILTER']}"
 
             keys.append(key.lower())
             all_files.append(file)
@@ -122,7 +123,7 @@ def split_visit_groups(
         test_field |= (un[k].sum() % 4 == 0) & ("jw01324" in files[0])
         test_field |= (un[k].sum() % 6 == 0) & ("jw01324" in files[0])
         test_field &= split_uncover > 0
-        test_field |= (split_uncover == 16)
+        test_field |= split_uncover == 16
 
         if test_field:
             msg = "split_visit_groups: split sub groups (uncover, glass, bluejay) "
@@ -583,16 +584,16 @@ class SlitGroup:
         dilate_failed_open : bool, int
             Dilate the mask of pixels flagged with ``MSA_FAILED_OPEN``.  If an integer,
             do ``dilate_failed_open`` dilation iterations.
-        
+
         num_shutters : int
             Manually specify the number of shutters in the slitlet for the bar
             shadow correction.
-                - If num_shutters < 0, then compute from 
+                - If num_shutters < 0, then compute from
                   ``len(self.info["shutter_state"][0])``
                 - If num_shutters = 0, then take the number of offset positions
                   ``self.unp.N``
                 - If num_shutters > 0, then use that value
-    
+
         undo_barshadow : bool, 2
             Undo the ``BarShadow`` correction if an extension found in the
             slit model files.  If ``2``, then apply internal barshadow correction
@@ -1069,8 +1070,7 @@ class SlitGroup:
         """
         Is this a Fixed Slit spectrum?
         """
-        return (self.info["lamp_mode"][0] == "FIXEDSLIT")
-        
+        return self.info["lamp_mode"][0] == "FIXEDSLIT"
 
     def slit_metadata(self):
         """
@@ -1285,8 +1285,8 @@ class SlitGroup:
 
         bad = sci == 0
         if debug:
-            print('sci == 0 ; bad = ', bad.sum())
-            
+            print("sci == 0 ; bad = ", bad.sum())
+
         sci[bad] = np.nan
         var_rnoise[bad] = np.nan
         var_poisson[bad] = np.nan
@@ -1409,9 +1409,9 @@ class SlitGroup:
 
         if msautils.BAD_PIXEL_FLAG > 0:
             bad = (dq & msautils.BAD_PIXEL_FLAG) > 0
-        
+
         if debug:
-            print('msautils.BAD_PIXEL_FLAG ; bad = ', bad.sum(), dq.sum())
+            print("msautils.BAD_PIXEL_FLAG ; bad = ", bad.sum(), dq.sum())
 
         # Extra bad pix
         for i, slit in enumerate(slits):
@@ -1422,7 +1422,7 @@ class SlitGroup:
             bad[i, :] |= dqi[slit.slice].flatten() > 0
 
         if debug:
-            print('msautils.extra_slit_dq_flags ; bad = ', bad.sum())
+            print("msautils.extra_slit_dq_flags ; bad = ", bad.sum())
 
         # Dilate stuck open pixels
         if ("MSA_FAILED_OPEN" in msautils.BAD_PIXEL_NAMES) & self.meta[
@@ -1617,7 +1617,7 @@ class SlitGroup:
         self.set_trace_coeffs(degree=2)
 
         # Calculate "num_shutters" for bar shadow correction
-        #if not self.IS_FIXED_SLIT:
+        # if not self.IS_FIXED_SLIT:
         if self.IS_FIXED_SLIT:
             self.meta["num_shutters"] = 0
             self.meta["undo_barshadow"] = False
@@ -1627,7 +1627,7 @@ class SlitGroup:
         if self.meta["num_shutters"] < 0:
             self.meta["num_shutters"] = len(self.info["shutter_state"][0])
         elif self.meta["num_shutters"] == 0:
-            self.meta["num_shutters"] = self.unp.N*1
+            self.meta["num_shutters"] = self.unp.N * 1
 
         if self.meta["undo_barshadow"] == 2:
             self.apply_spline_bar_correction()
@@ -2442,7 +2442,7 @@ class SlitGroup:
             num_shutters = 3
         else:
             wrap = "auto"
-        
+
         _msg = " (mode='{bar_corr_mode}', wrap={wrap}, num_shutters={num_shutters})"
         utils.log_comment(
             utils.LOGFILE,
@@ -4305,7 +4305,7 @@ def drizzle_grating_group(
 def extract_from_pixtab(
     pixtab,
     step=1,
-    grating='PRISM',
+    grating="PRISM",
     wave_sample=1.05,
     ny=13,
     dkws=dict(oversample=16, pixfrac=0.8, sample_axes="y"),
@@ -4816,7 +4816,7 @@ def extract_spectra(
 
         if trace_with_ypos in ["auto"]:
             trace_with_ypos = ("b" not in target) & (not get_background)
-            trace_with_ypos &= ("BKG" not in target)
+            trace_with_ypos &= "BKG" not in target
 
         if root.startswith("glazebrook-v"):
             utils.log_comment(
@@ -4863,7 +4863,7 @@ def extract_spectra(
             msg = f"\n    failed TypeError\n"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             continue
-            
+
         if 0:
             if (obj.grating not in do_gratings) | (
                 obj.sh[1] < 83 * 2 ** (obj.grating not in ["PRISM"])
@@ -5124,7 +5124,8 @@ def extract_spectra(
     max_size = {}
 
     for k in keys:
-        gr = k.split("-")[-1]
+        # gr = k.split("-")[-1]
+        gr = "-".join(k.split("-")[-2:])
         if gr in gratings:
             gratings[gr].append(k)
             max_size[gr] = np.maximum(max_size[gr], xobj[k]["obj"].sh[1])
@@ -5137,7 +5138,9 @@ def extract_spectra(
     if make_2d_plots:
         for k in keys:
             obj = xobj[k]["obj"]
-            gr = k.split("-")[-1]
+            # gr = k.split("-")[-1]
+            gr = "-".join(k.split("-")[-2:])
+
             if (obj.sh[1] < max_size[gr]) & (make_2d_plots > 1):
                 continue
 
@@ -5198,7 +5201,7 @@ def extract_spectra(
         if ptab is not None:
             hdul[g].append(ptab)
 
-        if g.upper() == "PRISM":
+        if g.upper() == "PRISM-CLEAR":
             plot_kws["interpolation"] = "nearest"
         else:
             plot_kws["interpolation"] = "hanning"
