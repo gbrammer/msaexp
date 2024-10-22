@@ -4816,6 +4816,7 @@ def extract_spectra(
 
         if trace_with_ypos in ["auto"]:
             trace_with_ypos = ("b" not in target) & (not get_background)
+            trace_with_ypos &= ("BKG" not in target)
 
         if root.startswith("glazebrook-v"):
             utils.log_comment(
@@ -4919,7 +4920,7 @@ def extract_spectra(
                 )
                 continue
 
-            elif ("b" in target) & (
+            elif (("b" in target) | ("BKG" in target)) & (
                 (obj.info["shutter_state"] == "x").sum() > 0
             ):
                 utils.log_comment(
