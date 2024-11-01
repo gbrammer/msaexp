@@ -119,7 +119,7 @@ def split_visit_groups(
     groups = {}
     for k in np.unique(keys):
         test_field = (un[k].sum() % 6 == 0) & ("jw02561" in files[0])
-        test_field |= (un[k].sum() % 4 == 0) & ("jw01810" in files[0])
+        test_field |= (un[k].sum() % 4 == 0) & ("xxjw01810" in files[0])
         test_field |= (un[k].sum() % 4 == 0) & ("jw01324" in files[0])
         test_field |= (un[k].sum() % 6 == 0) & ("jw01324" in files[0])
         test_field &= split_uncover > 0
@@ -189,6 +189,7 @@ def slit_prf_fraction(
     from msaexp.resample_numba import pixel_integrated_gaussian_numba as PRF
 
     global SCALE_FWHM
+    global LOOKUP_PRF
 
     # Tabulated PSF FWHM, pix
     psf_fw = msautils.get_nirspec_psf_fwhm(wave) * SCALE_FWHM
@@ -206,6 +207,25 @@ def slit_prf_fraction(
     )
 
     return prf_frac
+
+
+LOOKUP_PRF = None
+LOOKUP_PRF_ORDER = 1
+
+def set_lookup_prf():
+    """
+    Initialize global LOOKUP_PRF
+    """
+    global LOOKUP_PRF
+    
+    msg = f"Initialize LookupTablePSF()"
+    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+    
+    prf = msautils.LookupTablePSF()
+    
+    LOOKUP_PRF = prf
+    
+    return prf
 
 
 def objfun_prof_trace(
@@ -328,6 +348,8 @@ def objfun_prof_trace(
     global WING_SIGMA
     global DEFAULT_WINGS
     global WINGS_XOFF
+    global LOOKUP_PRF
+    global LOOKUP_PRF_ORDER
 
     EVAL_COUNT += 1
 
@@ -383,7 +405,15 @@ def objfun_prof_trace(
 
     # wings = (0.05, 2)
 
-    ppos = PRF(yslit[ipos, :].flatten(), 0.0, sig2[ipos, :].flatten(), dx=1)
+    if LOOKUP_PRF is not None:
+        ppos = LOOKUP_PRF.evaluate(
+            sigma=sigma,
+            slit_coords=(wave[ipos,:].flatten(), yslit[ipos, :].flatten()),
+            order=LOOKUP_PRF_ORDER
+        )
+    else:
+        ppos = PRF(yslit[ipos, :].flatten(), 0.0, sig2[ipos, :].flatten(), dx=1)
+        
     if WINGS_XOFF is not None:
         for wx, wn in zip(WINGS_XOFF, wings):
             ppos += wn * PRF(
@@ -407,9 +437,16 @@ def objfun_prof_trace(
     # ppos *= bar[ipos,:]
 
     if ineg.sum() > 0:
-        pneg = PRF(
-            yslit[ineg, :].flatten(), 0.0, sig2[ineg, :].flatten(), dx=1
-        )
+        if LOOKUP_PRF is not None:
+            pneg = LOOKUP_PRF.evaluate(
+                sigma=sigma,
+                slit_coords=(wave[ineg,:].flatten(), yslit[ineg, :].flatten()),
+                order=LOOKUP_PRF_ORDER
+            )
+        else:
+            pneg = PRF(
+                yslit[ineg, :].flatten(), 0.0, sig2[ineg, :].flatten(), dx=1
+            )
         if WINGS_XOFF is not None:
             for wx, wn in zip(WINGS_XOFF, wings):
                 pneg += wn * PRF(
@@ -528,6 +565,7 @@ class SlitGroup:
         min_bar=0.4,
         bar_corr_mode="wave",
         fix_prism_norm=True,
+        min_extended_calibration=0.05,
         slit_hotpix_kwargs={},
         sky_arrays=None,
         sky_file="read",
@@ -818,7 +856,12 @@ class SlitGroup:
                 self.flagged_hot_pixels.append(_)  # dq, count, status
             else:
                 self.flagged_hot_pixels.append((None, 0, 0))
-
+            
+            if min_extended_calibration is not None:
+                status = msautils.slit_extended_flux_calibration(
+                    slit, threshold=min_extended_calibration
+                )
+            
             self.slits.append(slit)
             keep_files.append(file)
             self.shapes.append(slit.data.shape)
@@ -4093,6 +4136,7 @@ def drizzle_grating_group(
     step=1,
     with_pathloss=True,
     wave_sample=1.05,
+    grating_limits=msautils.GRATING_LIMITS,
     ny=13,
     dkws=dict(oversample=16, pixfrac=0.8, sample_axes="y"),
     y_range=[-3, 3],
@@ -4164,7 +4208,7 @@ def drizzle_grating_group(
     header = pyfits.Header()
 
     wave_bin = msautils.get_standard_wavelength_grid(
-        obj.grating, sample=wave_sample
+        obj.grating, sample=wave_sample, grating_limits=grating_limits,
     )
 
     xbin = msautils.array_to_bin_edges(wave_bin)

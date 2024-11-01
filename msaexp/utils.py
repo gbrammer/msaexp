@@ -111,6 +111,75 @@ def update_slit_metadata(slit):
         slit.slitlet_id = 9999
 
 
+EXTENDED_WAVELENGTHS = {
+    'F070LP_G140M': [7e-7, 2.2e-6],
+    'F100LP_G140M': [9.7e-7, 2.2e-6],
+    'CLEAR_PRISM':  [6e-7, 5.5e-6],
+}
+
+
+def extend_wavelength_ranges(extended_wavelengths=EXTENDED_WAVELENGTHS, reset_to_crds=False):
+    """
+    Extend wavelength range reference file
+    
+    Parameters
+    ----------
+    extended_wavelengths : dict
+        Updated wavelength ranges
+    
+    reset_to_crds : bool
+        Re-download the wavelength reference file from CRDS
+    
+    Returns
+    -------
+    reference_file : str
+        Filename of the ``wavelengthrange`` reference file
+    """
+    import jwst.datamodels
+    from jwst.stpipe import Step
+
+    from msaexp import __file__ as msafile
+    from grizli import utils
+    
+    path_to_data = os.path.join(os.path.dirname(msafile), "data")
+
+    dummy_file = os.path.join(
+        path_to_data,
+        "jw01125001001_03102_00001_nrs1_rate.strip.fits.gz"
+    )
+
+    with jwst.datamodels.open(dummy_file) as dm:
+        reference_file = Step().get_reference_file(dm, "wavelengthrange")
+        if reset_to_crds:
+            os.remove(reference_file)
+            reference_file = Step().get_reference_file(dm, "wavelengthrange")
+
+    ref = jwst.datamodels.open(reference_file)
+    msg = f"extend_wavelength_ranges: {os.path.basename(reference_file)}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+    for k in extended_wavelengths:
+        ix = ref.waverange_selector.index(k)
+        prev = [v for v in ref.wavelengthrange[ix]]
+        if not reset_to_crds:
+            ref.wavelengthrange[ix] = extended_wavelengths[k]
+            msg = (
+                f"extend_wavelength_ranges: update {k:>12} {prev} -> "
+                + f"{ref.wavelengthrange[ix]}"
+            )
+        else:
+            msg = f"extend_wavelength_ranges: {k:>12} {prev}"
+
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+    if not reset_to_crds:
+        ref.write(reference_file)
+
+    ref.close()
+
+    return reference_file
+
+
 def update_slit_dq_mask(
     slit, mask_padded=False, bar_threshold=-1, verbose=True
 ):
@@ -199,7 +268,7 @@ def update_slit_dq_mask(
 
 
 def slit_trace_center(
-    slit, with_source_xpos=False, with_source_ypos=True, index_offset=0.0
+    slit, with_source_xpos=False, trace_center=0.0, with_source_ypos=True, index_offset=0.0
 ):
     """
     Get detector coordinates along the center of a slit
@@ -211,6 +280,9 @@ def slit_trace_center(
     with_source_xpos : bool
         Apply wavelength correction based on source centering within the
         shutter assuming ``source_type = POINT``
+
+    trace_center : float
+        Center in slit coordinates
 
     with_source_ypos : bool
         Get center of trace accounting for source y offset in the shutter
@@ -274,7 +346,9 @@ def slit_trace_center(
     ok = np.isfinite(sy)
 
     # Interpolate 2D shutter and wavelength arrays at the desired trace center
-    trace_center = 0.0
+    if trace_center is None:
+        trace_center = (slit.slit_ymax + slit.slit_ymin)/2.
+
     if with_source_ypos & (slit.source_ypos is not None):
         trace_center += slit.source_ypos
 
@@ -348,7 +422,6 @@ def get_standard_wavelength_grid(
     target_waves : array
         Target wavelength grid
     """
-    import grizli.utils
 
     if grating.lower() not in grating_limits:
         return None
@@ -377,6 +450,41 @@ def get_standard_wavelength_grid(
     return target_waves
 
 
+def get_default_resolution_curve(grating='PRISM', wave=None, **kwargs):
+    """
+    Parameters
+    ----------
+    grating : str
+        Grating name
+    
+    wave : array-like, None
+        Wavelength grid, microns
+    
+    Returns
+    -------
+    R_fwhm : array-like
+        Tabulated resolution curve
+
+    """
+    _data_path = os.path.dirname(__file__)
+    disp = grizli.utils.read_catalog(
+        f"{_data_path}/data/jwst_nirspec_{grating}_disp.fits"
+    )
+
+    if wave is None:
+        wave = get_standard_wavelength_grid(grating, **kwargs)
+
+    R_fwhm = np.interp(
+        wave,
+        disp["WAVELENGTH"],
+        disp["R"],
+        left=disp["R"][0],
+        right=disp["R"][-1],
+    )
+
+    return R_fwhm
+
+
 def get_slit_sign(slit):
     """
     sign convention for slit pixels
@@ -397,7 +505,10 @@ def get_slit_sign(slit):
         _find_nirspec_output_sampling_wavelengths,
     )
 
-    _max_virtual_slit_extent = ResampleSpecData._max_virtual_slit_extent
+    try:
+        _max_virtual_slit_extent = ResampleSpecData._max_virtual_slit_extent
+    except AttributeError:
+        return -1
 
     refmodel = slit
 
@@ -1283,7 +1394,6 @@ def combine_2d_with_rejection(
 
     import astropy.units as u
 
-    import grizli.utils
     from .version import __version__
 
     sci = np.array([s.data for s in drizzled_slits])
@@ -1637,7 +1747,6 @@ def drizzled_hdu_figure(
     import matplotlib.pyplot as plt
     import astropy.units as u
     import scipy.ndimage as nd
-    import grizli.utils
 
     sp = grizli.utils.read_catalog(hdul["SPEC1D"])
     nx = len(sp)
@@ -1819,8 +1928,8 @@ def drizzled_hdu_figure(
     else:
         major, minor = tick_steps
 
-    xt = np.arange(0.5, 5.5, major)
-    xtm = np.arange(0.5, 5.5, minor)
+    xt = np.arange(0.5, 5.72, major)
+    xtm = np.arange(0.5, 5.72, minor)
 
     if hdul[1].header["GRATING"] == "PRISM":
         xt = np.append([0.7], xt)
@@ -2554,6 +2663,62 @@ def get_prism_wave_bar_correction(
     return bar, is_wrapped
 
 
+def slit_extended_flux_calibration(slit, verbose=True, threshold=0):
+    """
+    Get flux calibration for extended extractions
+    """
+    
+    test = False
+    refs = slit.meta.ref_file.instance
+
+    if 'fflat' in refs:
+        test = '_ext.fits' in refs['fflat']['name']
+    elif 'sflat' in refs:
+        test = '_ext.fits' in refs['sflat']['name']
+
+    if not test:
+        return 0
+
+    sens_file = f"wd_sensitivity_{slit.meta.instrument.filter}_{slit.meta.instrument.grating}.fits"
+
+    sens_file = f"p330e_s1600a1_sensitivity_{slit.meta.instrument.filter}_{slit.meta.instrument.grating}.fits"
+    
+    if not os.path.exists(sens_file):
+        msg = f"slit_extended_flux_calibration: {sens_file} not found"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        return 1
+
+    msg = f"slit_extended_flux_calibration: {sens_file} threshold={threshold}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    sens = grizli.utils.read_catalog(sens_file)
+
+    wcs = slit.meta.wcs
+    d2w = wcs.get_transform("detector", "world")
+
+    _ypi, _xpi = np.indices(slit.data.shape)
+    _ras, _des, _wave = d2w(_xpi, _ypi)
+    
+    corr_data = 1. / np.interp(
+        _wave,
+        sens["wavelength"],
+        sens["sensitivity"],
+        left=0,
+        right=0
+    )
+
+    corr_data[~np.isfinite(corr_data)] = 0
+    max_sens = np.nanmax(1./corr_data[corr_data > 0])
+    corr_data[corr_data >= 1./(max_sens*threshold)] = np.nan
+    
+    slit.data *= corr_data
+    slit.err *= corr_data
+    slit.var_rnoise *= corr_data**2
+    slit.var_poisson *= corr_data**2
+    
+    return 2
+
+
 def cache_badpix_arrays():
     """
     Load badpixel arrays into global data
@@ -3029,3 +3194,85 @@ def objfun_prf(
         return chi[ok].flatten()
     elif ret == 3:
         return chi2
+
+
+class LookupTablePSF():
+    def __init__(self):
+        """
+        Lookup table PSF derived from point sources in the fixed slit
+        """
+        self.psf_data = None
+        self.read_data()
+        self.slit_yi = None
+        self.slit_wavei = None
+        
+    def read_data(self):
+        """
+        Read the lookup table
+        """
+        path_to_data = os.path.join(os.path.dirname(__file__), "data")        
+        psf_file = os.path.join(path_to_data, 'nirspec_psf_lookup.fits')
+        
+        if not os.path.exists(psf_file):
+            return None
+            
+        with pyfits.open(psf_file) as im:
+            self.psf_data = im['PROF'].data*1
+            self.psf_y = im['YSLIT'].data*1
+            self.psf_yi = np.arange(len(self.psf_y), dtype=float)
+
+            self.psf_wave = im['WAVE'].data*1
+            self.psf_wavei = np.arange(len(self.psf_wave), dtype=float)
+
+            self.psf_sigma = im['SIGMA'].data*1
+            self.psf_sigmai = np.arange(len(self.psf_sigma), dtype=float)
+        
+            self.psf_slit_loss = im['LOSS'].data*1
+            
+        return True
+
+    def set_slit_coords(self, wave, slit_y):
+        """
+        Set interpolants
+        """
+        self.slit_shape = slit_y.shape
+        self.slit_y = slit_y*1.
+        
+        self.slit_wavei = np.interp(wave.flatten(), self.psf_wave, self.psf_wavei, left=np.nan, right=np.nan)
+        
+        self.slit_yi = np.interp(self.slit_y.flatten(), self.psf_y, self.psf_yi, left=np.nan, right=np.nan)
+
+    def set_slit_offset(self, dy=None):
+        """
+        Set an offset to dy
+        """
+        if dy is None:
+            self.slit_yi_offset = self.slit_yi
+        else:
+            self.slit_yi_offset = np.interp((self.slit_y + dy).flatten(), self.psf_y, self.psf_yi, left=np.nan, right=np.nan)
+
+    def evaluate(self, sigma=0, dy=0., slit_coords=None, order=1):
+        """
+        Run the lookup
+        """
+        from scipy.ndimage import map_coordinates
+        
+        if slit_coords is not None:
+            self.set_slit_coords(*slit_coords)
+        
+        self.set_slit_offset(dy=dy)
+        
+        slit_sigmai = np.interp(sigma, self.psf_sigma, self.psf_sigmai, left=0, right=self.psf_sigmai[-1])
+        
+        coords = np.array([
+            self.slit_yi_offset,
+            self.slit_wavei,
+            np.full_like(self.slit_wavei, slit_sigmai)
+        ])
+
+        map_interp = map_coordinates(self.psf_data, coords, cval=0.0, order=order)
+        
+        return map_interp.reshape(self.slit_shape)
+        
+        
+        
