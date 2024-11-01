@@ -18,6 +18,8 @@ __all__ = [
     "smc_attenuation",
 ]
 
+CLIGHT = 299792458.0  # m/s
+
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
 def simpson(y, x):
@@ -364,6 +366,77 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.0):
         samp[i] = (right - left) / 2 / xdx[i] * normalization
 
     return samp
+
+
+import grizli.utils_numba.interp
+
+INTERP_CONSERVE = grizli.utils_numba.interp.interp_conserve_c
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def integrate_filter(
+    filter_wave,
+    filter_throughput,
+    filter_norm,
+    templ_wobs,
+    templ_fnu,
+):
+    """
+    Integrate the template through a `FilterDefinition` filter object.
+
+    .. note:: The `grizli` interpolation function
+              `grizli.utils_c.interp.interp_conserve_c` will be used if
+              available.
+
+    Parameters
+    ----------
+    filt : `~eazy.filters.FilterDefinition` object or a list of them
+        Filter(s) to interpolate
+
+    flam : bool
+        Return integrated fluxes in f-lambda, rather than f-nu
+
+    scale : float, array
+        Scale factor applied to template before integrating.  If an
+        array is specified, it must have the same size as the template
+        ``wave`` array.
+
+    z : float
+        Redshift the template before integrating through the filter
+
+    include_igm : bool
+        Include IGM absorption
+
+    redshift_type : str
+        See `~eazy.templates.Template.zindex`.
+
+    iz : int
+        Evaluate for a specific index of the ``flux`` array rather than
+        calculating with ``zindex``
+
+    Returns
+    -------
+    fnu : float or array
+        Template integrated through one or more filters from ``filt``.  By
+        defaults has units of fnu
+
+        .. note:: The interpolated fluxes *do not* include factors of
+                  (1+z) from the redshifted templates.
+
+    """
+
+    templ_filt = INTERP_CONSERVE(
+        filter_wave, templ_wobs, templ_fnu, left=0, right=0
+    )
+
+    # f_nu/lam dlam == f_nu d (ln nu)
+    filter_flux = trapz(
+        filter_throughput * templ_filt / filter_wave, filter_wave
+    )
+
+    filter_flux /= filter_norm
+
+    return filter_flux
 
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
