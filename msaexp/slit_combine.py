@@ -251,8 +251,8 @@ def objfun_prof_trace(
     """
     Objective function for fitting the profile along the trace
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     theta : array-like
         Array of parameters for the objective function.
 
@@ -306,8 +306,8 @@ def objfun_prof_trace(
     ret : int
         Return flag (see returns).
 
-    Returns:
-    --------
+    Returns
+    -------
     If ret == 1:
         snum : array-like
             Numerator of the objective function.  The estimated 1D
@@ -565,7 +565,7 @@ class SlitGroup:
         min_bar=0.4,
         bar_corr_mode="wave",
         fix_prism_norm=True,
-        min_extended_calibration=0.05,
+        extended_calibration_kwargs={"threshold": 0.05},
         slit_hotpix_kwargs={},
         sky_arrays=None,
         sky_file="read",
@@ -585,8 +585,7 @@ class SlitGroup:
         pad_border=2,
         weight_type="ivm",
         reference_exposure="auto",
-        **kwargs,
-    ):
+        **kwargs):
         """
         Container for a list of 2D extracted ``SlitModel`` files
 
@@ -648,6 +647,9 @@ class SlitGroup:
         fix_prism_norm : bool
             Apply prism normalization correction with
             `~msaexp.utils.get_normalization_correction`.
+
+        extended_calibration_kwargs : dict
+            Keyword arguments to `~msaexp.utils.slit_extended_flux_calibration`
 
         sky_arrays : array-like
             Optional sky data (in progress)
@@ -851,17 +853,18 @@ class SlitGroup:
         self.flagged_hot_pixels = []
         for i, file in enumerate(files):
             slit = jwst.datamodels.open(file)
+
+            if extended_calibration_kwargs is not None:
+                status = msautils.slit_extended_flux_calibration(
+                    slit, **extended_calibration_kwargs
+                )
+
             if slit_hotpix_kwargs is not None:
                 _ = msautils.slit_hot_pixels(slit, **slit_hotpix_kwargs)
                 self.flagged_hot_pixels.append(_)  # dq, count, status
             else:
                 self.flagged_hot_pixels.append((None, 0, 0))
-            
-            if min_extended_calibration is not None:
-                status = msautils.slit_extended_flux_calibration(
-                    slit, threshold=min_extended_calibration
-                )
-            
+
             self.slits.append(slit)
             keep_files.append(file)
             self.shapes.append(slit.data.shape)

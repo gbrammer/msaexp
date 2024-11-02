@@ -1634,8 +1634,7 @@ class NirspecPipeline:
         center2d=False,
         trace_sign=1,
         min_dyoffset=0.2,
-        **kwargs,
-    ):
+        **kwargs):
         """
         Main function for extracting 2D/1D spectra from individual slitlets
 
@@ -1700,8 +1699,8 @@ class NirspecPipeline:
         min_dyoffset: float
             The minimum value for the y offset. Default is 0.2.
 
-        Returns:
-        ----------
+        Returns
+        -------
         If 'key' is not found in 'slitlets', returns None.
 
         Else:
@@ -2550,17 +2549,16 @@ def make_summary_tables(root="msaexp", zout=None):
     """
     Make a summary table of all extracted sources
 
-    Parameters:
-    -----------
-
+    Parameters
+    ----------
     root : str
         The root directory where the data is stored. Default is "msaexp".
 
     zout : astropy.table.Table
         Optional table containing photometric redshift information. Default is None.
 
-    Returns:
-    --------
+    Returns
+    -------
     tabs : list
         List of astropy tables containing the extracted source information.
 

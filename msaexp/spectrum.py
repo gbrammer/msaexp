@@ -635,7 +635,7 @@ class SpectrumSampler(object):
             from msaexp import spectrum
             import matplotlib.pyplot as plt
 
-            sp = spectrum.SpectrumSampler('https://s3.amazonaws.com/msaexp-nirspec/extractions/ceers-ddt-v1/ceers-ddt-v1_prism-clear_2750_1598.spec.fits')
+            sp = spectrum.SpectrumSampler('https://s3.amazonaws.com/msaexp-nirspec/extractions/ceers-ddt-v3/ceers-ddt-v3_prism-clear_2750_1598.spec.fits')
 
             fig, axes = plt.subplots(2, 1, figsize=(8, 5),
                                      sharex=True, sharey=True)
@@ -729,7 +729,7 @@ class SpectrumSampler(object):
         return spectrum
 
     def igm_absorption(self, z, scale_tau=1.0, scale_disp=1.3):
-        """
+        r"""
         `Inoue+ (2014) <https://ui.adsabs.harvard.edu/abs/2014MNRAS.442.1805I>`_ IGM
         absorption
 
