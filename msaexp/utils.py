@@ -3212,12 +3212,20 @@ def objfun_prf(
 
 
 class LookupTablePSF:
-    def __init__(self):
+    def __init__(self, psf_file='nirspec_exp_psf_lookup.fits'):
         """
         Fast lookup table PSF derived from point sources in the fixed slit.
 
         The table is evaluated for a grid of slit-frame (y) pixels, wavelength and a
-        Gaussian width, sigma, convolved with the PSF profile.
+        profile width convolved with the PSF profile.
+
+        Parameters
+        ----------
+        psf_file : str, 'nirspec_exp_psf_lookup.fits', 'nirspec_psf_lookup.fits'
+            Which PSF table to use.  ``nirspec_exp_psf_lookup.fits`` assumes an
+            exponential profile where the width parameter is the half-light radius.
+            ``nirspec_psf_lookup.fits`` is a Gaussian profile with the width parameter
+            sigma.
 
         Examples
         --------
@@ -3265,6 +3273,8 @@ class LookupTablePSF:
             assert(np.allclose(prf2.sum(axis=0), 1., rtol=0.01))
 
         """
+        self.psf_file = psf_file
+        
         self.psf_data = None
 
         self.read_data()
@@ -3274,10 +3284,10 @@ class LookupTablePSF:
 
     def read_data(self):
         """
-        Read the lookup table data in ``data/nirspec_psf_lookup.fits``
+        Read the lookup table data in ``psf_file``
         """
         path_to_data = os.path.join(os.path.dirname(__file__), "data")
-        psf_file = os.path.join(path_to_data, "nirspec_psf_lookup.fits")
+        psf_file = os.path.join(path_to_data, self.psf_file)
 
         if not os.path.exists(psf_file):
             return None
