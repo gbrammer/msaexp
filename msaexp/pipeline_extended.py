@@ -35,6 +35,15 @@ EXTENDED_RANGES = {
     "CLEAR_PRISM": [0.5, 5.6],
 }
 
+__all__ = [
+    "step_reference_files",
+    "extend_wavelengthrange",
+    "extend_fs_fflat",
+    "extend_quad_fflat",
+    "extend_sflat",
+    "extend_dflat",
+    "run_pipeline"
+]
 
 def step_reference_files(step, input_model):
     """
@@ -145,6 +154,8 @@ def extend_wavelengthrange(
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     waverange.write(new_waverange)
+    waverange.close()
+
     return True
 
 
@@ -478,7 +489,7 @@ def extend_dflat(
     return df
 
 
-def extend_reference_files(
+def run_pipeline(
     file,
     slit_index=0,
     all_slits=True,
@@ -875,7 +886,3 @@ def extend_reference_files(
 
     return result
 
-
-def run_pipeline_with_extended_wavelengths(file, **kwargs):
-    result = extend_reference_files(file, **kwargs)
-    return result
