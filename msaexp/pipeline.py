@@ -410,6 +410,137 @@ class SlitData:
             )
 
 
+def exposure_oneoverf(file, fix_rows=False, skip_completed=True, **kwargs):
+    """
+    Remove column-averaged 1/f striping
+
+    Parameters
+    ----------
+    file : str
+        Exposure (rate.fits) filename
+
+    fix_rows : bool
+        Apply 1/f correction to detector rows, as well as columns
+
+    skip_completed : bool
+        Skip steps that have already been completed
+
+    Returns
+    -------
+    status : bool
+        False if ``skip_completed`` and ``ONEFEXP`` keyword found, True if
+        executed without exception.
+
+    """
+    with pyfits.open(file) as im:
+        if "ONEFEXP" in im[0].header:
+            if im[0].header["ONEFEXP"] & skip_completed:
+                return False
+
+    jwst_utils.exposure_oneoverf_correction(
+        file, erode_mask=False, in_place=True, axis=0, deg_pix=256
+    )
+
+    if fix_rows:
+        jwst_utils.exposure_oneoverf_correction(
+            file, erode_mask=False, in_place=True, axis=1, deg_pix=2048
+        )
+
+    return True
+
+
+def exposure_detector_effects(
+    file, fix_rows=False, scale_rnoise=True, skip_completed=True, **kwargs
+):
+    """
+    Remove 1/f striping, bias pedestal offset and rescale RNOISE extension
+
+    Parameters
+    ----------
+    file : str
+        Exposure (rate.fits) filename
+
+    scale_rnoise : bool
+        Calculate the RNOISE scaling
+
+    skip_completed : bool
+        Skip steps that have already been completed
+
+    Returns
+    -------
+    status : bool
+        False if ``skip_completed`` and ``ONEFEXP`` keyword found, True if
+        executed without exception.
+
+    """
+
+    status = exposure_oneoverf(
+        file, fix_rows=fix_rows, skip_completed=skip_completed, **kwargs
+    )
+
+    with pyfits.open(file, mode="update") as im:
+        # bias
+        dq = (im["DQ"].data & 1025) == 0
+
+        if im[0].header["DETECTOR"] == "NRS2":
+            dq[:, :1400] = False
+        else:
+            dq[:, 1400:] = False
+
+        if ("MASKBIAS" in im[0].header) & skip_completed:
+            bias_level = im[0].header["MASKBIAS"]
+            msg = f"msaexp.preprocess : {file}  bias offset ="
+            msg += f" {bias_level:7.3f} (from MASKBIAS)"
+            utils.log_comment(
+                utils.LOGFILE, msg, verbose=True, show_date=False
+            )
+        else:
+            bias_level = np.nanmedian(im["SCI"].data[dq])
+            msg = f"msaexp.preprocess : {file}  bias offset ="
+            msg += f" {bias_level:7.3f}"
+            utils.log_comment(
+                utils.LOGFILE, msg, verbose=True, show_date=False
+            )
+
+            im["SCI"].data -= bias_level
+            im[0].header["MASKBIAS"] = bias_level, "Bias level"
+            im[0].header["MASKNPIX"] = (
+                dq.sum(),
+                "Number of pixels used for bias level",
+            )
+
+        if scale_rnoise:
+
+            if ("SCLREADN" in im[0].header) & skip_completed:
+                rms = im[0].header["SCLREADN"]
+                msg = f"msaexp.preprocess : {file}    rms scale ="
+                msg += f" {rms:>7.2f} (from SCLREADN)"
+                utils.log_comment(
+                    utils.LOGFILE, msg, verbose=True, show_date=False
+                )
+            else:
+                resid = im["SCI"].data / np.sqrt(im["VAR_RNOISE"].data)
+                rms = utils.nmad(resid[dq])
+                msg = f"msaexp.preprocess : {file}    rms scale ="
+                msg += f"{rms:>7.2f}"
+                utils.log_comment(
+                    utils.LOGFILE, msg, verbose=True, show_date=False
+                )
+
+                im[0].header["SCLREADN"] = rms, "RNOISE Scale factor"
+
+                im["VAR_RNOISE"].data *= rms**2
+
+                im[0].header["SCLRNPIX"] = (
+                    dq.sum(),
+                    "Number of pixels used for rnoise scale",
+                )
+
+        im.flush()
+
+    return True
+
+
 class NirspecPipeline:
     def __init__(
         self,
@@ -735,82 +866,14 @@ class NirspecPipeline:
             snowball_dilate=24,
         )
 
-        # 1/f correction
+        # 1/f, bias & rnoise
         for file in self.files:
-            with pyfits.open(file) as im:
-                if "ONEFEXP" in im[0].header:
-                    if im[0].header["ONEFEXP"] & skip_completed:
-                        continue
-
-            jwst_utils.exposure_oneoverf_correction(
-                file, erode_mask=False, in_place=True, axis=0, deg_pix=256
+            exposure_detector_effects(
+                file,
+                fix_rows=fix_rows,
+                scale_rnoise=scale_rnoise,
+                skip_completed=skip_completed,
             )
-
-            if fix_rows:
-                jwst_utils.exposure_oneoverf_correction(
-                    file, erode_mask=False, in_place=True, axis=1, deg_pix=2048
-                )
-
-        # bias
-        for file in self.files:
-            with pyfits.open(file, mode="update") as im:
-                dq = (im["DQ"].data & 1025) == 0
-
-                if im[0].header["DETECTOR"] == "NRS2":
-                    dq[:, :1400] = False
-                else:
-                    dq[:, 1400:] = False
-
-                if ("MASKBIAS" in im[0].header) & skip_completed:
-                    bias_level = im[0].header["MASKBIAS"]
-                    msg = f"msaexp.preprocess : {file}  bias offset ="
-                    msg += f" {bias_level:7.3f} (from MASKBIAS)"
-                    utils.log_comment(
-                        utils.LOGFILE, msg, verbose=True, show_date=False
-                    )
-                else:
-                    bias_level = np.nanmedian(im["SCI"].data[dq])
-                    msg = f"msaexp.preprocess : {file}  bias offset ="
-                    msg += f" {bias_level:7.3f}"
-                    utils.log_comment(
-                        utils.LOGFILE, msg, verbose=True, show_date=False
-                    )
-
-                    im["SCI"].data -= bias_level
-                    im[0].header["MASKBIAS"] = bias_level, "Bias level"
-                    im[0].header["MASKNPIX"] = (
-                        dq.sum(),
-                        "Number of pixels used for bias level",
-                    )
-
-                if scale_rnoise:
-
-                    if ("SCLREADN" in im[0].header) & skip_completed:
-                        rms = im[0].header["SCLREADN"]
-                        msg = f"msaexp.preprocess : {file}    rms scale ="
-                        msg += f" {rms:>7.2f} (from SCLREADN)"
-                        utils.log_comment(
-                            utils.LOGFILE, msg, verbose=True, show_date=False
-                        )
-                    else:
-                        resid = im["SCI"].data / np.sqrt(im["VAR_RNOISE"].data)
-                        rms = utils.nmad(resid[dq])
-                        msg = f"msaexp.preprocess : {file}    rms scale ="
-                        msg += f"{rms:>7.2f}"
-                        utils.log_comment(
-                            utils.LOGFILE, msg, verbose=True, show_date=False
-                        )
-
-                        im[0].header["SCLREADN"] = rms, "RNOISE Scale factor"
-
-                        im["VAR_RNOISE"].data *= rms**2
-
-                        im[0].header["SCLRNPIX"] = (
-                            dq.sum(),
-                            "Number of pixels used for rnoise scale",
-                        )
-
-                im.flush()
 
         return True
 
