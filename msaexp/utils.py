@@ -3214,16 +3214,67 @@ def objfun_prf(
 class LookupTablePSF:
     def __init__(self):
         """
-        Lookup table PSF derived from point sources in the fixed slit
+        Fast lookup table PSF derived from point sources in the fixed slit.
+
+        The table is evaluated for a grid of slit-frame (y) pixels, wavelength and a
+        Gaussian width, sigma, convolved with the PSF profile.
+
+        Examples
+        --------
+        .. plot::
+            :include-source:
+
+            import numpy as np
+            import matplotlib.pyplot as plt
+            import msaexp.utils as msautils
+
+            waves = np.linspace(0.8, 5.6, 128)
+            yslit = np.arange(-9, 10, dtype=float)
+            w2d, y2d = np.meshgrid(waves, yslit)
+
+            fig, axes = plt.subplots(2,1,figsize=(8,5), sharex=True, sharey=True)
+
+            # Initialize the lookup table
+            prf_model = msautils.LookupTablePSF()
+
+            # Straight trace
+            prf = prf_model.evaluate(sigma=0, dy=0.0, slit_coords=(w2d, y2d))
+
+            axes[0].imshow(
+                prf,
+                extent=(waves[0], waves[-1], yslit[0], yslit[-1]),
+                aspect='auto'
+            )
+
+            # Curved trace
+            dy = -((w2d-4)/2)**2
+            prf2 = prf_model.evaluate(sigma=0.2, dy=dy, slit_coords=(w2d, y2d))
+
+            axes[1].imshow(
+                prf2,
+                extent=(waves[0], waves[-1], yslit[0], yslit[-1]),
+                aspect='auto'
+            )
+
+            axes[1].set_xlabel('wavelength')
+            axes[1].set_ylabel('y pixel')
+            fig.tight_layout(pad=1)
+
+            # Verify that integral of each along the trace is 1.0
+            assert(np.allclose(prf.sum(axis=0), 1., rtol=0.01))
+            assert(np.allclose(prf2.sum(axis=0), 1., rtol=0.01))
+
         """
         self.psf_data = None
+
         self.read_data()
+
         self.slit_yi = None
         self.slit_wavei = None
 
     def read_data(self):
         """
-        Read the lookup table
+        Read the lookup table data in ``data/nirspec_psf_lookup.fits``
         """
         path_to_data = os.path.join(os.path.dirname(__file__), "data")
         psf_file = os.path.join(path_to_data, "nirspec_psf_lookup.fits")
@@ -3248,7 +3299,22 @@ class LookupTablePSF:
 
     def set_slit_coords(self, wave, slit_y):
         """
-        Set interpolants
+        Set wavelength and pixel interpolants, perhaps to speed up execution if these
+        don't change.
+
+        Parameters
+        ----------
+        wave : array-like
+            Wavelengths, microns
+
+        slit_y : array-like
+            Cross-dispersion pixel centers
+
+        Returns
+        -------
+        Sets ``slit_shape``, ``slit_y`` attributes and computes interpolator indices
+        ``slit_wavei``, ``slit_yi``.
+
         """
         self.slit_shape = slit_y.shape
         self.slit_y = slit_y * 1.0
@@ -3271,7 +3337,12 @@ class LookupTablePSF:
 
     def set_slit_offset(self, dy=None):
         """
-        Set an offset to dy
+        Set an offset to the cross-dispersion y pixel, added to ``slit_y``
+
+        Parameters
+        ----------
+        dy : None, scalar, array-like
+            Offset added to ``slit_y`` and then compute interpolant ``slit_yi_offset``
         """
         if dy is None:
             self.slit_yi_offset = self.slit_yi
@@ -3284,9 +3355,31 @@ class LookupTablePSF:
                 right=np.nan,
             )
 
-    def evaluate(self, sigma=0, dy=0.0, slit_coords=None, order=1):
+    def evaluate(self, sigma=0, dy=0.0, slit_coords=None, order=1, **kwargs):
         """
         Run the lookup
+
+        Parameters
+        ----------
+        sigma : float > 0
+            Gaussian width convolved with the PSF profile
+
+        dy : None, scalar, array-like
+            Offset added to slit coordinates with
+            `~msaexp.utils.LookupTablePSF.set_slit_offset`.
+
+        slit_coords : None, (array-like, array-like)
+            Interpolation location coordinates ``wave`` and ``slit_y`` passed to
+            `~msaexp.utils.LookupTablePSF.set_slit_coords`.
+
+        order : int
+            Order of the interpolation with `scipy.ndimage.map_coordinates`.
+
+        Returns
+        -------
+        map_interp : array-like
+            Interpolated PSF model (same shape as inputs to ``slit_coords``).
+
         """
         from scipy.ndimage import map_coordinates
 
@@ -3316,3 +3409,9 @@ class LookupTablePSF:
         )
 
         return map_interp.reshape(self.slit_shape)
+
+    def __call__(self, **kwargs):
+        """
+        Run ``execute``
+        """
+        return self.execute(**kwargs)
