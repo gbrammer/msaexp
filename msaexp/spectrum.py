@@ -2933,18 +2933,18 @@ def plot_spectrum(
         # print('xxx', r)
 
     if spec.filter == "clear":
-        axes[-1].set_xlim(0.6, 5.29)
+        axes[-1].set_xlim(0.6, 5.54)
         axes[-1].xaxis.set_minor_locator(MultipleLocator(0.1))
         axes[-1].xaxis.set_major_locator(MultipleLocator(0.5))
     elif spec.filter == "f070lp":
-        axes[-1].set_xlim(0.69, 1.31)
+        axes[-1].set_xlim(0.65, 1.31)
         axes[-1].xaxis.set_minor_locator(MultipleLocator(0.02))
     elif spec.filter == "f100lp":
-        axes[-1].set_xlim(0.99, 1.91)
+        axes[-1].set_xlim(0.92, 1.91)
         axes[-1].xaxis.set_minor_locator(MultipleLocator(0.02))
         axes[-1].xaxis.set_major_locator(MultipleLocator(0.1))
     elif spec.filter == "f170lp":
-        axes[-1].set_xlim(1.69, 3.21)
+        axes[-1].set_xlim(1.65, 4.21)
     elif spec.filter == "f290lp":
         axes[-1].set_xlim(2.89, 5.31)
     else:
