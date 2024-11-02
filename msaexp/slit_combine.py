@@ -565,7 +565,7 @@ class SlitGroup:
         min_bar=0.4,
         bar_corr_mode="wave",
         fix_prism_norm=True,
-        extended_calibration_kwargs={"threshold": 0.05},
+        extended_calibration_kwargs={"threshold": 0.01},
         slit_hotpix_kwargs={},
         sky_arrays=None,
         sky_file="read",
