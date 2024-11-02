@@ -908,8 +908,8 @@ def get_xlimits_from_lines(
     """
     Find emission lines in 2D spectrum
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     hdul : HDUList
         The HDUList object containing the 2D spectrum.
 
@@ -933,8 +933,8 @@ def get_xlimits_from_lines(
     verbose : bool, optional
         Whether to print verbose output. Default is True.
 
-    Returns:
-    --------
+    Returns
+    -------
     xlim : tuple
         A tuple containing the x-limits of the emission lines.
 
@@ -1467,7 +1467,12 @@ def extract_from_hdul(
         )
 
     if prf_center is None:
-        prf_center = sci.header["SRCYPIX"] - (sci.data.shape[0] - 1) / 2.0
+        if "SRCYPIX" in sci.header:
+            y0 = sci.header["SRCYPIX"]
+        else:
+            y0 = (sci.data.shape[0] - 1) / 2
+
+        prf_center = y0 - (sci.data.shape[0] - 1) / 2.0
 
     _data = make_optimal_extraction(
         waves,
