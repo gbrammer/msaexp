@@ -625,33 +625,39 @@ def run_pipeline(
         slit_index = _slit_index
         all_slits = False
 
-    slit = ext2d[slit_index]
+    _slit = ext2d[slit_index]
 
-    targ_ = slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
+    targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
 
-    inst_key = f"{slit.meta.instrument.filter}_{slit.meta.instrument.grating}"
+    inst_key = f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"
 
-    slit_prefix = (
-        f"{file.split('_rate')[0]}_{targ_}_{inst_key}_{slit.name}".lower()
-    )
+    if _slit.meta.exposure.type == "NRS_FIXEDSLIT":
+        slit_prefix_ = f"{file.split('_rate')[0]}_{targ_}_{inst_key}_{_slit.name}".lower()
+    else:
+        if undo_flat:
+            plabel = "raw"
+        else:
+            plabel = "phot"
 
-    det = slit.meta.instrument.detector
+        slit_prefix_ = f"{file.split('_rate')[0]}_{inst_key}_{plabel}.{_slit.name}.{_slit.source_name}".lower()
+
+    det = _slit.meta.instrument.detector
 
     msg = f"{file} {inst_key} {det}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
+    # Trace
     xtr, ytr, wtr, rs, ds = msautils.slit_trace_center(
-        slit, with_source_xpos=False, with_source_ypos=False
+        _slit, with_source_xpos=False, with_source_ypos=False
     )
 
-    # Trace
     fig, ax = plt.subplots(1, 1, figsize=(12, 5))
-    ax.imshow(slit.data, aspect="auto", vmin=-0.1, vmax=2, cmap="magma_r")
+    ax.imshow(_slit.data, aspect="auto", vmin=-0.1, vmax=2, cmap="magma_r")
     ax.plot(xtr, ytr, color="magenta")
     ax.set_title(f"{inst_key} {det}")
     fig.tight_layout(pad=1)
 
-    fig.savefig(f"{slit_prefix}_trace.png".lower())
+    fig.savefig(f"{slit_prefix_}_trace.png".lower())
 
     ############
     # Flat-field
@@ -843,7 +849,7 @@ def run_pipeline(
     ax.set_title(f"{inst_key} {det}")
     fig.tight_layout(pad=1)
 
-    fig.savefig(f"{slit_prefix}_final.png".lower())
+    fig.savefig(f"{slit_prefix_}_final.png".lower())
 
     if write_output:
         if all_slits:
