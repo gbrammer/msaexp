@@ -22,11 +22,12 @@ from jwst.flatfield import flat_field
 import jwst.photom.photom
 
 from grizli import utils
-import msaexp.utils
+import msaexp.utils as msautils
+from . import pipeline
 
 # NEW_WAVERANGE_REF = "jwst_nirspec_wavelengthrange_0008_ext.asdf"
 
-NEW_RANGE = {
+EXTENDED_RANGES = {
     "F070LP_G140M": [0.6, 3.3],
     "F100LP_G140M": [0.9, 3.3],
     "F170LP_G235M": [1.5, 5.3],
@@ -38,6 +39,20 @@ NEW_RANGE = {
 def step_reference_files(step, input_model):
     """
     Get reference filenames for a `jwst` pipeline step
+
+    Parameters
+    ----------
+    step : `jwst` pipeline step instance
+        Step object, e.g., `jwst.assign_wcs.AssignWcsStep()`
+
+    input_model : `jwsts.datamodels.Model`
+        Data model instance
+
+    Returns
+    -------
+    reference_file_names : dict
+        List of reference filenames by type
+
     """
     reference_file_names = {}
     for reftype in step.reference_file_types:
@@ -50,22 +65,45 @@ def step_reference_files(step, input_model):
 VERBOSITY = True
 
 
-def extend_wavelengthrange(ref_file="jwst_nirspec_wavelengthrange_0008.asdf"):
+def extend_wavelengthrange(
+    ref_file="jwst_nirspec_wavelengthrange_0008.asdf", ranges=EXTENDED_RANGES
+):
     """
+    Extend limits of ``wavelengthrange`` reference file
+
+    Parameters
+    ----------
+    ref_file : str
+        Filename of ``wavelengthrange`` asdf reference file.  If not provided as an
+        absolute path starting with ``/``, will look for the file in ``./`` and
+        ``$CRDS_PATH/references/jwst/nirspec``.
+
+    ranges : dict
+        Extended ranges by grating / filter
+
+    Returns
+    -------
+    status : bool
+        True if completed without exception
+
+    Writes a file ``ref_file.replace(".asdf", "_ext.asdf")``.
+
     """
 
-    if ref_file.startswith('/'):
-        NIRSPEC_CRDS = ref_file
+    if os.path.exists(ref_file):
+        NIRSPEC_CRDS = "./"
+    elif ref_file.startswith("/"):
+        NIRSPEC_CRDS = os.path.dirname(ref_file)
     else:
         NIRSPEC_CRDS = os.path.join(
-        os.getenv("CRDS_PATH"), "references/jwst/nirspec"
-    )
+            os.getenv("CRDS_PATH"), "references/jwst/nirspec"
+        )
 
     waverange = jwst.datamodels.open(os.path.join(NIRSPEC_CRDS, ref_file))
 
-    for k in NEW_RANGE:
+    for k in ranges:
         i = waverange.waverange_selector.index(k)
-        waverange.wavelengthrange[i] = [v * 1e-6 for v in NEW_RANGE[k]]
+        waverange.wavelengthrange[i] = [v * 1e-6 for v in ranges[k]]
 
     new_waverange = ref_file.replace(".asdf", "_ext.asdf")
 
@@ -107,12 +145,39 @@ def extend_wavelengthrange(ref_file="jwst_nirspec_wavelengthrange_0008.asdf"):
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     waverange.write(new_waverange)
+    return True
 
 
 def extend_fs_fflat(
-    fflat_filename, full_range=[0.55, 5.6], log_prefix="extend_fs_fflat"
+    fflat_filename,
+    full_range=[0.55, 5.6],
+    FILL_VALUE=2.0e20,
+    log_prefix="extend_fs_fflat",
 ):
-    """ """
+    """
+    Extend fflat reference for ``EXP_TYPE = NRS_FIXEDSLIT``
+
+    Parameters
+    ----------
+    fflat_filename : str
+        Filename
+
+    full_range : list
+        Wavelength limits
+
+    FILL_VALUE : float
+        Value to use for the monochromatic flat table.  The default is set such that
+        the products processed with the updated references files have roughly the same
+        pixel values as with the default calibrations.
+
+    log_prefix : str
+        String for log messages
+
+    Returns
+    -------
+    ff : ``jwst.datamodels.NirspecFlat``
+        F-Flat object
+    """
     fbase = os.path.basename(fflat_filename)
 
     ff = jwst.datamodels.open(fflat_filename)
@@ -126,7 +191,6 @@ def extend_fs_fflat(
     newtab["slit_name"] = fftab["slit_name"]
 
     med_FILL_VALUE = np.nanmedian(fftab["data"][0][non_zero])
-    FILL_VALUE = 2.0e20
 
     msg = f"{log_prefix} {fbase} fill fflat with {FILL_VALUE} (med = {med_FILL_VALUE})"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
@@ -151,9 +215,36 @@ def extend_fs_fflat(
 
 
 def extend_quad_fflat(
-    fflat_filename, full_range=[0.55, 5.6], log_prefix="extend_quad_fflat"
+    fflat_filename,
+    full_range=[0.55, 5.6],
+    FILL_VALUE=2.0e20,
+    log_prefix="extend_quad_fflat",
 ):
-    """ """
+    """
+    Extend fflat reference for ``EXP_TYPE = NRS_MSASPEC``
+
+    Parameters
+    ----------
+    fflat_filename : str
+        Filename
+
+    full_range : list
+        Wavelength limits
+
+    FILL_VALUE : float
+        Value to use for the monochromatic flat table.  The default is set such that
+        the products processed with the updated references files have roughly the same
+        pixel values as with the default calibrations.
+
+    log_prefix : str
+        String for log messages
+
+    Returns
+    -------
+    ff : ``jwst.datamodels.NirspecFlat``
+        F-Flat object
+
+    """
     fbase = os.path.basename(fflat_filename)
 
     ff = jwst.datamodels.open(fflat_filename)
@@ -166,7 +257,6 @@ def extend_quad_fflat(
         newtab["slit_name"] = fftab["slit_name"]
 
         med_FILL_VALUE = np.nanmedian(fftab["data"][0][non_zero])
-        FILL_VALUE = 2.0e20
 
         msg = f"{log_prefix} {fbase} Q={i} fill fflat with {FILL_VALUE} (med = {med_FILL_VALUE})"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
@@ -196,7 +286,31 @@ def extend_sflat(
     FILL_VALUE=5.0e-10,
     log_prefix="extend_sflat",
 ):
-    """ """
+    """
+    Extend NIRSpec sflat reference file
+
+    Parameters
+    ----------
+    fflat_filename : str
+        Filename
+
+    full_range : list
+        Wavelength limits
+
+    FILL_VALUE : float
+        Value to use for the monochromatic flat table.  The default is set such that
+        the products processed with the updated references files have roughly the same
+        pixel values as with the default calibrations.
+
+    log_prefix : str
+        String for log messages
+
+    Returns
+    -------
+    sf : ``jwst.datamodels.NirspecFlat``
+        S-Flat object
+
+    """
     fbase = os.path.basename(sflat_filename)
 
     sf = jwst.datamodels.open(sflat_filename)
@@ -274,7 +388,26 @@ def extend_sflat(
 def extend_dflat(
     dflat_filename, full_range=[0.55, 5.6], log_prefix="extend_dflat"
 ):
+    """
+    Extend NIRSpec sflat reference file
 
+    Parameters
+    ----------
+    dflat_filename : str
+        Filename
+
+    full_range : list
+        Wavelength limits
+
+    log_prefix : str
+        String for log messages
+
+    Returns
+    -------
+    df : ``jwst.datamodels.NirspecFlat``
+        D-Flat object
+
+    """
     fbase = os.path.basename(dflat_filename)
 
     df = jwst.datamodels.open(dflat_filename)
@@ -353,9 +486,54 @@ def extend_reference_files(
     set_log=True,
     skip_existing_log=False,
     undo_flat=True,
+    preprocess_kwargs={},
+    ranges=EXTENDED_RANGES,
     **kwargs,
 ):
-    """ """
+    """
+    Pipeline for extending reference files
+
+    Parameters
+    ----------
+    file : str
+        Exposure (rate.fits) filename
+
+    slit_index : int
+        Index of a single slit to extract
+
+    all_slits : bool
+        Extract all slits of the final `jwst.datamodles.MultiSlit` model
+
+    write_output : bool
+        Write output extracted `jwst.datamodels.SlitModel` objects to separate files
+
+    set_log : bool
+        Set log file based on the input ``file``
+
+    skip_existing_log : bool
+        Skip subsequent processing if the log file from ``set_log`` is found in the
+        working directory.
+
+    undo_flat : bool
+        Main switch for using dummy monochromatic flat reference files.  This needs
+        to be True for the extracted spectra to not be masked with NaN beyond where the
+        current reference files are defined
+
+    preprocess_kwargs : dict
+        Keyword arguments for `msaexp.pipeline.exposure_detector_effects`
+        preprocessing.  Skip if ``None``
+
+    ranges : dict
+        Full extended wavelength ranges by FILTER / GRATING
+
+    Returns
+    -------
+    result : None, `jwst.datamodels.MultiSlitModel`
+        None if an existing log was found, otherwise the final calibrated product.
+        Also returns ``None`` if `jwst.assign_wcs.AssignWcsStep` raises a
+        ``NoDataOnDetectorError`` exception.
+
+    """
     import time
     from jwst.assign_wcs.util import NoDataOnDetectorError
 
@@ -366,7 +544,7 @@ def extend_reference_files(
         if os.path.exists(utils.LOGFILE) & skip_existing_log:
             utils.LOGFILE = ORIG_LOGFILE
             print(f"log file {utils.LOGFILE} found, skip")
-            return True
+            return None
 
     msg = f"""
 ########
@@ -376,6 +554,11 @@ def extend_reference_files(
 # log to {utils.LOGFILE}
 """
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    # Preprocessing
+    if preprocess_kwargs is not None:
+        # 1/f, bias & rnoise
+        status = pipeline.exposure_detector_effects(file, **preprocess_kwargs)
 
     wstep = AssignWcsStep()
 
@@ -408,7 +591,7 @@ def extend_reference_files(
             msg = f"{file} No open slits found to work on"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
             utils.LOGFILE = ORIG_LOGFILE
-            return False
+            return None
 
     ############
     # Extract2D
@@ -446,7 +629,7 @@ def extend_reference_files(
     msg = f"{file} {inst_key} {det}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    xtr, ytr, wtr, rs, ds = msaexp.utils.slit_trace_center(
+    xtr, ytr, wtr, rs, ds = msautils.slit_trace_center(
         slit, with_source_xpos=False, with_source_ypos=False
     )
 
@@ -472,10 +655,11 @@ def extend_reference_files(
     new_fflat_filename = os.path.basename(
         flat_reference_files["fflat"]
     ).replace(".fits", "_ext.fits")
-    msg = f"{file}  fflat = '{new_fflat_filename}'"
-    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+    if undo_flat:
+        msg = f"{file}  fflat = '{new_fflat_filename}'"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    full_range = NEW_RANGE[inst_key]
+    full_range = ranges[inst_key]
 
     # if inst_key == 'F100LP_G140M':
     #     full_range[0] = 0.952
@@ -506,8 +690,9 @@ def extend_reference_files(
         flat_reference_files["sflat"]
     ).replace(".fits", "_ext.fits")
 
-    msg = f"{file}  sflat = '{new_sflat_filename}'"
-    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+    if undo_flat:
+        msg = f"{file}  sflat = '{new_sflat_filename}'"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     if (not os.path.exists(new_sflat_filename)) & undo_flat:
         sf = extend_sflat(
@@ -530,9 +715,9 @@ def extend_reference_files(
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     wmin, wmax = 10, 0
-    for k in NEW_RANGE:
-        wmin = np.minimum(NEW_RANGE[k][0], wmin)
-        wmax = np.maximum(NEW_RANGE[k][1], wmax)
+    for k in ranges:
+        wmin = np.minimum(ranges[k][0], wmin)
+        wmax = np.maximum(ranges[k][1], wmax)
 
     if not os.path.exists(new_dflat_filename):
         df = extend_dflat(
@@ -554,7 +739,7 @@ def extend_reference_files(
     # Metadata for fixed slit
     if ext2d.meta.exposure.type == "NRS_FIXEDSLIT":
         for _slit in ext2d.slits:
-            msaexp.utils.update_slit_metadata(_slit)
+            msautils.update_slit_metadata(_slit)
 
     flat_corr, flat_applied = flat_field.do_correction(
         ext2d, **flat_models, inverse=flat_step.inverse
@@ -603,16 +788,15 @@ def extend_reference_files(
         pref = jwst.datamodels.open(phot_filename)
         ptab = astropy.table.Table(pref.phot_table)
 
-        for k in NEW_RANGE:
+        for k in ranges:
             filt, grat = k.split("_")
             nfull = len(ptab[0]["wavelength"])
             nelem = nfull - 4
             wgrid = np.zeros(nfull, dtype=np.float32)
-            wgrid[:nelem] = np.logspace(*np.log10(NEW_RANGE[k]), nelem)
+            wgrid[:nelem] = np.logspace(*np.log10(ranges[k]), nelem)
             resp = (wgrid > 0) * 1
 
             rows = (ptab["grating"] == grat) & (ptab["filter"] == filt)
-            # print(k, rows.sum(), NEW_RANGE[k])
 
             ptab["nelem"][rows] = nelem
             ptab["wavelength"][rows] = wgrid
@@ -660,7 +844,12 @@ def extend_reference_files(
             if _slit.meta.exposure.type == "NRS_FIXEDSLIT":
                 slit_prefix_ = f"{file.split('_rate')[0]}_{targ_}_{inst_key}_{_slit.name}".lower()
             else:
-                slit_prefix_ = f"{file.split('_rate')[0]}_{inst_key}_phot.{_slit.name}.{_slit.source_name}".lower()
+                if undo_flat:
+                    plabel = "raw"
+                else:
+                    plabel = "phot"
+
+                slit_prefix_ = f"{file.split('_rate')[0]}_{inst_key}_{plabel}.{_slit.name}.{_slit.source_name}".lower()
 
             slit_file = slit_prefix_ + ".fits"
 
