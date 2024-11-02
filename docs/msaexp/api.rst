@@ -3,6 +3,9 @@ Additional API
 .. automodapi:: msaexp.pipeline
     :no-inheritance-diagram:
 
+.. automodapi:: msaexp.pipeline_extended
+    :no-inheritance-diagram:
+
 .. automodapi:: msaexp.utils
     :no-inheritance-diagram:
 
