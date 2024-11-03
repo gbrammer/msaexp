@@ -499,6 +499,7 @@ def run_pipeline(
     undo_flat=True,
     preprocess_kwargs={},
     ranges=EXTENDED_RANGES,
+    make_trace_figures=False,
     **kwargs,
 ):
     """
@@ -536,6 +537,9 @@ def run_pipeline(
 
     ranges : dict
         Full extended wavelength ranges by FILTER / GRATING
+
+    make_trace_figures : bool
+        Make some diagnostic figures
 
     Returns
     -------
@@ -651,13 +655,14 @@ def run_pipeline(
         _slit, with_source_xpos=False, with_source_ypos=False
     )
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 5))
-    ax.imshow(_slit.data, aspect="auto", vmin=-0.1, vmax=2, cmap="magma_r")
-    ax.plot(xtr, ytr, color="magenta")
-    ax.set_title(f"{inst_key} {det}")
-    fig.tight_layout(pad=1)
+    if make_trace_figures:
+        fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+        ax.imshow(_slit.data, aspect="auto", vmin=-0.1, vmax=2, cmap="magma_r")
+        ax.plot(xtr, ytr, color="magenta")
+        ax.set_title(f"{inst_key} {det}")
+        fig.tight_layout(pad=1)
 
-    fig.savefig(f"{slit_prefix_}_trace.png".lower())
+        fig.savefig(f"{slit_prefix_}_trace.png".lower())
 
     ############
     # Flat-field
@@ -837,19 +842,20 @@ def run_pipeline(
 
     result = phot.apply_photom(new_phot_filename, area_filename)
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 5))
-    ax.imshow(
-        result.slits[slit_index].data,
-        aspect="auto",
-        vmin=-0.1 * 20,
-        vmax=2 * 20,
-        cmap="magma_r",
-    )
-    ax.plot(xtr, ytr, color="magenta")
-    ax.set_title(f"{inst_key} {det}")
-    fig.tight_layout(pad=1)
+    if make_trace_figures:
+        fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+        ax.imshow(
+            result.slits[slit_index].data,
+            aspect="auto",
+            vmin=-0.1 * 20,
+            vmax=2 * 20,
+            cmap="magma_r",
+        )
+        ax.plot(xtr, ytr, color="magenta")
+        ax.set_title(f"{inst_key} {det}")
+        fig.tight_layout(pad=1)
 
-    fig.savefig(f"{slit_prefix_}_final.png".lower())
+        fig.savefig(f"{slit_prefix_}_final.png".lower())
 
     if write_output:
         if all_slits:
