@@ -345,6 +345,8 @@ class SpectrumSampler(object):
         velocity_sigma=100.0,
         fnu=True,
         nsig=4,
+        with_igm=False,
+        **kwargs,
     ):
         """
         Smooth and resample an `eazy.templates.Template` object onto the
@@ -385,8 +387,11 @@ class SpectrumSampler(object):
         else:
             templ_flux = template.flux_flam(z=z).astype(np.float32)
 
-        # Turn off
-        igmz = 1.0
+        if with_igm:
+            igmz = IGM_FUNC(z, templ_wobs * 1.0e4)
+        else:
+            # Turn off
+            igmz = 1.0
 
         res = RESAMPLE_FUNC(
             self.spec_wobs,
@@ -530,6 +535,80 @@ class SpectrumSampler(object):
 
         return bspl
 
+    def fit_single_template(
+        self,
+        template,
+        z=0.0,
+        spl=None,
+        lsq=np.linalg.lstsq,
+        lsq_kwargs=dict(rcond=None),
+        loss=None,
+        **kwargs,
+    ):
+        """
+        Resample and fit a template to the spectrum
+
+        Parameters
+        ----------
+        template : `eazy.templates.Template`
+            High-resolution, rest-frame template
+
+        z : float
+            Redshift
+
+        spl : (N, M) array
+            Optional spline array
+
+        lsq, lsq_kwargs : func, dict
+            Least-squares optimization function, keyword args
+
+        loss : func
+            Loss function, e.g, `scip.stats.norm(scale=spec['full_err'][spec.valid])`
+
+        kwargs : dict
+            keyword arguments passed to
+            `~msaexp.spectrum.SpectrumSampler.resample_eazy_template`, e.g.,
+            "scale_disp", "velocity_sigma"
+
+        Returns
+        -------
+        result : dict
+            Fit results
+            - ``model``: best-fit model, (M,) array
+            - ``A``: design matrix, (N, M) array
+            - ``coeffs``: least-squares coefficients, (N,) array
+            - ``lnp`` : ``loss.logpdf(residual)`` (M,) array
+        """
+        from scipy.stats import norm
+
+        res = self.resample_eazy_template(template, z=z, **kwargs)
+
+        if spl is not None:
+            res = res * spl
+        else:
+            res = res[None, :]
+
+        A = res / self.spec["full_err"]
+        b = self.spec["flux"] / self.spec["full_err"]
+        coeffs, _r, rank, s = lsq(
+            A[:, self.valid].T, b[self.valid], **lsq_kwargs
+        )
+
+        model = res.T.dot(coeffs)
+        residual = self.spec["flux"] - model
+
+        if loss is None:
+            loss = norm(loc=0, scale=self.spec["full_err"][self.valid])
+
+        result = {
+            "model": model,
+            "A": res,
+            "coeffs": coeffs,
+            "lnp": loss.logpdf(residual[self.valid]),
+        }
+
+        return result
+
     def redo_1d_extraction(self, **kwargs):
         """
         Redo 1D extraction from 2D arrays with
@@ -556,7 +635,7 @@ class SpectrumSampler(object):
             from msaexp import spectrum
             import matplotlib.pyplot as plt
 
-            sp = spectrum.SpectrumSampler('https://s3.amazonaws.com/msaexp-nirspec/extractions/ceers-ddt-v1/ceers-ddt-v1_prism-clear_2750_1598.spec.fits')
+            sp = spectrum.SpectrumSampler('https://s3.amazonaws.com/msaexp-nirspec/extractions/ceers-ddt-v3/ceers-ddt-v3_prism-clear_2750_1598.spec.fits')
 
             fig, axes = plt.subplots(2, 1, figsize=(8, 5),
                                      sharex=True, sharey=True)
@@ -650,7 +729,7 @@ class SpectrumSampler(object):
         return spectrum
 
     def igm_absorption(self, z, scale_tau=1.0, scale_disp=1.3):
-        """
+        r"""
         `Inoue+ (2014) <https://ui.adsabs.harvard.edu/abs/2014MNRAS.442.1805I>`_ IGM
         absorption
 
@@ -1209,6 +1288,15 @@ H_RECOMBINATION_LINES = [
     "BrD",
 ]
 
+EXTRA_NIR_LINES = [
+    "FeII-11128",
+    "PII-11886",
+    "FeII-12570",
+    "FeII-16440",
+    "FeII-16877",
+    "FeII-17418",
+    "FeII-18362",
+]
 
 def make_templates(
     sampler,
@@ -1225,6 +1313,8 @@ def make_templates(
     o4363=[],
     sii=["SII"],
     with_pah=True,
+    extra_lines=EXTRA_NIR_LINES,
+    apply_igm=True,
     **kwargs,
 ):
     """
@@ -1276,6 +1366,9 @@ def make_templates(
 
     with_pah : bool
         Whether to include PAH templates in the fitting
+
+    extra_lines : list
+        List of extra emission lines to fit
 
     Returns
     -------
@@ -1370,10 +1463,14 @@ def make_templates(
             "PaB",
             "PaA",
             "HeI-1083",
+            "CI-9850",
+            # "SiVI-19634",
             "BrA",
             "BrB",
             "BrG",
             "BrD",
+            "BrE",
+            "BrF",
             "PfB",
             "PfG",
             "PfD",
@@ -1392,6 +1489,7 @@ def make_templates(
             "HeI-7065",
             "HeI-8446",
             *extra,
+            *extra_lines,
         ]:
 
             if li not in lw:
@@ -1467,8 +1565,9 @@ def make_templates(
 
         _A = np.vstack(_A)
 
-        igmz = IGM_FUNC(z, wobs.value * 1.0e4)
-        _A *= np.maximum(igmz, 0.001)
+        if apply_igm:
+            igmz = IGM_FUNC(z, wobs.value * 1.0e4)
+            _A *= np.maximum(igmz, 0.001)
 
     else:
         if isinstance(eazy_templates[0], dict) & (len(eazy_templates) == 2):
@@ -1517,8 +1616,9 @@ def make_templates(
 
             _A = np.vstack(_A)
 
-            igmz = IGM_FUNC(z, wobs.value * 1.0e4)
-            _A *= np.maximum(igmz, 0.001)
+            if apply_igm:
+                igmz = IGM_FUNC(z, wobs.value * 1.0e4)
+                _A *= np.maximum(igmz, 0.001)
 
         elif len(eazy_templates) == 1:
             # Scale single template by spline
@@ -1538,8 +1638,9 @@ def make_templates(
 
             _A = np.vstack([bspl * tflam])
 
-            igmz = IGM_FUNC(z, wobs.value * 1.0e4)
-            _A *= np.maximum(igmz, 0.001)
+            if apply_igm:
+                igmz = IGM_FUNC(z, wobs.value * 1.0e4)
+                _A *= np.maximum(igmz, 0.001)
 
         else:
             templates = []
@@ -1561,8 +1662,9 @@ def make_templates(
                 tline.append(False)
 
             _A = np.vstack(_A)
-            igmz = IGM_FUNC(z, wobs.value * 1.0e4)
-            _A *= np.maximum(igmz, 0.001)
+            if apply_igm:
+                igmz = IGM_FUNC(z, wobs.value * 1.0e4)
+                _A *= np.maximum(igmz, 0.001)
 
     return templates, np.array(tline), _A
 
@@ -1930,7 +2032,7 @@ def fit_redshift_grid(
             **kwargs,
         )
 
-        okt = _A[:, mask].sum(axis=1) > 0
+        okt = _A[:, mask].sum(axis=1) != 0
 
         _Ax = _A[okt, :] / eflam
         _yx = flam / eflam
@@ -2278,6 +2380,15 @@ def read_spectrum(
         else:
             msg = f"{spectrum_extension} extension not found in HDUList input"
             raise ValueError(msg)
+
+    elif hasattr(inp, "colnames"):
+        spec = utils.GTable()
+        for c in inp.colnames:
+            spec[c] = inp[c]
+
+        for k in inp.meta:
+            spec.meta[k] = inp.meta[k]
+
     else:
         spec = utils.read_catalog(inp)
 
@@ -2338,20 +2449,21 @@ def read_spectrum(
     grating = spec.meta["GRATING"].lower()
     _filter = spec.meta["FILTER"].lower()
 
-    _data_path = os.path.dirname(__file__)
-    disp = utils.read_catalog(
-        f"{_data_path}/data/jwst_nirspec_{grating}_disp.fits"
-    )
+    if "R" not in spec.colnames:
+        _data_path = os.path.dirname(__file__)
+        disp = utils.read_catalog(
+            f"{_data_path}/data/jwst_nirspec_{grating}_disp.fits"
+        )
 
-    spec.disp = disp
+        spec.disp = disp
 
-    spec["R"] = np.interp(
-        spec["wave"],
-        disp["WAVELENGTH"],
-        disp["R"],
-        left=disp["R"][0],
-        right=disp["R"][-1],
-    )
+        spec["R"] = np.interp(
+            spec["wave"],
+            disp["WAVELENGTH"],
+            disp["R"],
+            left=disp["R"][0],
+            right=disp["R"][-1],
+        )
 
     spec.grating = grating
     spec.filter = _filter
@@ -2385,6 +2497,7 @@ def plot_spectrum(
     vel_width=100,
     scale_disp=1.3,
     nspline=27,
+    bspl=None,
     show_cont=True,
     draws=100,
     figsize=(16, 8),
@@ -2395,6 +2508,7 @@ def plot_spectrum(
     get_init_data=False,
     scale_uncertainty_kwargs=None,
     plot_unit=None,
+    trim_negative=True,
     sys_err=0.02,
     return_fit_results=False,
     use_aper_columns=False,
@@ -2528,7 +2642,13 @@ def plot_spectrum(
     flam[~mask] = np.nan
     eflam[~mask] = np.nan
 
-    bspl = sampler.bspline_array(nspline=nspline, get_matrix=True)
+    if bspl is None:
+        if 'continuum_model' in spec.colnames:
+            bspl = spec['continuum_model'][None,:] * spec["to_flam"] * ap_corr
+            apply_igm = False
+        else:
+            bspl = sampler.bspline_array(nspline=nspline, get_matrix=True)
+            apply_igm = True
 
     templates, tline, _A = make_templates(
         sampler,
@@ -2540,6 +2660,7 @@ def plot_spectrum(
         use_full_dispersion=use_full_dispersion,
         disp=spec.disp,
         grating=spec.grating,
+        apply_igm=apply_igm,
         **kwargs,
     )
 
@@ -2558,7 +2679,7 @@ def plot_spectrum(
         set_spec_sys_err(spec, sys_err=_sys_err)
         eflam = spec[err_column] * spec["to_flam"] * ap_corr
 
-    okt = _A[:, mask].sum(axis=1) > 0
+    okt = _A[:, mask].sum(axis=1) != 0
 
     _Ax = _A[okt, :] / eflam
     _yx = flam / eflam
@@ -2681,7 +2802,8 @@ def plot_spectrum(
         axes = [ax]
 
     _Acont = (_A.T * coeffs)[mask, :][:, :nspline]
-    _Acont[_Acont < 0.001 * _Acont.max()] = np.nan
+    if trim_negative:
+        _Acont[_Acont < 0.001 * _Acont.max()] = np.nan
 
     if (draws is not None) & has_covar:
         with warnings.catch_warnings():
@@ -2811,18 +2933,18 @@ def plot_spectrum(
         # print('xxx', r)
 
     if spec.filter == "clear":
-        axes[-1].set_xlim(0.6, 5.29)
+        axes[-1].set_xlim(0.6, 5.54)
         axes[-1].xaxis.set_minor_locator(MultipleLocator(0.1))
         axes[-1].xaxis.set_major_locator(MultipleLocator(0.5))
     elif spec.filter == "f070lp":
-        axes[-1].set_xlim(0.69, 1.31)
+        axes[-1].set_xlim(0.65, 1.31)
         axes[-1].xaxis.set_minor_locator(MultipleLocator(0.02))
     elif spec.filter == "f100lp":
-        axes[-1].set_xlim(0.99, 1.91)
+        axes[-1].set_xlim(0.92, 1.91)
         axes[-1].xaxis.set_minor_locator(MultipleLocator(0.02))
         axes[-1].xaxis.set_major_locator(MultipleLocator(0.1))
     elif spec.filter == "f170lp":
-        axes[-1].set_xlim(1.69, 3.21)
+        axes[-1].set_xlim(1.65, 4.21)
     elif spec.filter == "f290lp":
         axes[-1].set_xlim(2.89, 5.31)
     else:

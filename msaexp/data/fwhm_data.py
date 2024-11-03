@@ -112,5 +112,36 @@ fwhm_data_2024 = """# wave fwhm_pix
 5.38 1.859
 """
 
+# Measured again from 1493 with multiple Gaussians
+fwhm_data_2024b = """# wave fwhm_pix
+0.50   1.24
+0.58   1.24
+0.66   1.25
+0.79   1.26
+0.99   1.27
+1.29   1.29
+1.65   1.29
+2.00   1.30
+2.32   1.31
+2.61   1.31
+2.87   1.33
+3.11   1.33
+3.34   1.35
+3.55   1.37
+3.75   1.39
+3.94   1.43
+4.12   1.46
+4.29   1.51
+4.46   1.55
+4.62   1.60
+4.77   1.64
+4.92   1.67
+5.06   1.70
+5.20   1.76
+5.34   1.82
+5.60   1.90
+"""
+
 # Set default
-fwhm_data = fwhm_data_update
+# fwhm_data = fwhm_data_update
+fwhm_data = fwhm_data_2024b

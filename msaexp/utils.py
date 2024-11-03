@@ -53,13 +53,13 @@ def rename_source(source_name):
         - If the source name starts with "background", it is replaced with "b".
         - If the source name contains "_-", it is replaced with "_m".
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     source_name : str
         The original source name.
 
-    Returns:
-    --------
+    Returns
+    -------
     name : str
         The adjusted source name.
 
@@ -81,13 +81,13 @@ def update_slit_metadata(slit):
         - If the slit's source type is None, it sets it to 'EXTENDED'.
         - If the slit's slitlet ID is missing, it sets it to 9999.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     slit : `jwst.datamodels.SlitModel`
         The slit object to update.
 
-    Returns:
-    --------
+    Returns
+    -------
     None
     """
     meta = slit.meta.instance
@@ -199,18 +199,25 @@ def update_slit_dq_mask(
 
 
 def slit_trace_center(
-    slit, with_source_xpos=False, with_source_ypos=True, index_offset=0.0
-):
+    slit,
+    with_source_xpos=False,
+    trace_center=0.0,
+    with_source_ypos=True,
+    index_offset=0.0):
     """
     Get detector coordinates along the center of a slit
 
     Parameters
+    ----------
     slit : `~stdatamodels.jwst.datamodels.slit.SlitModel`
         Slit object
 
     with_source_xpos : bool
         Apply wavelength correction based on source centering within the
         shutter assuming ``source_type = POINT``
+
+    trace_center : float
+        Center in slit coordinates
 
     with_source_ypos : bool
         Get center of trace accounting for source y offset in the shutter
@@ -274,7 +281,9 @@ def slit_trace_center(
     ok = np.isfinite(sy)
 
     # Interpolate 2D shutter and wavelength arrays at the desired trace center
-    trace_center = 0.0
+    if trace_center is None:
+        trace_center = (slit.slit_ymax + slit.slit_ymin) / 2.0
+
     if with_source_ypos & (slit.source_ypos is not None):
         trace_center += slit.source_ypos
 
@@ -348,7 +357,6 @@ def get_standard_wavelength_grid(
     target_waves : array
         Target wavelength grid
     """
-    import grizli.utils
 
     if grating.lower() not in grating_limits:
         return None
@@ -377,6 +385,41 @@ def get_standard_wavelength_grid(
     return target_waves
 
 
+def get_default_resolution_curve(grating="PRISM", wave=None, **kwargs):
+    """
+    Parameters
+    ----------
+    grating : str
+        Grating name
+
+    wave : array-like, None
+        Wavelength grid, microns
+
+    Returns
+    -------
+    R_fwhm : array-like
+        Tabulated resolution curve
+
+    """
+    _data_path = os.path.dirname(__file__)
+    disp = grizli.utils.read_catalog(
+        f"{_data_path}/data/jwst_nirspec_{grating}_disp.fits"
+    )
+
+    if wave is None:
+        wave = get_standard_wavelength_grid(grating, **kwargs)
+
+    R_fwhm = np.interp(
+        wave,
+        disp["WAVELENGTH"],
+        disp["R"],
+        left=disp["R"][0],
+        right=disp["R"][-1],
+    )
+
+    return R_fwhm
+
+
 def get_slit_sign(slit):
     """
     sign convention for slit pixels
@@ -397,7 +440,10 @@ def get_slit_sign(slit):
         _find_nirspec_output_sampling_wavelengths,
     )
 
-    _max_virtual_slit_extent = ResampleSpecData._max_virtual_slit_extent
+    try:
+        _max_virtual_slit_extent = ResampleSpecData._max_virtual_slit_extent
+    except AttributeError:
+        return -1
 
     refmodel = slit
 
@@ -1283,7 +1329,6 @@ def combine_2d_with_rejection(
 
     import astropy.units as u
 
-    import grizli.utils
     from .version import __version__
 
     sci = np.array([s.data for s in drizzled_slits])
@@ -1581,53 +1626,67 @@ def drizzled_hdu_figure(
     flam_scale=-20,
     recenter=True,
     use_aper_columns=False,
-    smooth_sigma=None,
-):
+    smooth_sigma=None):
     """
-    Figure showing drizzled hdu
+    Figure showing drizzled HDU
 
-    Parameters:
+    Parameters
     ----------
     hdul : `~astropy.io.fits.HDUList`
         The HDUList object containing the data.
+
     tick_steps : tuple, optional
         The major and minor tick steps for the x-axis.
+
     xlim : tuple, optional
         The x-axis limits.
+
     subplot_args : dict, optional
         Additional arguments for creating the subplots. Default is
         ``dict(figsize=(10, 4), height_ratios=[1,3], width_ratios=[10,1])``.
+
     cmap : str, optional
         The colormap for the image. Default is 'plasma_r'.
+
     ymax : float, optional
         The maximum y-axis value. Default is None.
+
     ymax_sigma_scale : float, optional
         The scale factor for setting the maximum y-axis value based on the
         median error. Default is 7.
+
     vmin : float, optional
         The minimum value for the 2D cutout. Default is -0.2.
+
     z : float, optional
         If the redshift is indicated, draw axes with rest-frame wavelengths
         and indicate some common emission lines
+
     ny : float, optional
         Number of pixels to show on y-axis
+
     output_root : str, optional
         Rootname of the output file. Default is None.
+
     unit : str, optional
         Controls the output flux units: 'fnu' (default) for `microJansky` or
         `flam` for f-lambda cgs.
+
     flam_scale : float, optional
         The scale factor for the flux unit in the y-axis label. Default is -20.
+
     recenter : bool, optional
         Whether to recenter the y-axis on the expected source location.
         Default is True.
+
     use_aper_columns : bool, optional
         Whether to use boxcar aperture extraction columns for the 1D spectra.
         Default is False.
+
     smooth_sigma : float, optional
         The sigma value for smoothing the 2D spectra. Default is None.
 
-    Returns:
+    Returns
     -------
     fig : `~matplotlib.pyplot.Figure`
         The Figure object containing the plot.
@@ -1637,7 +1696,6 @@ def drizzled_hdu_figure(
     import matplotlib.pyplot as plt
     import astropy.units as u
     import scipy.ndimage as nd
-    import grizli.utils
 
     sp = grizli.utils.read_catalog(hdul["SPEC1D"])
     nx = len(sp)
@@ -1819,8 +1877,8 @@ def drizzled_hdu_figure(
     else:
         major, minor = tick_steps
 
-    xt = np.arange(0.5, 5.5, major)
-    xtm = np.arange(0.5, 5.5, minor)
+    xt = np.arange(0.5, 5.72, major)
+    xtm = np.arange(0.5, 5.72, minor)
 
     if hdul[1].header["GRATING"] == "PRISM":
         xt = np.append([0.7], xt)
@@ -2142,12 +2200,12 @@ def calculate_psf_fwhm():
     Use WebbPSF to calculate the FWHM as a function of wavelength assuming
     0.2" fixed slit
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     None
 
-    Returns:
-    --------
+    Returns
+    -------
     None
 
     """
@@ -2554,6 +2612,116 @@ def get_prism_wave_bar_correction(
     return bar, is_wrapped
 
 
+def slit_extended_flux_calibration(
+    slit,
+    sens_file=None,
+    prefix="fix_p330e_s1600a1_sensitivity",
+    file_template="{prefix}_{filter}_{grating}.fits",
+    threshold=0,
+    verbose=True,
+):
+    """
+    Get flux calibration for extended extractions
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    sens_file : str, None
+        Explicit sensitivity curve filename to use
+
+    prefix : str
+        Prefix of sensitivity curve filename
+
+    file_template : str
+        Template filename of the sensitivity curve to use, generated with
+        ``file_template.format(prefix=prefix, filter=filter, grating=grating)``
+
+    verbose : bool
+        Verbose messaging
+
+    threshold : float
+        Threshold relative to the maximum of a particular grating sensitivivity curve
+        below which to treat as invalid data.
+
+    Returns
+    -------
+    status : int
+        - 0 : ``fflat`` and/or ``sflat`` reference files used don't end in ``ext.fits``
+        - 1 : ``sens_file`` not found
+        - 2 : Sensitivity file found and applied to ``data``, ``err``, ``var_rnoise``, 
+              and ``var_poisson`` attributes.
+    """
+
+    test = False
+    refs = slit.meta.ref_file.instance
+
+    if "fflat" in refs:
+        test |= "_ext.fits" in refs["fflat"]["name"]
+
+    if "sflat" in refs:
+        test |= "_ext.fits" in refs["sflat"]["name"]
+
+    if not test:
+        return 0
+
+    if sens_file is None:
+        sens_file = file_template.format(
+            prefix=prefix,
+            filter=slit.meta.instrument.filter,
+            grating=slit.meta.instrument.grating,
+        )
+
+    # paths to search
+    paths = [
+        "",
+        os.path.join(os.path.dirname(__file__), "data/extended_sensitivity"),
+    ]
+
+    file_path = None
+    for path in paths:
+        if os.path.exists(os.path.join(path, sens_file)):
+            file_path = path
+            break
+
+    if file_path is None:
+        msg = f"slit_extended_flux_calibration: {sens_file} not found"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        return 1
+
+    msg = f"slit_extended_flux_calibration: {sens_file} threshold={threshold}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    sens = grizli.utils.read_catalog(os.path.join(file_path, sens_file))
+
+    wcs = slit.meta.wcs
+    d2w = wcs.get_transform("detector", "world")
+
+    _ypi, _xpi = np.indices(slit.data.shape)
+    _ras, _des, _wave = d2w(_xpi, _ypi)
+
+    corr_data = 1.0 / np.interp(
+        _wave,
+        sens["wavelength"],
+        sens["sensitivity"],
+        left=0.0,
+        right=0.0,
+    )
+
+    corr_data[~np.isfinite(corr_data)] = 0
+    max_sens = np.nanmax(1.0 / corr_data[corr_data > 0])
+    corr_data[corr_data >= 1.0 / (max_sens * threshold)] = np.nan
+
+    slit.sens_corr_data = corr_data
+    slit.data *= corr_data
+    slit.err *= corr_data
+    slit.var_rnoise *= corr_data**2
+    slit.var_poisson *= corr_data**2
+
+    return 2
+
+
 def cache_badpix_arrays():
     """
     Load badpixel arrays into global data
@@ -2853,30 +3021,35 @@ def make_nirspec_gaussian_profile(
     ny=31,
     weight=1,
     bkg_offset=6,
-    bkg_parity=[-1, 1],
-):
+    bkg_parity=[-1, 1]):
     """
     Make a pixel-integrated Gaussian profile
 
-    Parameters:
+    Parameters
     ----------
     waves : array-like
         Array of wavelengths in microns
+
     sigma : float, optional
         Standard deviation of the Gaussian profile. Default is 0.5.
+
     ycenter : float, optional
         Y-coordinate of the center of the profile. Default is 0.
+
     ny : int, optional
         Number of pixels in the y-direction. Default is 31.
+
     weight : int, optional
         Weight of the profile. Default is 1.
+
     bkg_offset : int, optional
         Offset for nodded background subtraction. Default is 6.
+
     bkg_parity : list, optional
         List of integers specifying the parity of the background nod offsets.
         Default is [-1, 1].
 
-    Returns:
+    Returns
     -------
     prf : array-like
         2D pixel-integrated Gaussian profile.
@@ -2927,52 +3100,59 @@ def objfun_prf(
     bkg_parity,
     fit_type,
     ret,
-    verbose,
-):
+    verbose):
     """
     Objective function for fitting the 2D profile
 
-    Parameters:
+    Parameters
     ----------
     params : array_like
         The parameters for the fit
+
     waves : array_like
         The wavelength values.
+
     sci2d : array_like
         The 2D science data.
+
     wht2d : array_like
         The 2D weight data.
+
     ycenter : float
         The y-coordinate of the center of the profile.
+
     sigma : float
         The standard deviation of the profile.
+
     bkg_offset : float
         The background offset, pixels.
+
     bkg_parity : int
         Parity of the nod offsets, multiplied to ``bkg_offset``
+
     fit_type : int
         Fit behavior
+
     ret : int
         Control fit outputs for either fitting or returning the
         model given ``params``
+
     verbose : bool
         Print verbose output.
 
-    Returns:
+    Returns
     -------
-    if ret == 1:
     norm : float
-        The normalization factor.
+        The normalization factor. (``ret == 1``)
+
     model : array_like
-        The model profile.
+        The model profile. (``ret == 1``)
 
-    if ret == 2:
     chi : array_like
-        The chi values.
+        The chi values. (``ret == 2``)
 
-    if ret == 3:
     chi2 : float
-        The chi-squared value.
+        The chi-squared value. (``ret == 3``)
 
     """
     if fit_type == 1:
@@ -3029,3 +3209,219 @@ def objfun_prf(
         return chi[ok].flatten()
     elif ret == 3:
         return chi2
+
+
+class LookupTablePSF:
+    def __init__(self, psf_file='nirspec_exp_psf_lookup.fits'):
+        """
+        Fast lookup table PSF derived from point sources in the fixed slit.
+
+        The table is evaluated for a grid of slit-frame (y) pixels, wavelength and a
+        profile width convolved with the PSF profile.
+
+        Parameters
+        ----------
+        psf_file : str, 'nirspec_exp_psf_lookup.fits', 'nirspec_gau_psf_lookup.fits'
+            Which PSF table to use.  ``nirspec_exp_psf_lookup.fits`` assumes an
+            exponential profile where the width parameter is the half-light radius.
+            ``nirspec_gau_psf_lookup.fits`` is a Gaussian profile with the width 
+            parameter sigma.
+
+        Examples
+        --------
+        .. plot::
+            :include-source:
+
+            import numpy as np
+            import matplotlib.pyplot as plt
+            import msaexp.utils as msautils
+
+            waves = np.linspace(0.8, 5.6, 128)
+            yslit = np.arange(-9, 10, dtype=float)
+            w2d, y2d = np.meshgrid(waves, yslit)
+
+            fig, axes = plt.subplots(2,1,figsize=(8,5), sharex=True, sharey=True)
+
+            # Initialize the lookup table
+            prf_model = msautils.LookupTablePSF()
+
+            # Straight trace
+            prf = prf_model.evaluate(sigma=0, dy=0.0, slit_coords=(w2d, y2d))
+
+            axes[0].imshow(
+                prf,
+                extent=(waves[0], waves[-1], yslit[0], yslit[-1]),
+                aspect='auto'
+            )
+
+            # Curved trace
+            dy = -((w2d-4)/2)**2
+            prf2 = prf_model.evaluate(sigma=0.2, dy=dy, slit_coords=(w2d, y2d))
+
+            axes[1].imshow(
+                prf2,
+                extent=(waves[0], waves[-1], yslit[0], yslit[-1]),
+                aspect='auto'
+            )
+
+            axes[1].set_xlabel('wavelength')
+            axes[1].set_ylabel('y pixel')
+            fig.tight_layout(pad=1)
+
+            # Verify that integral of each along the trace is 1.0
+            assert(np.allclose(prf.sum(axis=0), 1., rtol=0.01))
+            assert(np.allclose(prf2.sum(axis=0), 1., rtol=0.01))
+
+        """
+        self.psf_file = psf_file
+        
+        self.psf_data = None
+
+        self.read_data()
+
+        self.slit_yi = None
+        self.slit_wavei = None
+
+    def read_data(self):
+        """
+        Read the lookup table data in ``psf_file``
+        """
+        path_to_data = os.path.join(os.path.dirname(__file__), "data")
+        psf_file = os.path.join(path_to_data, self.psf_file)
+
+        if not os.path.exists(psf_file):
+            return None
+
+        with pyfits.open(psf_file) as im:
+            self.psf_data = im["PROF"].data * 1
+            self.psf_y = im["YSLIT"].data * 1
+            self.psf_yi = np.arange(len(self.psf_y), dtype=float)
+
+            self.psf_wave = im["WAVE"].data * 1
+            self.psf_wavei = np.arange(len(self.psf_wave), dtype=float)
+
+            self.psf_sigma = im["SIGMA"].data * 1
+            self.psf_sigmai = np.arange(len(self.psf_sigma), dtype=float)
+
+            self.psf_slit_loss = im["LOSS"].data * 1
+
+        return True
+
+    def set_slit_coords(self, wave, slit_y):
+        """
+        Set wavelength and pixel interpolants, perhaps to speed up execution if these
+        don't change.
+
+        Parameters
+        ----------
+        wave : array-like
+            Wavelengths, microns
+
+        slit_y : array-like
+            Cross-dispersion pixel centers
+
+        Returns
+        -------
+        Sets ``slit_shape``, ``slit_y`` attributes and computes interpolator indices
+        ``slit_wavei``, ``slit_yi``.
+
+        """
+        self.slit_shape = slit_y.shape
+        self.slit_y = slit_y * 1.0
+
+        self.slit_wavei = np.interp(
+            wave.flatten(),
+            self.psf_wave,
+            self.psf_wavei,
+            left=np.nan,
+            right=np.nan,
+        )
+
+        self.slit_yi = np.interp(
+            self.slit_y.flatten(),
+            self.psf_y,
+            self.psf_yi,
+            left=np.nan,
+            right=np.nan,
+        )
+
+    def set_slit_offset(self, dy=None):
+        """
+        Set an offset to the cross-dispersion y pixel, added to ``slit_y``
+
+        Parameters
+        ----------
+        dy : None, scalar, array-like
+            Offset added to ``slit_y`` and then compute interpolant ``slit_yi_offset``
+        """
+        if dy is None:
+            self.slit_yi_offset = self.slit_yi
+        else:
+            self.slit_yi_offset = np.interp(
+                (self.slit_y + dy).flatten(),
+                self.psf_y,
+                self.psf_yi,
+                left=np.nan,
+                right=np.nan,
+            )
+
+    def evaluate(self, sigma=0, dy=0.0, slit_coords=None, order=1, **kwargs):
+        """
+        Run the lookup
+
+        Parameters
+        ----------
+        sigma : float > 0
+            Gaussian width convolved with the PSF profile
+
+        dy : None, scalar, array-like
+            Offset added to slit coordinates with
+            `~msaexp.utils.LookupTablePSF.set_slit_offset`.
+
+        slit_coords : None, (array-like, array-like)
+            Interpolation location coordinates ``wave`` and ``slit_y`` passed to
+            `~msaexp.utils.LookupTablePSF.set_slit_coords`.
+
+        order : int
+            Order of the interpolation with `scipy.ndimage.map_coordinates`.
+
+        Returns
+        -------
+        map_interp : array-like
+            Interpolated PSF model (same shape as inputs to ``slit_coords``).
+
+        """
+        from scipy.ndimage import map_coordinates
+
+        if slit_coords is not None:
+            self.set_slit_coords(*slit_coords)
+
+        self.set_slit_offset(dy=dy)
+
+        slit_sigmai = np.interp(
+            sigma,
+            self.psf_sigma,
+            self.psf_sigmai,
+            left=0,
+            right=self.psf_sigmai[-1],
+        )
+
+        coords = np.array(
+            [
+                self.slit_yi_offset,
+                self.slit_wavei,
+                np.full_like(self.slit_wavei, slit_sigmai),
+            ]
+        )
+
+        map_interp = map_coordinates(
+            self.psf_data, coords, cval=0.0, order=order
+        )
+
+        return map_interp.reshape(self.slit_shape)
+
+    def __call__(self, **kwargs):
+        """
+        Run ``execute``
+        """
+        return self.execute(**kwargs)
