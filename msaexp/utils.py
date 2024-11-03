@@ -3221,11 +3221,11 @@ class LookupTablePSF:
 
         Parameters
         ----------
-        psf_file : str, 'nirspec_exp_psf_lookup.fits', 'nirspec_psf_lookup.fits'
+        psf_file : str, 'nirspec_exp_psf_lookup.fits', 'nirspec_gau_psf_lookup.fits'
             Which PSF table to use.  ``nirspec_exp_psf_lookup.fits`` assumes an
             exponential profile where the width parameter is the half-light radius.
-            ``nirspec_psf_lookup.fits`` is a Gaussian profile with the width parameter
-            sigma.
+            ``nirspec_gau_psf_lookup.fits`` is a Gaussian profile with the width 
+            parameter sigma.
 
         Examples
         --------
