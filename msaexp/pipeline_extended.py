@@ -599,14 +599,22 @@ def run_pipeline(
 
         # Use new reference
         wcs_reference_files["wavelengthrange"] = new_waverange
-        slit_y_range = [wstep.slit_y_low, wstep.slit_y_high]
+        # slit_y_range = [wstep.slit_y_low, wstep.slit_y_high]
         try:
-            with_wcs = load_wcs(dm, wcs_reference_files, slit_y_range)
+            # with_wcs = load_wcs(dm, wcs_reference_files, slit_y_range)
+            with_wcs = wstep.call(dm, override_wavelengthrange=new_waverange)
         except NoDataOnDetectorError:
             msg = f"{file} No open slits found to work on"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
             utils.LOGFILE = ORIG_LOGFILE
             return None
+
+    if with_wcs.meta.exposure.type == "NRS_MSASPEC":
+        ############
+        # MSAFlagOpen
+        msg = f"{file} MSAFlagOpen"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        flag_open = MSAFlagOpenStep().call(with_wcs)
 
     ############
     # Extract2D

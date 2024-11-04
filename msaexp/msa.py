@@ -18,6 +18,7 @@ def pad_msa_metafile(
     prefix="src_",
     verbose=True,
     primary_sources=True,
+    merge_first=True,
     **kwargs,
 ):
     """
@@ -60,6 +61,9 @@ def pad_msa_metafile(
     import grizli.utils
 
     msa = MSAMetafile(metafile)
+
+    if merge_first:
+        msa.merge_source_ids(verbose=verbose, **kwargs)
 
     all_ids = np.unique(msa.shutter_table["source_id"])
 
@@ -189,6 +193,49 @@ def pad_msa_metafile(
         )
 
     return output_file
+
+
+def get_msa_source_ids(rate_file, merge_first=True):
+    """
+    Get source_ids from the MSAMETFL associated with an exposure
+
+    Parameters
+    ----------
+    rate_file : str
+        Exposure filename
+
+    merge_first : bool
+        Run `~msaexp.msa.MSAMetafile.merge_source_ids` before computing unique source
+        ids.
+
+    Returns
+    -------
+    source_ids : list
+        List of source ids in the mask configuration
+
+    """
+
+    with pyfits.open(rate_file) as im:
+        if im[0].header["EXP_TYPE"] != "NRS_MSASPEC":
+            return []
+
+        metfl = im[0].header["MSAMETFL"]
+        msa = MSAMetafile(metfl)
+        if merge_first:
+            msa.merge_source_ids()
+
+        conf = im[0].header["MSACONID"]
+        msaid = im[0].header["MSAMETID"]
+        expid = im[0].header["PATT_NUM"]
+
+    shu = msa.shutter_table
+
+    rows = shu["msa_metadata_id"] == msaid
+    rows &= shu["dither_point_index"] == expid
+
+    source_ids = np.unique(shu[rows]["source_id"]).tolist()
+
+    return source_ids
 
 
 def regions_from_metafile(metafile, **kwargs):
@@ -407,7 +454,7 @@ class MSAMetafile:
     @property
     def key_pairs(self):
         """
-        List of unique ``msa_metadata_id, dither_point_index`` pairs 
+        List of unique ``msa_metadata_id, dither_point_index`` pairs
         from the ``shutter_table``
 
         Returns
@@ -443,6 +490,64 @@ class MSAMetafile:
                 keys.append(key)
 
         return keys
+
+    def merge_source_ids(self, sort_count=-1, verbose=True, **kwargs):
+        """
+        Merge cases where a particular slitlet_id has multiple source_ids
+
+        Parameters
+        ----------
+        sort_count : int
+            Direction in which to prefer among the multiple ``source_id`` values
+            sorted by their count.
+
+        Returns
+        -------
+        ``shutter_table`` attribute updated in place
+
+        """
+        from grizli import utils
+
+        shu = self.shutter_table
+        conf_ids = np.unique(shu["msa_metadata_id"])
+
+        for msaid in conf_ids:
+            rows = shu["msa_metadata_id"] == msaid
+            row_ix = np.where(rows)[0]
+
+            slits = utils.Unique(shu[rows]["slitlet_id"], verbose=False)
+
+            rename_slits = {}
+
+            for sl in slits.values:
+                source_ids = utils.Unique(
+                    shu[rows][slits[sl]]["source_id"], verbose=False
+                )
+
+                if source_ids.N > 1:
+                    if sort_count is not None:
+                        so = np.argsort(source_ids.counts)[::sort_count]
+                    else:
+                        so = range(source_ids.N)
+
+                    id_sorted = []
+                    for j in so:
+                        if source_ids.values[j] > 0:
+                            id_sorted.append(source_ids.values[j])
+
+                    if len(id_sorted) > 0:
+                        rename_slits[sl] = id_sorted
+
+            for sl in rename_slits:
+                msg = f"{self.filename} {msaid:>3} : "
+                msg += (
+                    f"merge source_ids for slitlet {sl:>3} {rename_slits[sl]}"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+                shu["source_id"][row_ix[slits[sl]]] = rename_slits[sl][0]
+
+        return None
 
     def query_mast_exposures(self, force=False):
         """
@@ -1832,7 +1937,7 @@ class MSAMetafile:
 
     def all_regions_from_metafile_siaf(self, **kwargs):
         """
-        Run `~msaexp.msa.MSAMetafile.regions_from_metafile_siaf` 
+        Run `~msaexp.msa.MSAMetafile.regions_from_metafile_siaf`
         for all exposures
 
         Parameters
@@ -1860,6 +1965,39 @@ class MSAMetafile:
                 output += _out
 
         return output
+
+    def write(self, prefix="edit_", overwrite=True, verbose=True):
+        """
+        Write a new metadata file
+        """
+        import grizli.utils
+
+        im = pyfits.open(self.filename)
+
+        shut = self.shutter_table
+        src = self.src_table
+
+        hdus = {
+            "SHUTTER_INFO": pyfits.BinTableHDU(shut),
+            "SOURCE_INFO": pyfits.BinTableHDU(src),
+        }
+
+        for e in hdus:
+            for k in im[e].header:
+                if k not in hdus[e].header:
+                    # print(e, k, im[e].header[k])
+                    hdus[e].header[k] = im[e].header[k]
+            im[e] = hdus[e]
+
+        output_file = prefix + self.filename
+
+        msg = f"msaexp.msa: write from {self.filename} to {output_file}"
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=True
+        )
+
+        im.writeto(output_file, overwrite=overwrite)
+        im.close()
 
 
 PYSIAF_GITHUB = "https://github.com/spacetelescope/pysiaf/raw/main/pysiaf/source_data/NIRSpec/delivery/test_data/apertures_testData/"
