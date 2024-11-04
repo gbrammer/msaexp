@@ -608,6 +608,13 @@ def run_pipeline(
             utils.LOGFILE = ORIG_LOGFILE
             return None
 
+    if with_wcs.meta.exposure.type == "NRS_MSASPEC":
+        ############
+        # MSAFlagOpen
+        msg = f"{file} MSAFlagOpen"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        with_wcs = MSAFlagOpenStep().process(with_wcs)
+
     ############
     # Extract2D
     msg = f"{file} Extract2D"
