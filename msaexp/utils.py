@@ -3212,7 +3212,7 @@ def objfun_prf(
 
 
 class LookupTablePSF:
-    def __init__(self, psf_file='nirspec_exp_psf_lookup.fits'):
+    def __init__(self, psf_file='nirspec_exp_psf_lookup.fits', **kwargs):
         """
         Fast lookup table PSF derived from point sources in the fixed slit.
 
@@ -3221,7 +3221,7 @@ class LookupTablePSF:
 
         Parameters
         ----------
-        psf_file : str, 'nirspec_exp_psf_lookup.fits', 'nirspec_gau_psf_lookup.fits'
+        psf_file : str, 'nirspec_prism_clear_exp_psf_lookup.fits'
             Which PSF table to use.  ``nirspec_exp_psf_lookup.fits`` assumes an
             exponential profile where the width parameter is the half-light radius.
             ``nirspec_gau_psf_lookup.fits`` is a Gaussian profile with the width 

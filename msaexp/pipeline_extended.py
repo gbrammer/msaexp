@@ -42,8 +42,10 @@ __all__ = [
     "extend_quad_fflat",
     "extend_sflat",
     "extend_dflat",
-    "run_pipeline"
+    "extend_photom",
+    "run_pipeline",
 ]
+
 
 def step_reference_files(step, input_model):
     """
@@ -458,7 +460,7 @@ def extend_dflat(
 
     if dflat_waves[0] > prism_min:
 
-        msg = f"{log_prefix} {fbase} max wave = {dflat_waves[0]:.2f} -> prepend {prism_min}"
+        msg = f"{log_prefix} {fbase} min wave = {dflat_waves[0]:.2f} -> prepend {prism_min}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         # dflat_waves.append(prism_max)
@@ -487,6 +489,146 @@ def extend_dflat(
         df.data = np.vstack([df.data[:1, :, :] * 1, df.data])
 
     return df
+
+
+def extend_photom(phot_filename, ranges=EXTENDED_RANGES):
+    """
+    Extend wavelength ranges in photom reference file
+
+    Parameters
+    ----------
+    phot_filename : str
+        Filename of a ``photom`` reference file
+
+    ranges : dict:
+        Wavelength ranges by grating, filter
+
+    Returns
+    -------
+    pref : `stdatamodels.jwst.datamodels.photom.NrsMosPhotomModel`
+        Updated reference file object
+
+    """
+    pref = jwst.datamodels.open(phot_filename)
+    ptab = astropy.table.Table(pref.phot_table)
+
+    for k in ranges:
+        filt, grat = k.split("_")
+        nfull = len(ptab[0]["wavelength"])
+        nelem = nfull - 4
+        wgrid = np.zeros(nfull, dtype=np.float32)
+        wgrid[:nelem] = np.logspace(*np.log10(ranges[k]), nelem)
+        resp = (wgrid > 0) * 1
+
+        rows = (ptab["grating"] == grat) & (ptab["filter"] == filt)
+
+        ptab["nelem"][rows] = nelem
+        ptab["wavelength"][rows] = wgrid
+        ptab["relresponse"][rows] = resp
+
+    pref.phot_table = pyfits.BinTableHDU(ptab).data
+
+    return pref
+
+
+def extend_pathloss(
+    path_filename,
+    full_range=[0.55, 5.6],
+):
+    """
+    Extend wavelength ranges in pathloss reference file.  This function just resets the
+    first pixel of the reference file to the minimum of the desired wavelength range.
+
+    Parameters
+    ----------
+    path_filename : str
+        Filename of a ``pathloss`` reference file
+
+    full_range : list
+        Minimum and maximum wavelengths, microns.  Assumes long wavelength side doesn't
+        need to be extended.
+
+    Returns
+    -------
+    hdu : `astropy.io.fits.HDUList`
+        Updated HDUlist of
+
+    """
+    hdu = pyfits.open(path_filename)
+    for ext in hdu:
+        h = hdu[ext].header
+        if "CRVAL1" not in h:
+            continue
+
+        if h["NAXIS"] == 3:
+            key = "CRVAL3"
+        else:
+            key = "CRVAL1"
+
+        to_meters = 1.0e-6 if h[key] < 1.0e-5 else 1.0
+        h[key] = full_range[0] * to_meters
+
+    return hdu
+
+
+def extend_barshadow(
+    bar_filename,
+    full_range=[0.55, 5.6],
+):
+    """
+    Extend wavelength ranges in barshadow reference file.  This function just resets the
+    first pixel of the reference file to the minimum of the desired wavelength range.
+    It also updates the wavelength step if necessary to cover the full desired range.
+
+    Parameters
+    ----------
+    path_filename : str
+        Filename of a ``barshadow`` reference file
+
+    full_range : list
+        Minimum and maximum wavelengths, microns.  Assumes long wavelength side doesn't
+        need to be extended.
+
+    Returns
+    -------
+    hdu : `astropy.io.fits.HDUList`
+        Updated HDUlist of
+
+    """
+    hdu = pyfits.open(bar_filename)
+
+    msg = f"extend_barshadow: full_range = {full_range[0]:.2f} {full_range[1]:.2f}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    for ext in hdu:
+        h = hdu[ext].header
+        if "CRVAL1" not in h:
+            continue
+
+        key = "CRVAL1"
+
+        to_meters = 1.0e-6 if h[key] < 1.0e-5 else 1.0
+        msg = f"extend_barshadow: {os.path.basename(bar_filename)}[{h['EXTNAME']}] "
+        msg += (
+            f"set minimum wave  {h[key]/to_meters:.2f} -> {full_range[0]:.2f}"
+        )
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        h[key] = full_range[0] * to_meters
+
+        wmax = h[key] + h["CDELT1"] * h["NAXIS1"]
+
+        if wmax / to_meters < full_range[1]:
+            old_cd1 = h["CDELT1"]
+            new_cd1 = (full_range[1] * to_meters - h[key]) / h["NAXIS1"]
+
+            msg = f"extend_barshadow: {os.path.basename(bar_filename)}[{h['EXTNAME']}] "
+            msg += f"set cdelt1  {old_cd1/to_meters:.4f} -> {new_cd1/to_meters:.4f}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+            h["CDELT1"] = new_cd1
+
+    return hdu
 
 
 def run_pipeline(
@@ -615,6 +757,8 @@ def run_pipeline(
         msg = f"{file} MSAFlagOpen"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
         flag_open = MSAFlagOpenStep().call(with_wcs)
+    else:
+        flag_open = with_wcs
 
     ############
     # Extract2D
@@ -622,7 +766,7 @@ def run_pipeline(
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     step2d = Extract2dStep()
-    ext2d = step2d.call(with_wcs)
+    ext2d = step2d.call(flag_open)
 
     _slit_index = None
     if ext2d.meta.exposure.type == "NRS_FIXEDSLIT":
@@ -641,10 +785,14 @@ def run_pipeline(
 
     targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
 
-    inst_key = f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"
+    inst_key = (
+        f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"
+    )
 
     if _slit.meta.exposure.type == "NRS_FIXEDSLIT":
-        slit_prefix_ = f"{file.split('_rate')[0]}_{targ_}_{inst_key}_{_slit.name}".lower()
+        slit_prefix_ = (
+            f"{file.split('_rate')[0]}_{targ_}_{inst_key}_{_slit.name}".lower()
+        )
     else:
         if undo_flat:
             plabel = "raw"
@@ -760,40 +908,61 @@ def run_pipeline(
 
     flat_reference_files["dflat"] = new_dflat_filename
 
-    ### Apply flake flats
-    flat_models = flat_step._get_references(ext2d, ext2d.meta.exposure.type)
-    for k in flat_models:
-        if flat_models[k] is not None:
-            flat_models[k] = flat_models[k].__class__(flat_reference_files[k])
-
     # Metadata for fixed slit
     if ext2d.meta.exposure.type == "NRS_FIXEDSLIT":
         for _slit in ext2d.slits:
             msautils.update_slit_metadata(_slit)
 
-    flat_corr, flat_applied = flat_field.do_correction(
-        ext2d, **flat_models, inverse=flat_step.inverse
+    # Run the pipeline step with the updated references
+    flat_corr = flat_step.call(
+        ext2d,
+        override_fflat=new_fflat_filename,
+        override_sflat=new_sflat_filename,
+        override_dflat=new_dflat_filename,
     )
 
-    # Close reference models
-    for k in flat_models:
-        if flat_models[k] is not None:
-            flat_models[k].close()
-
-    # Path and bar
     if ext2d.meta.exposure.type == "NRS_MSASPEC":
 
+        ####################################################
+        # PathLoss
         msg = f"{file} NRS_MSASPEC run PathLossStep"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         path_step = PathLossStep()
-        path_result = path_step.call(flat_corr)
+        path_filename = path_step.get_reference_file(flat_corr, "pathloss")
+        new_path_filename = os.path.basename(path_filename).replace(
+            ".fits", "_ext.fits"
+        )
 
+        if not os.path.exists(new_path_filename):
+            path_hdul = extend_pathloss(path_filename, full_range=full_range)
+            path_hdul.writeto(new_path_filename, overwrite=True)
+            path_hdul.close()
+
+        path_result = path_step.call(
+            flat_corr, override_pathloss=new_path_filename
+        )
+
+        ####################################################
+        # BarShadow
         msg = f"{file} NRS_MSASPEC run BarShadowStep"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         bar_step = BarShadowStep()
-        bar_result = bar_step.call(path_result)
+
+        bar_filename = bar_step.get_reference_file(path_result, "barshadow")
+        new_bar_filename = os.path.basename(bar_filename).replace(
+            ".fits", "_ext.fits"
+        )
+
+        if not os.path.exists(new_bar_filename):
+            bar_hdul = extend_barshadow(bar_filename, full_range=full_range)
+            bar_hdul.writeto(new_bar_filename, overwrite=True)
+            bar_hdul.close()
+
+        bar_result = bar_step.call(
+            path_result, override_barshadow=new_bar_filename
+        )
 
         last_result = bar_result
 
@@ -802,7 +971,6 @@ def run_pipeline(
 
     ###########
     # Photom
-
     phot_step = PhotomStep()
     phot_filename = phot_step.get_reference_file(last_result, "photom")
     area_filename = phot_step.get_reference_file(last_result, "area")
@@ -815,41 +983,15 @@ def run_pipeline(
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     if not os.path.exists(new_phot_filename):
-        pref = jwst.datamodels.open(phot_filename)
-        ptab = astropy.table.Table(pref.phot_table)
-
-        for k in ranges:
-            filt, grat = k.split("_")
-            nfull = len(ptab[0]["wavelength"])
-            nelem = nfull - 4
-            wgrid = np.zeros(nfull, dtype=np.float32)
-            wgrid[:nelem] = np.logspace(*np.log10(ranges[k]), nelem)
-            resp = (wgrid > 0) * 1
-
-            rows = (ptab["grating"] == grat) & (ptab["filter"] == filt)
-
-            ptab["nelem"][rows] = nelem
-            ptab["wavelength"][rows] = wgrid
-            ptab["relresponse"][rows] = resp
-
-        pref.phot_table = pyfits.BinTableHDU(ptab).data
-
+        pref = extend_photom(phot_filename)
         pref.write(new_phot_filename, overwrite=True)
 
     # Apply photom
+    phot_step = PhotomStep()
+    result = phot_step.call(last_result, override_photom=new_phot_filename)
 
-    correction_pars = None
-
-    phot = jwst.photom.photom.DataSet(
-        last_result,
-        phot_step.inverse,
-        phot_step.source_type,
-        phot_step.mrs_time_correction,
-        correction_pars,
-    )
-
-    result = phot.apply_photom(new_phot_filename, area_filename)
-
+    ########
+    # Figure
     if make_trace_figures:
         fig, ax = plt.subplots(1, 1, figsize=(12, 5))
         ax.imshow(
@@ -865,6 +1007,8 @@ def run_pipeline(
 
         fig.savefig(f"{slit_prefix_}_final.png".lower())
 
+    ########
+    # Write calibrated slitlet files
     if write_output:
         if all_slits:
             slit_list = result.slits
@@ -905,4 +1049,3 @@ def run_pipeline(
     utils.LOGFILE = ORIG_LOGFILE
 
     return result
-

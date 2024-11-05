@@ -16,6 +16,7 @@ from scipy.optimize import minimize
 import astropy.io.fits as pyfits
 
 import jwst.datamodels
+import jwst
 
 from grizli import utils
 from . import utils as msautils
@@ -212,16 +213,16 @@ def slit_prf_fraction(
 LOOKUP_PRF = None
 LOOKUP_PRF_ORDER = 1
 
-def set_lookup_prf():
+def set_lookup_prf(**kwargs):
     """
     Initialize global LOOKUP_PRF
     """
     global LOOKUP_PRF
     
-    msg = f"Initialize LookupTablePSF()"
+    msg = f"Initialize LookupTablePSF({kwargs})"
     utils.log_comment(utils.LOGFILE, msg, verbose=True)
     
-    prf = msautils.LookupTablePSF()
+    prf = msautils.LookupTablePSF(**kwargs)
     
     LOOKUP_PRF = prf
     
@@ -1410,6 +1411,17 @@ class SlitGroup:
                 dwave_step = np.nanpercentile(
                     dwave / np.gradient(_wtr), [5, 50, 95]
                 )
+
+                # jwst < 1.15 correction was wrong
+                if jwst.__version__ < "1.15":
+                    msg = (
+                        f"  Flip sign of wavelength correction for"
+                        + f" jwst=={jwst.__version__}"
+                    )
+
+                    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+                    dwave *= -1
+                    dwave_step *= -1
 
                 # Signs of source_xpos and dwave_step should be the same
                 sign = slit.source_xpos * dwave_step[1]
@@ -4037,7 +4049,7 @@ def combine_grating_group(
         profile_slice=None,
         prf_center=0.0,
         prf_sigma=header["SIGMA"],
-        sigma_bounds=(0.5, 2.5),
+        sigma_bounds=(header["SIGMA"]-0.1, header["SIGMA"]+0.1), # (0.5, 2.5),
         center_limit=0.001,
         fit_prf=False,
         fix_center=False,
@@ -4140,6 +4152,7 @@ def drizzle_grating_group(
     with_pathloss=True,
     wave_sample=1.05,
     grating_limits=msautils.GRATING_LIMITS,
+    pixtab_with_mask=True,
     ny=13,
     dkws=dict(oversample=16, pixfrac=0.8, sample_axes="y"),
     y_range=[-3, 3],
@@ -4236,7 +4249,7 @@ def drizzle_grating_group(
             header["EXPTIME"] += hi["EXPTIME"]
 
         tab = obj.get_flat_diff_arrays(
-            apply_mask=True,
+            apply_mask=pixtab_with_mask,
             with_pathloss=with_pathloss,
             # float_dtype=np.float32,
         )
@@ -4289,6 +4302,9 @@ def drizzle_grating_group(
             pixtab["sci"] + pixtab["var_total"] + wht + pixtab["yslit"]
         )
         ok &= (pixtab["var_total"] > 0) & (wht > 0)
+
+        if "mask" in pixtab.colnames:
+            ok &= pixtab["mask"]
 
         ysl = pixtab["yslit"][ok]
         xsl = pixtab["wave"][ok]
@@ -4908,6 +4924,11 @@ def extract_spectra(
 
         except TypeError:
             msg = f"\n    failed TypeError\n"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+            continue
+
+        except ValueError:
+            msg = f"\n    failed ValueError\n"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             continue
 
