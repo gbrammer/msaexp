@@ -23,6 +23,7 @@ import jwst.photom.photom
 
 from grizli import utils
 import msaexp.utils as msautils
+from .msa import slit_best_source_alias
 from . import pipeline
 
 # NEW_WAVERANGE_REF = "jwst_nirspec_wavelengthrange_0008_ext.asdf"
@@ -31,7 +32,7 @@ EXTENDED_RANGES = {
     "F070LP_G140M": [0.6, 3.3],
     "F100LP_G140M": [0.9, 3.3],
     "F170LP_G235M": [1.5, 5.3],
-    "F290LP_G395M": [2.6, 6.0],
+    "F290LP_G395M": [2.6, 5.6],
     "CLEAR_PRISM": [0.5, 5.6],
 }
 
@@ -1024,7 +1025,17 @@ def run_pipeline(
                 else:
                     plabel = "phot"
 
-                slit_prefix_ = f"{file.split('_rate')[0]}_{inst_key}_{plabel}.{_slit.name}.{_slit.source_name}".lower()
+                try:
+                    source_alias = slit_best_source_alias(
+                        _slit,
+                        require_primary=False,
+                        which="min",
+                        verbose=False,
+                    )
+                except:
+                    source_alias = _slit.source_name
+
+                slit_prefix_ = f"{file.split('_rate')[0]}_{inst_key}_{plabel}.{_slit.name}.{source_alias}".lower()
 
             slit_file = slit_prefix_ + ".fits"
 
