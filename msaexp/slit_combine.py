@@ -213,19 +213,20 @@ def slit_prf_fraction(
 LOOKUP_PRF = None
 LOOKUP_PRF_ORDER = 1
 
+
 def set_lookup_prf(**kwargs):
     """
     Initialize global LOOKUP_PRF
     """
     global LOOKUP_PRF
-    
+
     msg = f"Initialize LookupTablePSF({kwargs})"
     utils.log_comment(utils.LOGFILE, msg, verbose=True)
-    
+
     prf = msautils.LookupTablePSF(**kwargs)
-    
+
     LOOKUP_PRF = prf
-    
+
     return prf
 
 
@@ -409,12 +410,14 @@ def objfun_prof_trace(
     if LOOKUP_PRF is not None:
         ppos = LOOKUP_PRF.evaluate(
             sigma=sigma,
-            slit_coords=(wave[ipos,:].flatten(), yslit[ipos, :].flatten()),
-            order=LOOKUP_PRF_ORDER
+            slit_coords=(wave[ipos, :].flatten(), yslit[ipos, :].flatten()),
+            order=LOOKUP_PRF_ORDER,
         )
     else:
-        ppos = PRF(yslit[ipos, :].flatten(), 0.0, sig2[ipos, :].flatten(), dx=1)
-        
+        ppos = PRF(
+            yslit[ipos, :].flatten(), 0.0, sig2[ipos, :].flatten(), dx=1
+        )
+
     if WINGS_XOFF is not None:
         for wx, wn in zip(WINGS_XOFF, wings):
             ppos += wn * PRF(
@@ -441,8 +444,11 @@ def objfun_prof_trace(
         if LOOKUP_PRF is not None:
             pneg = LOOKUP_PRF.evaluate(
                 sigma=sigma,
-                slit_coords=(wave[ineg,:].flatten(), yslit[ineg, :].flatten()),
-                order=LOOKUP_PRF_ORDER
+                slit_coords=(
+                    wave[ineg, :].flatten(),
+                    yslit[ineg, :].flatten(),
+                ),
+                order=LOOKUP_PRF_ORDER,
             )
         else:
             pneg = PRF(
@@ -580,13 +586,15 @@ class SlitGroup:
         trace_with_xpos=False,
         trace_with_ypos=False,
         trace_from_yoffset=True,
+        with_fs_offset=False,
         fit_shutter_offset_kwargs=None,
         shutter_offset=0.0,
         nod_offset=None,
         pad_border=2,
         weight_type="ivm",
         reference_exposure="auto",
-        **kwargs):
+        **kwargs,
+    ):
         """
         Container for a list of 2D extracted ``SlitModel`` files
 
@@ -687,6 +695,10 @@ class SlitGroup:
 
         trace_from_yoffset : bool
             Compute traces derived from y offsets
+
+        with_fs_offset: bool
+            Try to calculate extra fixed slit trace offset.  Seems to be not be needed
+            in ``jwst>=1.15``.
 
         nod_offset : float, None
             Nod offset size (pixels) to use if the slit model traces don't
@@ -817,6 +829,7 @@ class SlitGroup:
             "percentile_outliers": 0,
             "sky_file": "N/A",
             "global_sky_df": global_sky_df,
+            "with_fs_offset": with_fs_offset,
         }
 
         # Comments on meta for header keywords
@@ -848,6 +861,7 @@ class SlitGroup:
             "percentile_outliers": "Masked pixels from flag_percentile_outliers",
             "sky_file": "Filename of a global sky background table",
             "global_sky_df": "Degrees of freedom of fit with global sky",
+            "with_fs_offset": "Extra fixed slit offset",
         }
 
         self.shapes = []
@@ -1642,11 +1656,9 @@ class SlitGroup:
                 for i, _off in enumerate(offsets):
                     self.ytr[i, :] += _off  # - 1
 
-        elif self.IS_FIXED_SLIT & (1):
+        elif self.IS_FIXED_SLIT & (self.meta["with_fs_offset"]):
 
-            _dy = self.info["y_offset"] - np.median(
-                self.info["y_offset"]
-            )  # [0])
+            _dy = self.info["y_offset"] - np.median(self.info["y_offset"])
             _dy /= self.slit_pixel_scale
 
             msg = " Fixed slit: "
@@ -4049,7 +4061,10 @@ def combine_grating_group(
         profile_slice=None,
         prf_center=0.0,
         prf_sigma=header["SIGMA"],
-        sigma_bounds=(header["SIGMA"]-0.1, header["SIGMA"]+0.1), # (0.5, 2.5),
+        sigma_bounds=(
+            header["SIGMA"] - 0.1,
+            header["SIGMA"] + 0.1,
+        ),  # (0.5, 2.5),
         center_limit=0.001,
         fit_prf=False,
         fix_center=False,
@@ -4110,6 +4125,7 @@ def combine_grating_group(
 
     for k in spec.meta:
         header[k] = spec.meta[k]
+        pixtab.meta[k] = spec.meta[k]
 
     msg = "msaexp.drizzle.extract_from_hdul:  Output center = "
     msg += f" {header['PROFCEN']:6.2f}, sigma = {header['PROFSIG']:6.2f}"
@@ -4224,7 +4240,9 @@ def drizzle_grating_group(
     header = pyfits.Header()
 
     wave_bin = msautils.get_standard_wavelength_grid(
-        obj.grating, sample=wave_sample, grating_limits=grating_limits,
+        obj.grating,
+        sample=wave_sample,
+        grating_limits=grating_limits,
     )
 
     xbin = msautils.array_to_bin_edges(wave_bin)
@@ -4271,6 +4289,11 @@ def drizzle_grating_group(
 
     # Do the resampling
     if len(tabs) > 0:
+        istart = 0
+        for t in tabs:
+            t["exposure_index"] += istart
+            istart = t["exposure_index"].max() + 1
+
         pixtab = astropy.table.vstack(tabs)
 
         for t in tabs:
