@@ -33,6 +33,10 @@ EXTENDED_RANGES = {
     "F100LP_G140M": [0.9, 3.3],
     "F170LP_G235M": [1.5, 5.3],
     "F290LP_G395M": [2.6, 5.6],
+    "F070LP_G140H": [0.6, 3.3],
+    "F100LP_G140H": [0.9, 3.3],
+    "F170LP_G235H": [1.5, 5.3],
+    "F290LP_G395H": [2.6, 5.6],
     "CLEAR_PRISM": [0.5, 5.6],
 }
 
@@ -146,7 +150,7 @@ def extend_wavelengthrange(
             ]
         ) & (key != "CLEAR_PRISM"):
             continue
-        if ("H" in spl[1]) | (spl[1] == "MIRROR") | (key == "F100LP_PRISM"):
+        if (spl[1] == "MIRROR") | (key == "F100LP_PRISM"):
             continue
         if spl[0] in ["OPAQUE", "F110W", "F140X"]:
             continue
@@ -400,7 +404,10 @@ def extend_sflat(
 
 
 def extend_dflat(
-    dflat_filename, full_range=[0.55, 5.6], log_prefix="extend_dflat"
+    dflat_filename,
+    full_range=[0.55, 5.6],
+    nelem=1024,
+    log_prefix="extend_dflat",
 ):
     """
     Extend NIRSpec sflat reference file
@@ -412,6 +419,9 @@ def extend_dflat(
 
     full_range : list
         Wavelength limits
+
+    nelem : int
+        Number of elements in the flattened "fast_variation" table
 
     log_prefix : str
         String for log messages
@@ -432,6 +442,8 @@ def extend_dflat(
 
     prism_max = full_range[1]
 
+    ####################
+    # Maximum wavelength
     if dflat_waves[-1] < prism_max:
 
         msg = f"{log_prefix} {fbase} max wave = {dflat_waves[-1]:.2f} ->  append {prism_max}"
@@ -456,7 +468,8 @@ def extend_dflat(
         )
         df.data = np.vstack([df.data, df.data[-1:, :, :] * 1])
 
-    # Min
+    ####################
+    # Minimum wavelength
     dflat_waves = df.extra_fits.WAVELENGTH.data.wavelength.tolist()
 
     if dflat_waves[0] > prism_min:
@@ -464,7 +477,6 @@ def extend_dflat(
         msg = f"{log_prefix} {fbase} min wave = {dflat_waves[0]:.2f} -> prepend {prism_min}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-        # dflat_waves.append(prism_max)
         dflat_waves.insert(0, prism_min)
 
         astropy.table.Table(df.extra_fits.WAVELENGTH.data)
@@ -488,6 +500,22 @@ def extend_dflat(
             df.extra_fits.SCI.header[i + 1][0] = f"PFLAT_{i+1}"
 
         df.data = np.vstack([df.data[:1, :, :] * 1, df.data])
+
+    ##############################
+    # Flatten FAST_VARIATION table
+    in_fast = astropy.table.Table(df.extra_fits.FAST_VARIATION.data)
+    wgrid = np.logspace(*np.log10(full_range), nelem)
+    resp = (wgrid > 0) * 1
+
+    fast_1d = astropy.table.Table()
+    fast_1d["slit_name"] = in_fast["slit_name"]
+    fast_1d["nelem"] = nelem
+    fast_1d["wavelength"] = [wgrid.astype(in_fast["wavelength"].dtype)] * len(
+        in_fast
+    )
+    fast_1d["data"] = [resp.astype(in_fast["data"].dtype)] * len(in_fast)
+
+    df.extra_fits.FAST_VARIATION.data = pyfits.BinTableHDU(fast_1d).data
 
     return df
 
@@ -737,7 +765,8 @@ def run_pipeline(
             extend_wavelengthrange(
                 ref_file=os.path.basename(
                     wcs_reference_files["wavelengthrange"]
-                )
+                ),
+                ranges=ranges,
             )
 
         # Use new reference
@@ -807,18 +836,20 @@ def run_pipeline(
     msg = f"{file} {inst_key} {det}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    # Trace
-    xtr, ytr, wtr, rs, ds = msautils.slit_trace_center(
-        _slit, with_source_xpos=False, with_source_ypos=False
-    )
-
+    ###############
+    # Trace figures
     if make_trace_figures:
+        xtr, ytr, wtr, rs, ds = msautils.slit_trace_center(
+            _slit, with_source_xpos=False, with_source_ypos=False
+        )
+
         fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+
         ax.imshow(_slit.data, aspect="auto", vmin=-0.1, vmax=2, cmap="magma_r")
         ax.plot(xtr, ytr, color="magenta")
         ax.set_title(f"{inst_key} {det}")
-        fig.tight_layout(pad=1)
 
+        fig.tight_layout(pad=1)
         fig.savefig(f"{slit_prefix_}_trace.png".lower())
 
     ############
@@ -829,122 +860,127 @@ def run_pipeline(
     flat_step = FlatFieldStep()
     flat_reference_files = step_reference_files(flat_step, ext2d)
 
-    ########
-    # FFlat
-    new_fflat_filename = os.path.basename(
-        flat_reference_files["fflat"]
-    ).replace(".fits", "_ext.fits")
+    if inst_key in ranges:
+        full_range = ranges[inst_key]
+    else:
+        full_range = None
+        undo_flat = False
+
     if undo_flat:
+        ########
+        # F-Flat
+        new_fflat_filename = os.path.basename(
+            flat_reference_files["fflat"]
+        ).replace(".fits", "_ext.fits")
+
         msg = f"{file}  fflat = '{new_fflat_filename}'"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    full_range = ranges[inst_key]
+        if not os.path.exists(new_fflat_filename):
+            if ext2d.meta.exposure.type == "NRS_MSASPEC":
+                ff = extend_quad_fflat(
+                    flat_reference_files["fflat"],
+                    full_range=full_range,
+                    log_prefix=file,
+                )
+            else:
+                ff = extend_fs_fflat(
+                    flat_reference_files["fflat"],
+                    full_range=full_range,
+                    log_prefix=file,
+                )
 
-    # if inst_key == 'F100LP_G140M':
-    #     full_range[0] = 0.952
-    #     msg = f"{file}  set minimum wavelength {full_range[0]}"
-    #     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+            ff.write(new_fflat_filename, overwrite=True)
 
-    if (not os.path.exists(new_fflat_filename)) & undo_flat:
-        if ext2d.meta.exposure.type == "NRS_MSASPEC":
-            ff = extend_quad_fflat(
-                flat_reference_files["fflat"],
-                full_range=full_range,
-                log_prefix=file,
-            )
-        else:
-            ff = extend_fs_fflat(
-                flat_reference_files["fflat"],
-                full_range=full_range,
-                log_prefix=file,
-            )
-
-        ff.write(new_fflat_filename, overwrite=True)
-
-    if undo_flat:
         flat_reference_files["fflat"] = new_fflat_filename
 
-    ## SFlat
-    new_sflat_filename = os.path.basename(
-        flat_reference_files["sflat"]
-    ).replace(".fits", "_ext.fits")
+        ########
+        # S-Flat
+        new_sflat_filename = os.path.basename(
+            flat_reference_files["sflat"]
+        ).replace(".fits", "_ext.fits")
 
-    if undo_flat:
         msg = f"{file}  sflat = '{new_sflat_filename}'"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    if (not os.path.exists(new_sflat_filename)) & undo_flat:
-        sf = extend_sflat(
-            flat_reference_files["sflat"],
-            full_range=full_range,
-            log_prefix=file,
-        )
-        sf.write(new_sflat_filename, overwrite=True)
+        if not os.path.exists(new_sflat_filename):
+            sf = extend_sflat(
+                flat_reference_files["sflat"],
+                full_range=full_range,
+                log_prefix=file,
+            )
+            sf.write(new_sflat_filename, overwrite=True)
 
-    if undo_flat:
         flat_reference_files["sflat"] = new_sflat_filename
 
-    ###############
-    # DFLAT
-    new_dflat_filename = os.path.basename(
-        flat_reference_files["dflat"]
-    ).replace(".fits", "_ext.fits")
+        ########
+        # D-FLAT
+        new_dflat_filename = os.path.basename(
+            flat_reference_files["dflat"]
+        ).replace(".fits", "_ext.fits")
 
-    msg = f"{file}  dflat = '{new_dflat_filename}'"
-    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        msg = f"{file}  dflat = '{new_dflat_filename}'"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    wmin, wmax = 10, 0
-    for k in ranges:
-        wmin = np.minimum(ranges[k][0], wmin)
-        wmax = np.maximum(ranges[k][1], wmax)
+        if not os.path.exists(new_dflat_filename):
+            wmin, wmax = 10, 0
+            for k in ranges:
+                wmin = np.minimum(ranges[k][0], wmin)
+                wmax = np.maximum(ranges[k][1], wmax)
 
-    if not os.path.exists(new_dflat_filename):
-        df = extend_dflat(
-            flat_reference_files["dflat"],
-            full_range=[wmin, wmax],
-            log_prefix=file,
-        )
+            df = extend_dflat(
+                flat_reference_files["dflat"],
+                full_range=[wmin, wmax],
+                log_prefix=file,
+            )
 
-        df.write(new_dflat_filename, overwrite=True)
+            df.write(new_dflat_filename, overwrite=True)
 
-    flat_reference_files["dflat"] = new_dflat_filename
+        flat_reference_files["dflat"] = new_dflat_filename
 
+    #########################
     # Metadata for fixed slit
     if ext2d.meta.exposure.type == "NRS_FIXEDSLIT":
         for _slit in ext2d.slits:
             msautils.update_slit_metadata(_slit)
 
-    # Run the pipeline step with the updated references
+    # Run the pipeline step with the updated references (or the originals)
     flat_corr = flat_step.call(
         ext2d,
-        override_fflat=new_fflat_filename,
-        override_sflat=new_sflat_filename,
-        override_dflat=new_dflat_filename,
+        override_fflat=flat_reference_files["fflat"],
+        override_sflat=flat_reference_files["sflat"],
+        override_dflat=flat_reference_files["dflat"],
     )
 
     if ext2d.meta.exposure.type == "NRS_MSASPEC":
 
-        ####################################################
+        ##########
         # PathLoss
         msg = f"{file} NRS_MSASPEC run PathLossStep"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         path_step = PathLossStep()
         path_filename = path_step.get_reference_file(flat_corr, "pathloss")
-        new_path_filename = os.path.basename(path_filename).replace(
-            ".fits", "_ext.fits"
-        )
 
-        if not os.path.exists(new_path_filename):
-            path_hdul = extend_pathloss(path_filename, full_range=full_range)
-            path_hdul.writeto(new_path_filename, overwrite=True)
-            path_hdul.close()
+        if full_range is not None:
+            new_path_filename = os.path.basename(path_filename).replace(
+                ".fits", "_ext.fits"
+            )
 
-        path_result = path_step.call(
-            flat_corr, override_pathloss=new_path_filename
-        )
+            if not os.path.exists(new_path_filename):
+                path_hdul = extend_pathloss(
+                    path_filename, full_range=full_range
+                )
+                path_hdul.writeto(new_path_filename, overwrite=True)
+                path_hdul.close()
 
-        ####################################################
+            path_result = path_step.call(
+                flat_corr, override_pathloss=new_path_filename
+            )
+        else:
+            path_result = path_step.call(flat_corr)
+
+        ###########
         # BarShadow
         msg = f"{file} NRS_MSASPEC run BarShadowStep"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
@@ -952,49 +988,62 @@ def run_pipeline(
         bar_step = BarShadowStep()
 
         bar_filename = bar_step.get_reference_file(path_result, "barshadow")
-        new_bar_filename = os.path.basename(bar_filename).replace(
-            ".fits", "_ext.fits"
-        )
 
-        if not os.path.exists(new_bar_filename):
-            bar_hdul = extend_barshadow(bar_filename, full_range=full_range)
-            bar_hdul.writeto(new_bar_filename, overwrite=True)
-            bar_hdul.close()
+        if full_range is not None:
+            new_bar_filename = os.path.basename(bar_filename).replace(
+                ".fits", "_ext.fits"
+            )
 
-        bar_result = bar_step.call(
-            path_result, override_barshadow=new_bar_filename
-        )
+            if not os.path.exists(new_bar_filename):
+                bar_hdul = extend_barshadow(
+                    bar_filename, full_range=full_range
+                )
+                bar_hdul.writeto(new_bar_filename, overwrite=True)
+                bar_hdul.close()
+
+            bar_result = bar_step.call(
+                path_result, override_barshadow=new_bar_filename
+            )
+        else:
+            bar_result = bar_step.call(path_result)
 
         last_result = bar_result
 
     else:
         last_result = flat_corr
 
-    ###########
+    ########
     # Photom
     phot_step = PhotomStep()
     phot_filename = phot_step.get_reference_file(last_result, "photom")
     area_filename = phot_step.get_reference_file(last_result, "area")
 
-    new_phot_filename = os.path.basename(phot_filename).replace(
-        ".fits", "_ext.fits"
-    )
-
-    msg = f"{file}  photom = '{new_phot_filename}'"
-    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-
-    if not os.path.exists(new_phot_filename):
-        pref = extend_photom(phot_filename)
-        pref.write(new_phot_filename, overwrite=True)
-
-    # Apply photom
     phot_step = PhotomStep()
-    result = phot_step.call(last_result, override_photom=new_phot_filename)
+
+    if full_range is not None:
+
+        new_phot_filename = os.path.basename(phot_filename).replace(
+            ".fits", "_ext.fits"
+        )
+
+        msg = f"{file}  photom = '{new_phot_filename}'"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        if not os.path.exists(new_phot_filename):
+            pref = extend_photom(phot_filename, ranges=ranges)
+            pref.write(new_phot_filename, overwrite=True)
+
+        # Apply photom
+        result = phot_step.call(last_result, override_photom=new_phot_filename)
+
+    else:
+        result = phot_step.call(last_result)
 
     ########
     # Figure
     if make_trace_figures:
         fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+
         ax.imshow(
             result.slits[slit_index].data,
             aspect="auto",
@@ -1002,6 +1051,7 @@ def run_pipeline(
             vmax=2 * 20,
             cmap="magma_r",
         )
+
         ax.plot(xtr, ytr, color="magenta")
         ax.set_title(f"{inst_key} {det}")
         fig.tight_layout(pad=1)
