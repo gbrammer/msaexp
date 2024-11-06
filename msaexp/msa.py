@@ -6,7 +6,12 @@ import os
 import numpy as np
 import astropy.io.fits as pyfits
 
-__all__ = ["regions_from_metafile", "regions_from_fits", "MSAMetafile"]
+__all__ = [
+    "regions_from_metafile",
+    "regions_from_fits",
+    "MSAMetafile",
+    "slit_best_source_alias",
+]
 
 
 def pad_msa_metafile(
@@ -520,15 +525,19 @@ class MSAMetafile:
             rename_slits = {}
 
             for sl in slits.values:
-                nexp = len(np.unique(shu[rows][slits[sl]]["dither_point_index"]))
+                nexp = len(
+                    np.unique(shu[rows][slits[sl]]["dither_point_index"])
+                )
                 nrows = slits[sl].sum()
 
                 source_ids = utils.Unique(
                     shu[rows][slits[sl]]["source_id"], verbose=False
                 )
-                test = (np.array(source_ids.values) > 0)
+                test = np.array(source_ids.values) > 0
                 # All individual exposures or all rows
-                test &= (source_ids.counts != nexp) & (source_ids.counts != nrows)
+                test &= (source_ids.counts != nexp) & (
+                    source_ids.counts != nrows
+                )
 
                 if test.sum() > 0:
                     if sort_count is not None:
@@ -2251,6 +2260,85 @@ def load_siaf_inverse_shutter_transforms():
         )
 
     return tr
+
+
+def slit_best_source_alias(
+    slit, require_primary=False, which="min", verbose=False
+):
+    """
+    Get the "best" source id from the MSA metadata file associated with a particular
+    slit extraction.
+
+    Parameters
+    ----------
+    slit : str, `stdatamodels.jwst.datamodels.slit.SlitModel`
+        Slit object or filename of one
+
+    require_primary : bool
+        Include a test on "primary_source = Y" in the shutter table.
+
+    which : 'most', 'min', 'max'
+        Criterion for picking the "best" source_id among multiple source ids assigned
+        for a particular ``slitlet_id``.
+
+    Returns
+    -------
+    alias : str
+        Source alias, either ``background_{id}``if no non-zero source ids found or
+        ``{program}_{id}`` if a primary source found with a particular slitlet_id.
+
+    """
+    import jwst.datamodels
+    import grizli.utils
+
+    if which not in ["most", "min", "max"]:
+        msg = f"slit_best_source_alias: 'which' must be 'most_common', 'min', 'max'"
+        raise ValueError(msg)
+
+    if isinstance(slit, str):
+        slit = jwst.datamodels.open(slit)
+        opened = True
+    else:
+        opened = False
+
+    msa = MSAMetafile(slit.meta.instrument.msa_metadata_file)
+    shu = msa.shutter_table
+    rows = shu["msa_metadata_id"] == slit.meta.instrument.msa_metadata_id
+    rows &= shu["slitlet_id"] == slit.slitlet_id
+    rows &= shu["source_id"] > 0
+
+    test = rows
+
+    if require_primary:
+        primary = rows & (shu["primary_source"] == "Y")
+        if primary.sum() > 0:
+            test = primary
+
+    if test.sum() == 0:
+        alias = f"background_{slit.slitlet_id}"
+        return alias
+
+    source_ids = grizli.utils.Unique(
+        shu["source_id"][test].tolist(), verbose=False
+    )
+    if which == "most":
+        best_id = np.array(source_ids.values)[np.argmax(source_ids.counts)]
+    elif which == "min":
+        best_id = np.min(source_ids.values)
+    elif which == "max":
+        best_id = np.max(source_ids.values)
+
+    prog = int(slit.meta.observation.program_number)
+
+    alias = f"{prog}_{best_id}"
+
+    msg = f"slit_best_source_alias: {alias} chosen among {source_ids.values}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    if opened:
+        slit.close()
+
+    return alias
 
 
 def msa_shutter_catalog(ra, dec, pointing=None, ap=None, inv=None):
