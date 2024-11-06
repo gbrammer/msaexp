@@ -3215,8 +3215,26 @@ def objfun_prf(
         return chi2
 
 
+def available_lookup_psf_files():
+    """
+    Return a list of the available LookupTablePSF files in msaexp/data
+
+    Returns
+    -------
+    psf_files : list
+        List of files that can be passed to `~msaexp.utils.LookupTablePSF`
+
+    """
+    import glob
+    path_to_data = os.path.join(os.path.dirname(__file__), "data")
+    psf_files = glob.glob(os.path.join(path_to_data, "*lookup.fits"))
+    psf_files = [os.path.basename(f) for f in psf_files]
+    psf_files.sort()
+    return psf_files
+
+
 class LookupTablePSF:
-    def __init__(self, psf_file="nirspec_exp_psf_lookup.fits", **kwargs):
+    def __init__(self, psf_file="nirspec_merged_s200a1_exp_psf_lookup.fits", **kwargs):
         """
         Fast lookup table PSF derived from point sources in the fixed slit.
 
