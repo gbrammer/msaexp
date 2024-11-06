@@ -203,7 +203,8 @@ def slit_trace_center(
     with_source_xpos=False,
     trace_center=0.0,
     with_source_ypos=True,
-    index_offset=0.0):
+    index_offset=0.0,
+):
     """
     Get detector coordinates along the center of a slit
 
@@ -1626,7 +1627,8 @@ def drizzled_hdu_figure(
     flam_scale=-20,
     recenter=True,
     use_aper_columns=False,
-    smooth_sigma=None):
+    smooth_sigma=None,
+):
     """
     Figure showing drizzled HDU
 
@@ -2650,7 +2652,7 @@ def slit_extended_flux_calibration(
     status : int
         - 0 : ``fflat`` and/or ``sflat`` reference files used don't end in ``ext.fits``
         - 1 : ``sens_file`` not found
-        - 2 : Sensitivity file found and applied to ``data``, ``err``, ``var_rnoise``, 
+        - 2 : Sensitivity file found and applied to ``data``, ``err``, ``var_rnoise``,
               and ``var_poisson`` attributes.
     """
 
@@ -3021,7 +3023,8 @@ def make_nirspec_gaussian_profile(
     ny=31,
     weight=1,
     bkg_offset=6,
-    bkg_parity=[-1, 1]):
+    bkg_parity=[-1, 1],
+):
     """
     Make a pixel-integrated Gaussian profile
 
@@ -3100,7 +3103,8 @@ def objfun_prf(
     bkg_parity,
     fit_type,
     ret,
-    verbose):
+    verbose,
+):
     """
     Objective function for fitting the 2D profile
 
@@ -3212,7 +3216,7 @@ def objfun_prf(
 
 
 class LookupTablePSF:
-    def __init__(self, psf_file='nirspec_exp_psf_lookup.fits', **kwargs):
+    def __init__(self, psf_file="nirspec_exp_psf_lookup.fits", **kwargs):
         """
         Fast lookup table PSF derived from point sources in the fixed slit.
 
@@ -3224,7 +3228,7 @@ class LookupTablePSF:
         psf_file : str, 'nirspec_prism_clear_exp_psf_lookup.fits'
             Which PSF table to use.  ``nirspec_exp_psf_lookup.fits`` assumes an
             exponential profile where the width parameter is the half-light radius.
-            ``nirspec_gau_psf_lookup.fits`` is a Gaussian profile with the width 
+            ``nirspec_gau_psf_lookup.fits`` is a Gaussian profile with the width
             parameter sigma.
 
         Examples
@@ -3288,7 +3292,7 @@ class LookupTablePSF:
         Read the lookup table data in ``psf_file``
         """
         path_to_data = os.path.join(os.path.dirname(__file__), "data")
-        for _path in ['', path_to_data]:
+        for _path in ["", path_to_data]:
             psf_file = os.path.join(_path, self.psf_file)
             if os.path.exists(psf_file):
                 self.psf_file_path = _path
