@@ -3274,7 +3274,8 @@ class LookupTablePSF:
 
         """
         self.psf_file = psf_file
-        
+        self.psf_file_path = None
+
         self.psf_data = None
 
         self.read_data()
@@ -3287,7 +3288,11 @@ class LookupTablePSF:
         Read the lookup table data in ``psf_file``
         """
         path_to_data = os.path.join(os.path.dirname(__file__), "data")
-        psf_file = os.path.join(path_to_data, self.psf_file)
+        for _path in ['', path_to_data]:
+            psf_file = os.path.join(_path, self.psf_file)
+            if os.path.exists(psf_file):
+                self.psf_file_path = _path
+                break
 
         if not os.path.exists(psf_file):
             return None
