@@ -520,11 +520,17 @@ class MSAMetafile:
             rename_slits = {}
 
             for sl in slits.values:
+                nexp = len(np.unique(shu[rows][slits[sl]]["dither_point_index"]))
+                nrows = slits[sl].sum()
+
                 source_ids = utils.Unique(
                     shu[rows][slits[sl]]["source_id"], verbose=False
                 )
+                test = (np.array(source_ids.values) > 0)
+                # All individual exposures or all rows
+                test &= (source_ids.counts != nexp) & (source_ids.counts != nrows)
 
-                if source_ids.N > 1:
+                if test.sum() > 0:
                     if sort_count is not None:
                         so = np.argsort(source_ids.counts)[::sort_count]
                     else:
