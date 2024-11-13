@@ -3226,15 +3226,15 @@ def available_lookup_psf_files():
 
     """
     import glob
-    path_to_data = os.path.join(os.path.dirname(__file__), "data")
-    psf_files = glob.glob(os.path.join(path_to_data, "*lookup.fits"))
+    path_to_data = os.path.join(os.path.dirname(__file__), "data/psf")
+    psf_files = glob.glob(os.path.join(path_to_data, "*lookup*.fits"))
     psf_files = [os.path.basename(f) for f in psf_files]
     psf_files.sort()
     return psf_files
 
 
 class LookupTablePSF:
-    def __init__(self, psf_file="nirspec_merged_s200a1_exp_psf_lookup.fits", **kwargs):
+    def __init__(self, psf_file="nirspec_merged_s200a1_exp_psf_lookup_001.fits", **kwargs):
         """
         Fast lookup table PSF derived from point sources in the fixed slit.
 
@@ -3309,15 +3309,39 @@ class LookupTablePSF:
         """
         Read the lookup table data in ``psf_file``
         """
-        path_to_data = os.path.join(os.path.dirname(__file__), "data")
+        path_to_data = os.path.join(os.path.dirname(__file__), "data/psf")
         for _path in ["", path_to_data]:
             psf_file = os.path.join(_path, self.psf_file)
             if os.path.exists(psf_file):
                 self.psf_file_path = _path
                 break
 
+        # try to use file from calibration repository if not found
         if not os.path.exists(psf_file):
-            return None
+            if '001.fits' in self.psf_file:
+                self.psf_file_path = "https://github.com/gbrammer/msaexp-calibration/raw/refs/heads/main/data/"
+                psf_file = os.path.join(_path, self.psf_file)
+
+                msg = f"msaexp.utils.LookupTablePSF: read from {psf_file}"
+                grizli.utils.log_comment(
+                    grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+                )
+
+                try:
+                    with pyfits.open(psf_file) as im:
+                        pass
+                except:
+                    msg = f"msaexp.utils.LookupTablePSF: remote url failed"
+                    grizli.utils.log_comment(
+                        grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+                    )
+                    return None
+            else:
+                msg = f"msaexp.utils.LookupTablePSF: failed to find {psf_file}"
+                grizli.utils.log_comment(
+                    grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+                )
+                return None
 
         with pyfits.open(psf_file) as im:
             self.psf_data = im["PROF"].data * 1
