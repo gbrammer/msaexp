@@ -150,6 +150,10 @@ def split_visit_groups(
     return groups
 
 
+LOOKUP_PRF = None
+LOOKUP_PRF_ORDER = 1
+
+
 def slit_prf_fraction(
     wave,
     sigma=0.0,
@@ -210,24 +214,20 @@ def slit_prf_fraction(
     return prf_frac
 
 
-LOOKUP_PRF = None
-LOOKUP_PRF_ORDER = 1
-
-
-def set_lookup_prf(**kwargs):
-    """
-    Initialize global LOOKUP_PRF
-    """
-    global LOOKUP_PRF
-
-    msg = f"Initialize LookupTablePSF({kwargs})"
-    utils.log_comment(utils.LOGFILE, msg, verbose=True)
-
-    prf = msautils.LookupTablePSF(**kwargs)
-
-    LOOKUP_PRF = prf
-
-    return prf
+# def set_lookup_prf(**kwargs):
+#     """
+#     Initialize global LOOKUP_PRF
+#     """
+#     global LOOKUP_PRF
+#
+#     msg = f"Initialize LookupTablePSF({kwargs})"
+#     utils.log_comment(utils.LOGFILE, msg, verbose=True)
+#
+#     prf = msautils.LookupTablePSF(**kwargs)
+#
+#     LOOKUP_PRF = prf
+#
+#     return prf
 
 
 def objfun_prof_trace(
@@ -4667,6 +4667,103 @@ def get_spectrum_path_loss(spec):
     return 1.0 / path_loss
 
 
+def set_lookup_prf(
+    psf_file=None,
+    slit_file=None,
+    grating="PRISM",
+    filter="CLEAR",
+    fixed_slit="S200A1",
+    version="001",
+    lookup_prf_type="merged",
+    force_m_gratings=True,
+    prism_merged=True,
+    **kwargs,
+):
+    """
+    Set lookup table PRF file appropriate for a given grating / filter
+
+    Parameters
+    ----------
+    psf_file : str, None
+        Force filename of the lookup table file
+
+    slit_file : str
+        Filename of a slitlet extraction
+
+    grating : str
+        Grating name
+
+    filter : str
+        Filter name
+
+    fixed_slit : "S200A1", "S1600A1"
+        Slit type.  Will use "S200A1" for MSA observations
+
+    version : str
+        Version string
+
+    lookup_prf_type : str
+        - ``"merged"``: use the grating-merged file
+          ``nirspec_merged_{fixed_slit}_exp_psf_lookup_{version}.fits``
+        - ``"by_grating"``: use the grating-specific files
+          ``nirspec_{grating}_{filter}_{fixed_slit}_exp_psf_lookup_{version}.fits``
+
+    force_m_gratings : bool
+        Use "M" versions of files for "H" gratings
+
+    prism_merged : bool
+        Always use "merged" for PRISM, e..g, with ``lookup_prf_type="by_grating"``.
+
+    Returns
+    -------
+    prf : `msaexp.utils.LookupTablePSF`
+        PSF object, and updates global ``msaexp.slit_combine.LOOKUP_PRF``` object
+    """
+    global LOOKUP_PRF
+
+    if slit_file is not None:
+        with pyfits.open(slit_file) as im:
+            grating = im[0].header["GRATING"]
+            filter = im[0].header["FILTER"]
+            if im[0].header["EXP_TYPE"]:
+                fixed_slit = im[0].header["APERNAME"].split("_")[1].lower()
+            else:
+                fixed_slit = "s200a1"
+
+    if (grating.upper() == "PRISM") & (prism_merged):
+        lookup_prf_type = "merged"
+
+    if lookup_prf_type == "merged":
+        key = "merged"
+    else:
+        key = f"{grating}_{filter}".lower()
+
+    if psf_file is None:
+        psf_file = (
+            f"nirspec_{key}_{fixed_slit}_exp_psf_lookup_{version}.fits".lower()
+        )
+
+        # One H grating doesn't exist so use M
+        # if 'g140h_f070lp' in psf_file:
+        #     msg = f"msaexp.slit_combine.set_lookup_prf: g140h_f070lp > g140m_f070lp"
+        #     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+        #     psf_file = psf_file.replace('g140h_f070lp', 'g140m_f070lp')
+
+        if force_m_gratings:
+            if "h_f" in psf_file:
+                msg = (
+                    f"msaexp.slit_combine.set_lookup_prf: force medium grating"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+                psf_file = psf_file.replace("h_f", "m_f")
+
+    prf = msautils.LookupTablePSF(psf_file=psf_file, **kwargs)
+
+    LOOKUP_PRF = prf
+
+    return prf
+
+
 def extract_spectra(
     target="1208_5110240",
     root="nirspec",
@@ -4688,6 +4785,7 @@ def extract_spectra(
     offset_degree=0,
     degree_kwargs={},
     recenter_all=False,
+    free_trace_offset=False,
     nod_offset=None,
     initial_sigma=7,
     fit_type=1,
@@ -4706,6 +4804,8 @@ def extract_spectra(
     trace_with_ypos="auto",
     get_background=False,
     make_2d_plots=True,
+    lookup_prf_type="merged",
+    lookup_prf_version="001",
     include_full_pixtab=["PRISM"],
     plot_kws={},
     **kwargs,
@@ -4788,6 +4888,9 @@ def extract_spectra(
         Refit for the trace center for all groups.  If False,
         use the center from the first (usually highest S/N prism)
         trace.
+
+    free_trace_offset : bool
+        If True, recenter **all** traces within and across groups.
 
     initial_sigma : float, optional
         Initial sigma value.  This is 10 times the Gaussian sigma
@@ -4921,6 +5024,13 @@ def extract_spectra(
                 utils.LOGFILE, "  ! Auto SMACS0723", verbose=VERBOSE_LOG
             )
             trace_from_yoffset = True
+
+        if lookup_prf_type is not None:
+            set_lookup_prf(
+                slit_file=groups[g][0],
+                version=lookup_prf_version,
+                lookup_prf_type=lookup_prf_type,
+            )
 
         try:
             obj = SlitGroup(
@@ -5162,11 +5272,23 @@ def extract_spectra(
 
         obj = xobj[k]["obj"]
 
+        if lookup_prf_type is not None:
+            set_lookup_prf(
+                slit_file=obj.files[0],
+                version=lookup_prf_version,
+                lookup_prf_type=lookup_prf_type,
+            )
+
+        if free_trace_offset:
+            ref_exp = None
+        else:
+            ref_exp = obj.calc_reference_exposure
+
         kws = dict(
             niter=trace_niter,
             force_positive=(fit_type == 0),
             degree=offset_degree,
-            ref_exp=obj.calc_reference_exposure,
+            ref_exp=ref_exp,
             sigma_bounds=(3, 12),
             with_bounds=False,
             trace_bounds=(-1.0, 1.0),
