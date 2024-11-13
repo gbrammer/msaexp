@@ -3343,18 +3343,32 @@ class LookupTablePSF:
                 )
                 return None
 
+        msg = f"msaexp.utils.LookupTablePSF: {psf_file}"
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+        )
+
         with pyfits.open(psf_file) as im:
             self.psf_data = im["PROF"].data * 1
+            valid = np.isfinite(self.psf_data[:,:,0]).sum(axis=0) > 0
+            self.psf_data = self.psf_data[:, valid, :]
+            self.psf_data[~np.isfinite(self.psf_data)] = 0.
+
+            self.psf_wave = im["WAVE"].data[valid] * 1
+            self.psf_wavei = np.arange(len(self.psf_wave), dtype=float)
+
             self.psf_y = im["YSLIT"].data * 1
             self.psf_yi = np.arange(len(self.psf_y), dtype=float)
-
-            self.psf_wave = im["WAVE"].data * 1
-            self.psf_wavei = np.arange(len(self.psf_wave), dtype=float)
 
             self.psf_sigma = im["SIGMA"].data * 1
             self.psf_sigmai = np.arange(len(self.psf_sigma), dtype=float)
 
-            self.psf_slit_loss = im["LOSS"].data * 1
+            self.psf_slit_loss_xoffset = im["LOSS_XOFFSET"].data * 1
+            self.psf_slit_loss = im["LOSS"].data[valid,:,:] * 1
+            self.psf_slit_loss_frac = self.psf_slit_loss*1.
+            NS = len(self.psf_sigma)
+            for i in range(NS):
+                self.psf_slit_loss_frac[:,i,:] /= self.psf_slit_loss_frac[:,0,:]
 
         return True
 
