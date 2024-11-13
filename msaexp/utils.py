@@ -3226,6 +3226,7 @@ def available_lookup_psf_files():
 
     """
     import glob
+
     path_to_data = os.path.join(os.path.dirname(__file__), "data/psf")
     psf_files = glob.glob(os.path.join(path_to_data, "*lookup*.fits"))
     psf_files = [os.path.basename(f) for f in psf_files]
@@ -3234,7 +3235,11 @@ def available_lookup_psf_files():
 
 
 class LookupTablePSF:
-    def __init__(self, psf_file="nirspec_merged_s200a1_exp_psf_lookup_001.fits", **kwargs):
+    def __init__(
+        self,
+        psf_file="nirspec_merged_s200a1_exp_psf_lookup_001.fits",
+        **kwargs,
+    ):
         """
         Fast lookup table PSF derived from point sources in the fixed slit.
 
@@ -3318,7 +3323,7 @@ class LookupTablePSF:
 
         # try to use file from calibration repository if not found
         if not os.path.exists(psf_file):
-            if '001.fits' in self.psf_file:
+            if "001.fits" in self.psf_file:
                 self.psf_file_path = "https://github.com/gbrammer/msaexp-calibration/raw/refs/heads/main/data/"
                 psf_file = os.path.join(_path, self.psf_file)
 
@@ -3333,7 +3338,10 @@ class LookupTablePSF:
                 except:
                     msg = f"msaexp.utils.LookupTablePSF: remote url failed"
                     grizli.utils.log_comment(
-                        grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+                        grizli.utils.LOGFILE,
+                        msg,
+                        verbose=True,
+                        show_date=False,
                     )
                     return None
             else:
@@ -3350,9 +3358,9 @@ class LookupTablePSF:
 
         with pyfits.open(psf_file) as im:
             self.psf_data = im["PROF"].data * 1
-            valid = np.isfinite(self.psf_data[:,:,0]).sum(axis=0) > 0
+            valid = np.isfinite(self.psf_data[:, :, 0]).sum(axis=0) > 0
             self.psf_data = self.psf_data[:, valid, :]
-            self.psf_data[~np.isfinite(self.psf_data)] = 0.
+            self.psf_data[~np.isfinite(self.psf_data)] = 0.0
 
             self.psf_wave = im["WAVE"].data[valid] * 1
             self.psf_wavei = np.arange(len(self.psf_wave), dtype=float)
@@ -3364,11 +3372,13 @@ class LookupTablePSF:
             self.psf_sigmai = np.arange(len(self.psf_sigma), dtype=float)
 
             self.psf_slit_loss_xoffset = im["LOSS_XOFFSET"].data * 1
-            self.psf_slit_loss = im["LOSS"].data[valid,:,:] * 1
-            self.psf_slit_loss_frac = self.psf_slit_loss*1.
+            self.psf_slit_loss = im["LOSS"].data[valid, :, :] * 1
+            self.psf_slit_loss_frac = self.psf_slit_loss * 1.0
             NS = len(self.psf_sigma)
             for i in range(NS):
-                self.psf_slit_loss_frac[:,i,:] /= self.psf_slit_loss_frac[:,0,:]
+                self.psf_slit_loss_frac[:, i, :] /= self.psf_slit_loss_frac[
+                    :, 0, :
+                ]
 
         return True
 
