@@ -141,8 +141,8 @@ def split_visit_groups(
                 set1 = set1[1::3] + set1[2::3]
                 set2 = set2[1::3] + set2[2::3]
 
-            groups[ksp[0] + "a-" + ksp[1]] = set1
-            groups[ksp[0] + "b-" + ksp[1]] = set2
+            groups[ksp[0] + "a-" + "-".join(ksp[1:])] = set1
+            groups[ksp[0] + "b-" + "-".join(ksp[1:])] = set2
 
         else:
             groups[k] = np.array(all_files)[un[k]].tolist()
@@ -4676,7 +4676,7 @@ def set_lookup_prf(
     version="001",
     lookup_prf_type="merged",
     force_m_gratings=True,
-    prism_merged=True,
+    prism_merged=False,
     **kwargs,
 ):
     """
@@ -4725,7 +4725,7 @@ def set_lookup_prf(
         with pyfits.open(slit_file) as im:
             grating = im[0].header["GRATING"]
             filter = im[0].header["FILTER"]
-            if im[0].header["EXP_TYPE"]:
+            if im[0].header["EXP_TYPE"] == 'NRS_FIXEDSLIT':
                 fixed_slit = im[0].header["APERNAME"].split("_")[1].lower()
             else:
                 fixed_slit = "s200a1"
