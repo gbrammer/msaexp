@@ -593,6 +593,7 @@ class SlitGroup:
         pad_border=2,
         weight_type="ivm",
         reference_exposure="auto",
+        lookup_prf=None,
         **kwargs,
     ):
         """
@@ -798,6 +799,8 @@ class SlitGroup:
         ]:
             msg = "weight_type {0} not recognized".format(weight_type)
             raise ValueError(msg)
+
+        self.lookup_prf = lookup_prf
 
         # kwargs to meta dictionary
         self.meta = {
@@ -3027,31 +3030,38 @@ class SlitGroup:
                     flat_normalization.append(self.normalization[i, :])
 
                 # path loss
-                if with_pathloss & (fit is not None):
+                if with_pathloss & (fit is not None) & (self.lookup_prf is not None):
                     header[f"XPOS{i}"] = (
                         self.slits[i].source_xpos,
                         f"source_xpos of group {exp}",
                     )
 
-                    path_i = slit_prf_fraction(
+                    # path_i = slit_prf_fraction(
+                    #     self.wave[i, :],
+                    #     sigma=fit[exp]["sigma"],
+                    #     x_pos=self.slits[i].source_xpos,
+                    #     slit_width=0.2,
+                    #     pixel_scale=pscale,
+                    #     verbose=False,
+                    # )
+                    #
+                    # # Relative to centered point source
+                    # path_0 = slit_prf_fraction(
+                    #     self.wave[i, :],
+                    #     sigma=0.01,
+                    #     x_pos=0.0,
+                    #     slit_width=0.2,
+                    #     pixel_scale=pscale,
+                    #     verbose=False,
+                    # )
+                    # path_i /= path_0
+
+                    path_i = self.lookup_prf.path_loss(
                         self.wave[i, :],
                         sigma=fit[exp]["sigma"],
-                        x_pos=self.slits[i].source_xpos,
-                        slit_width=0.2,
-                        pixel_scale=pscale,
-                        verbose=False,
+                        x_offset=self.slits[i].source_xpos,
+                        order=LOOKUP_PRF_ORDER
                     )
-
-                    # Relative to centered point source
-                    path_0 = slit_prf_fraction(
-                        self.wave[i, :],
-                        sigma=0.01,
-                        x_pos=0.0,
-                        slit_width=0.2,
-                        pixel_scale=pscale,
-                        verbose=False,
-                    )
-                    path_i /= path_0
 
                 else:
                     # print('WithOUT PRF pathloss')
@@ -5026,11 +5036,13 @@ def extract_spectra(
             trace_from_yoffset = True
 
         if lookup_prf_type is not None:
-            set_lookup_prf(
+            prf = set_lookup_prf(
                 slit_file=groups[g][0],
                 version=lookup_prf_version,
                 lookup_prf_type=lookup_prf_type,
             )
+        else:
+            prf = None
 
         try:
             obj = SlitGroup(
@@ -5048,6 +5060,7 @@ def extract_spectra(
                 nod_offset=nod_offset,
                 reference_exposure=reference_exposure,
                 pad_border=pad_border,
+                lookup_prf=prf,
                 **kwargs,
             )
         except RuntimeError:
