@@ -1819,6 +1819,7 @@ class SlitGroup:
         outlier_threshold=7,
         absolute_threshold=0.2,
         make_plot=False,
+        grating_limits=msautils.GRATING_LIMITS,
         **kwargs,
     ):
         """
@@ -1901,7 +1902,7 @@ class SlitGroup:
             absolute_clip = False
 
         sky_wave = msautils.get_standard_wavelength_grid(
-            self.grating, sample=1.0
+            self.grating, sample=1.0, grating_limits=grating_limits
         )
         nbin = sky_wave.shape[0]
         xbin = np.interp(self.wave, sky_wave, np.arange(nbin) / nbin)
@@ -4420,6 +4421,7 @@ def extract_from_pixtab(
     dkws=dict(oversample=16, pixfrac=0.8, sample_axes="y"),
     y_range=[-3, 3],
     weight_type="ivm",
+    grating_limits=msautils.GRATING_LIMITS,
     **kwargs,
 ):
     """
@@ -4481,7 +4483,7 @@ def extract_from_pixtab(
     import astropy.table
 
     wave_bin = msautils.get_standard_wavelength_grid(
-        grating, sample=wave_sample
+        grating, sample=wave_sample, grating_limits=grating_limits
     )
 
     xbin = msautils.array_to_bin_edges(wave_bin)
