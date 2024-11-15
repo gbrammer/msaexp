@@ -115,6 +115,7 @@ def resample_bagpipes_model(
     R_curve=None,
     nsig=5,
     scale_disp=1.3,
+    wave_scale=1,
 ):
     """
 
@@ -137,6 +138,9 @@ def resample_bagpipes_model(
 
     nsig : int
         Number of sigmas for resample.
+
+    wave_scale : float
+        Scalar multipled to model wavelengths, i.e., for additional spectral orders
 
     Returns
     -------
@@ -175,7 +179,7 @@ def resample_bagpipes_model(
     fluxes = resample_template_numba(
         spec_wavs,
         R_curve,
-        redshifted_wavs,
+        redshifted_wavs * wave_scale,
         model_galaxy.spectrum_full,
         velocity_sigma=velocity_sigma,
         nsig=nsig,
@@ -782,7 +786,7 @@ class SpectrumSampler(object):
         return fig
 
     def resample_bagpipes_model(
-        self, model_galaxy, model_comp=None, nsig=5, scale_disp=1.3
+        self, model_galaxy, model_comp=None, nsig=5, scale_disp=1.3, extra_orders=False,
     ):
         """
         Resample a `bagpipes` model to the wavelength grid of the spectrum.
@@ -800,6 +804,28 @@ class SpectrumSampler(object):
             R_curve=self.spec["R"] * scale_disp,
             nsig=nsig,
         )
+        if extra_orders:
+            if self.sensitivity_2 is not None:
+                res2 = resample_bagpipes_model(
+                    model_galaxy,
+                    model_comp=model_comp,
+                    spec_wavs=self.spec_wobs * 1.0e4,
+                    R_curve=self.spec["R"] * scale_disp * 2,
+                    nsig=nsig,
+                    wave_scale=2,
+                )
+                spectrum += res2 * self.sensitivity_2 / self.sensitivity
+
+            if self.sensitivity_3 is not None:
+                res3 = resample_bagpipes_model(
+                    model_galaxy,
+                    model_comp=model_comp,
+                    spec_wavs=self.spec_wobs * 1.0e4,
+                    R_curve=self.spec["R"] * scale_disp * 3,
+                    nsig=nsig,
+                    wave_scale=3,
+                )
+                spectrum += res3 * self.sensitivity_3 / self.sensitivity
 
         return spectrum
 
