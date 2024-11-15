@@ -365,7 +365,7 @@ class SpectrumSampler(object):
         fnu=True,
         nsig=4,
         with_igm=False,
-        extra_orders=False,
+        extra_orders=True,
         **kwargs,
     ):
         """
@@ -502,7 +502,7 @@ class SpectrumSampler(object):
         line_flux=1,
         scale_disp=1.0,
         velocity_sigma=100.0,
-        extra_orders=False,
+        extra_orders=True,
     ):
         """
         Make an emission line template with numerically correct pixel
@@ -568,7 +568,7 @@ class SpectrumSampler(object):
         log=False,
         by_wavelength=False,
         get_matrix=True,
-        extra_orders=False,
+        extra_orders=True,
     ):
         """
         Initialize bspline templates for continuum fits
@@ -846,7 +846,7 @@ class SpectrumSampler(object):
         model_comp=None,
         nsig=5,
         scale_disp=1.3,
-        extra_orders=False,
+        extra_orders=True,
     ):
         """
         Resample a `bagpipes` model to the wavelength grid of the spectrum.
