@@ -120,7 +120,7 @@ def split_visit_groups(
     groups = {}
     for k in np.unique(keys):
         test_field = (un[k].sum() % 6 == 0) & ("jw02561" in files[0])
-        test_field |= (un[k].sum() % 4 == 0) & ("xxjw01810" in files[0])
+        test_field |= (un[k].sum() % 4 == 0) & ("jw01810" in files[0])
         test_field |= (un[k].sum() % 4 == 0) & ("jw01324" in files[0])
         test_field |= (un[k].sum() % 6 == 0) & ("jw01324" in files[0])
         test_field &= split_uncover > 0

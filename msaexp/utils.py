@@ -3405,7 +3405,7 @@ class LookupTablePSF:
 
             NS = len(self.psf_sigma)
             Nx = len(self.psf_xoffset)
-            centered_point = self.psf_slit_loss_frac[:, 0, 0]
+            centered_point = self.psf_slit_loss[:, 0, 0] * 1.0
             for i in range(NS):
                 for j in range(Nx):
                     self.psf_slit_loss_frac[:, i, j] /= centered_point
