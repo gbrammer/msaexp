@@ -2617,13 +2617,16 @@ def get_prism_wave_bar_correction(
 def slit_extended_flux_calibration(
     slit,
     sens_file=None,
-    prefix="fix_p330e_s1600a1_sensitivity",
-    file_template="{prefix}_{filter}_{grating}.fits",
+    prefix="msaexp_sensitivity",
+    version="002",
+    file_template="{prefix}_{grating}_{filter}_{version}.fits",
+    detector_ratio_file="ngc2506_sensitivity_ratio_clear_prism_001.fits",
     threshold=0,
     verbose=True,
+    **kwargs,
 ):
     """
-    Get flux calibration for extended extractions
+    Get flux calibration for extended-wavelength extractions
 
     Parameters
     ----------
@@ -2673,7 +2676,8 @@ def slit_extended_flux_calibration(
             prefix=prefix,
             filter=slit.meta.instrument.filter,
             grating=slit.meta.instrument.grating,
-        )
+            version=version,
+        ).lower()
 
     # paths to search
     paths = [
@@ -2697,29 +2701,61 @@ def slit_extended_flux_calibration(
 
     sens = grizli.utils.read_catalog(os.path.join(file_path, sens_file))
 
+    needs_det_correction = slit.meta.instrument.detector.upper() == "NRS2"
+    needs_det_correction &= slit.meta.instrument.grating.upper() in ["PRISM"]
+
+    if needs_det_correction:
+
+        msg = f"slit_extended_flux_calibration: scale for NRS2 {detector_ratio_file}"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+        ratio_file_path = os.path.join(
+            os.path.dirname(__file__),
+            "data/extended_sensitivity",
+            detector_ratio_file,
+        )
+
+        if os.path.exists(ratio_file_path):
+            detector_ratio = grizli.utils.read_catalog(ratio_file_path)
+
+            sens["sensitivity"] /= np.interp(
+                sens["wavelength"],
+                detector_ratio["wavelength"],
+                detector_ratio["nrs1_nrs2"],
+            )
+        else:
+            msg = (
+                f"slit_extended_flux_calibration: {ratio_file_path} not found"
+            )
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+
     wcs = slit.meta.wcs
     d2w = wcs.get_transform("detector", "world")
 
     _ypi, _xpi = np.indices(slit.data.shape)
     _ras, _des, _wave = d2w(_xpi, _ypi)
 
-    corr_data = 1.0 / np.interp(
+    ##########################
+    # Photometry calibration is 1 / sensitivity curve
+    phot_corr = 1.0 / np.interp(
         _wave,
         sens["wavelength"],
         sens["sensitivity"],
-        left=0.0,
-        right=0.0,
+        left=np.nan,
+        right=np.nan,
     )
 
-    corr_data[~np.isfinite(corr_data)] = 0
-    max_sens = np.nanmax(1.0 / corr_data[corr_data > 0])
-    corr_data[corr_data >= 1.0 / (max_sens * threshold)] = np.nan
+    phot_corr[~np.isfinite(phot_corr)] = 0
+    max_sens = np.nanmax(1.0 / phot_corr[phot_corr > 0])
+    phot_corr[phot_corr >= 1.0 / (max_sens * threshold)] = np.nan
 
-    slit.sens_corr_data = corr_data
-    slit.data *= corr_data
-    slit.err *= corr_data
-    slit.var_rnoise *= corr_data**2
-    slit.var_poisson *= corr_data**2
+    slit.phot_corr = phot_corr
+    slit.data *= phot_corr
+    slit.err *= phot_corr
+    slit.var_rnoise *= phot_corr**2
+    slit.var_poisson *= phot_corr**2
 
     return 2
 
@@ -3371,14 +3407,19 @@ class LookupTablePSF:
             self.psf_sigma = im["SIGMA"].data * 1
             self.psf_sigmai = np.arange(len(self.psf_sigma), dtype=float)
 
-            self.psf_slit_loss_xoffset = im["LOSS_XOFFSET"].data * 1
+            self.psf_xoffset = im["LOSS_XOFFSET"].data * 1
+            self.psf_xoffseti = np.arange(len(self.psf_xoffset), dtype=float)
             self.psf_slit_loss = im["LOSS"].data[valid, :, :] * 1
+
+            # Slit loss fraction relative to centered point source
             self.psf_slit_loss_frac = self.psf_slit_loss * 1.0
+
             NS = len(self.psf_sigma)
+            Nx = len(self.psf_xoffset)
+            centered_point = self.psf_slit_loss_frac[:, 0, 0]
             for i in range(NS):
-                self.psf_slit_loss_frac[:, i, :] /= self.psf_slit_loss_frac[
-                    :, 0, :
-                ]
+                for j in range(Nx):
+                    self.psf_slit_loss_frac[:, i, j] /= centered_point
 
         return True
 
@@ -3494,6 +3535,70 @@ class LookupTablePSF:
         )
 
         return map_interp.reshape(self.slit_shape)
+
+    def path_loss(self, wave, sigma=0.0, x_offset=0.0, order=1):
+        """
+        Interpolate path loss
+
+        Parameters
+        ----------
+        wave : array-like
+            Wavelengths, microns
+
+        sigma : float
+            Exponential profile width
+
+        x_offset : float, (-0.5, 0.5)
+            Source x position within the shutter
+
+        order : int
+            Interpolation order
+
+        Returns
+        -------
+        path_loss : array-like
+            Estimated path loss
+
+        """
+        from scipy.ndimage import map_coordinates
+
+        slit_sigmai = np.interp(
+            sigma,
+            self.psf_sigma,
+            self.psf_sigmai,
+            left=0,
+            right=self.psf_sigmai[-1],
+        )
+
+        x_offseti = np.interp(
+            np.abs(x_offset),
+            self.psf_xoffset,
+            self.psf_xoffseti,
+            left=0,
+            right=self.psf_xoffseti[-1],
+        )
+
+        slit_wavei = np.interp(
+            wave.flatten(),
+            self.psf_wave,
+            self.psf_wavei,
+            left=np.nan,
+            right=np.nan,
+        )
+
+        coords = np.array(
+            [
+                slit_wavei,
+                np.full_like(slit_wavei, slit_sigmai),
+                np.full_like(slit_wavei, x_offseti),
+            ]
+        )
+
+        map_interp = map_coordinates(
+            self.psf_slit_loss_frac, coords, cval=0.0, order=order
+        )
+
+        return map_interp.reshape(wave.shape)
 
     def __call__(self, **kwargs):
         """
