@@ -2647,7 +2647,9 @@ def slit_extended_flux_calibration(
 
     threshold : float
         Threshold relative to the maximum of a particular grating sensitivivity curve
-        below which to treat as invalid data.
+        below which to treat as invalid data.  If a **negative** value is provided,
+        just apply the detector-dependent correction rather than the full photometric
+        calibration.
 
     Returns
     -------
@@ -2724,7 +2726,7 @@ def slit_extended_flux_calibration(
     _ras, _des, _wave = d2w(_xpi, _ypi)
 
     ##########################
-    # Photometry calibration is 1 / sensitivity curve
+    # Photometry calibration is (1 / sensitivity curve)
     phot_corr = 1.0 / np.interp(
         _wave,
         sens["wavelength"],

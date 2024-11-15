@@ -458,6 +458,7 @@ class SpectrumSampler(object):
         scale_disp=1.0,
         velocity_sigma=100.0,
         nsig=4,
+        **kwargs
     ):
         """
         Make an emission line template - *deprecated in favor of*
