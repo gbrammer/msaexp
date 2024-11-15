@@ -563,7 +563,12 @@ class SpectrumSampler(object):
         return res
 
     def bspline_array(
-        self, nspline=13, log=False, by_wavelength=False, get_matrix=True
+        self,
+        nspline=13,
+        log=False,
+        by_wavelength=False,
+        get_matrix=True,
+        extra_orders=False,
     ):
         """
         Initialize bspline templates for continuum fits
@@ -605,6 +610,56 @@ class SpectrumSampler(object):
                 log=log,
                 get_matrix=get_matrix,
             )
+
+        if extra_orders:
+            if get_matrix:
+                if self.sensitivity_2 is not None:
+                    for i in range(nspline):
+                        extra = np.interp(
+                            self.spec_wobs,
+                            self.spec_wobs * 2,
+                            bspl[:, i],
+                            left=0,
+                            right=0,
+                        )
+                        extra *= self.sensitivity_2 / self.sensitivity
+                        bspl[:, i] += extra
+
+                if self.sensitivity_3 is not None:
+                    for i in range(nspline):
+                        extra = np.interp(
+                            self.spec_wobs,
+                            self.spec_wobs * 3,
+                            bspl[:, i],
+                            left=0,
+                            right=0,
+                        )
+                        extra *= self.sensitivity_3 / self.sensitivity
+                        bspl[:, i] += extra
+            else:
+                if self.sensitivity_2 is not None:
+                    for t in bspl:
+                        extra = np.interp(
+                            self.spec_wobs,
+                            self.spec_wobs * 2,
+                            bspl[t].flux,
+                            left=0,
+                            right=0,
+                        )
+                        extra *= self.sensitivity_2 / self.sensitivity
+                        bspl[t].flux += extra
+
+                if self.sensitivity_3 is not None:
+                    for t in bspl:
+                        extra = np.interp(
+                            self.spec_wobs,
+                            self.spec_wobs * 3,
+                            bspl[t].flux,
+                            left=0,
+                            right=0,
+                        )
+                        extra *= self.sensitivity_3 / self.sensitivity
+                        bspl[t].flux += extra
 
         if get_matrix:
             bspl = bspl.T
@@ -786,7 +841,12 @@ class SpectrumSampler(object):
         return fig
 
     def resample_bagpipes_model(
-        self, model_galaxy, model_comp=None, nsig=5, scale_disp=1.3, extra_orders=False,
+        self,
+        model_galaxy,
+        model_comp=None,
+        nsig=5,
+        scale_disp=1.3,
+        extra_orders=False,
     ):
         """
         Resample a `bagpipes` model to the wavelength grid of the spectrum.
