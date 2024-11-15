@@ -2708,7 +2708,14 @@ def slit_extended_flux_calibration(
 
         # The correction nrs1_nrs2 is multiplied to the flux column,
         # so divide from senstivity here
-        sens["sensitivity"] /= sens["nrs1_nrs2"]
+        if threshold < 0:
+            # For threshold. <0, just provide the detector correction.
+            sens["sensitivity"] = 1.0 / sens["nrs1_nrs2"]
+        else:
+            sens["sensitivity"] /= sens["nrs1_nrs2"]
+    else:
+        if threshold < 0:
+            sens["sensitivity"] = 1.0
 
     wcs = slit.meta.wcs
     d2w = wcs.get_transform("detector", "world")
@@ -2727,8 +2734,9 @@ def slit_extended_flux_calibration(
     )
 
     phot_corr[~np.isfinite(phot_corr)] = 0
-    max_sens = np.nanmax(1.0 / phot_corr[phot_corr > 0])
-    phot_corr[phot_corr >= 1.0 / (max_sens * threshold)] = np.nan
+    if threshold >= 0:
+        max_sens = np.nanmax(1.0 / phot_corr[phot_corr > 0])
+        phot_corr[phot_corr >= 1.0 / (max_sens * threshold)] = np.nan
 
     slit.phot_corr = phot_corr
     # slit.data *= phot_corr
