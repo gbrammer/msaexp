@@ -2618,9 +2618,8 @@ def slit_extended_flux_calibration(
     slit,
     sens_file=None,
     prefix="msaexp_sensitivity",
-    version="002",
+    version="001",
     file_template="{prefix}_{grating}_{filter}_{version}.fits",
-    detector_ratio_file="ngc2506_sensitivity_ratio_clear_prism_001.fits",
     threshold=0,
     verbose=True,
     **kwargs,
@@ -2702,34 +2701,14 @@ def slit_extended_flux_calibration(
     sens = grizli.utils.read_catalog(os.path.join(file_path, sens_file))
 
     needs_det_correction = slit.meta.instrument.detector.upper() == "NRS2"
-    needs_det_correction &= slit.meta.instrument.grating.upper() in ["PRISM"]
 
     if needs_det_correction:
-
-        msg = f"slit_extended_flux_calibration: scale for NRS2 {detector_ratio_file}"
+        msg = f"slit_extended_flux_calibration: apply correction for NRS2"
         grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
 
-        ratio_file_path = os.path.join(
-            os.path.dirname(__file__),
-            "data/extended_sensitivity",
-            detector_ratio_file,
-        )
-
-        if os.path.exists(ratio_file_path):
-            detector_ratio = grizli.utils.read_catalog(ratio_file_path)
-
-            sens["sensitivity"] /= np.interp(
-                sens["wavelength"],
-                detector_ratio["wavelength"],
-                detector_ratio["nrs1_nrs2"],
-            )
-        else:
-            msg = (
-                f"slit_extended_flux_calibration: {ratio_file_path} not found"
-            )
-            grizli.utils.log_comment(
-                grizli.utils.LOGFILE, msg, verbose=verbose
-            )
+        # The correction nrs1_nrs2 is multiplied to the flux column,
+        # so divide from senstivity here
+        sens["sensitivity"] /= sens["nrs1_nrs2"]
 
     wcs = slit.meta.wcs
     d2w = wcs.get_transform("detector", "world")
@@ -2752,10 +2731,10 @@ def slit_extended_flux_calibration(
     phot_corr[phot_corr >= 1.0 / (max_sens * threshold)] = np.nan
 
     slit.phot_corr = phot_corr
-    slit.data *= phot_corr
-    slit.err *= phot_corr
-    slit.var_rnoise *= phot_corr**2
-    slit.var_poisson *= phot_corr**2
+    # slit.data *= phot_corr
+    # slit.err *= phot_corr
+    # slit.var_rnoise *= phot_corr**2
+    # slit.var_poisson *= phot_corr**2
 
     return 2
 

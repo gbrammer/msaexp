@@ -872,6 +872,8 @@ class SlitGroup:
         for i, file in enumerate(files):
             slit = jwst.datamodels.open(file)
 
+            slit.phot_corr = np.ones_like(slit.data)
+
             if extended_calibration_kwargs is not None:
                 status = msautils.slit_extended_flux_calibration(
                     slit, **extended_calibration_kwargs
@@ -1339,12 +1341,17 @@ class SlitGroup:
             bar = np.ones_like(sci)
 
         dq = np.array([slit.dq[slit.slice].flatten() * 1 for slit in slits])
+
         var_rnoise = np.array(
             [slit.var_rnoise[slit.slice].flatten() * 1 for slit in slits]
         )
 
         var_poisson = np.array(
             [slit.var_poisson[slit.slice].flatten() * 1 for slit in slits]
+        )
+
+        phot_corr = np.array(
+            [slit.phot_corr[slit.slice].flatten() * 1 for slit in slits]
         )
 
         bad = sci == 0
@@ -1519,6 +1526,7 @@ class SlitGroup:
         #         bad[i, :] |= all_bad
 
         bad |= ~np.isfinite(sci) | (sci == 0)
+        bad |= ~np.isfinite(phot_corr)
 
         if self.grating in ["PRISM"]:
             bad |= sci > PRISM_MAX_VALID
@@ -1547,12 +1555,13 @@ class SlitGroup:
         var_rnoise[~mask] = np.nan
         var_poisson[~mask] = np.nan
 
-        self.sci = sci
+        self.sci = sci * phot_corr
+        self.phot_corr = phot_corr
         self.dq = dq
         self.mask = mask & True
         self.bkg_mask = mask & True
-        self.var_rnoise = var_rnoise
-        self.var_poisson = var_poisson
+        self.var_rnoise = var_rnoise * phot_corr**2
+        self.var_poisson = var_poisson * phot_corr**2
 
         for j, slit in enumerate(slits):
 
