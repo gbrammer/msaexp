@@ -3030,7 +3030,11 @@ class SlitGroup:
                     flat_normalization.append(self.normalization[i, :])
 
                 # path loss
-                if with_pathloss & (fit is not None) & (self.lookup_prf is not None):
+                if (
+                    with_pathloss
+                    & (fit is not None)
+                    & (self.lookup_prf is not None)
+                ):
                     header[f"XPOS{i}"] = (
                         self.slits[i].source_xpos,
                         f"source_xpos of group {exp}",
@@ -3060,7 +3064,7 @@ class SlitGroup:
                         self.wave[i, :],
                         sigma=fit[exp]["sigma"],
                         x_offset=self.slits[i].source_xpos,
-                        order=LOOKUP_PRF_ORDER
+                        order=LOOKUP_PRF_ORDER,
                     )
 
                 else:
@@ -4735,7 +4739,7 @@ def set_lookup_prf(
         with pyfits.open(slit_file) as im:
             grating = im[0].header["GRATING"]
             filter = im[0].header["FILTER"]
-            if im[0].header["EXP_TYPE"] == 'NRS_FIXEDSLIT':
+            if im[0].header["EXP_TYPE"] == "NRS_FIXEDSLIT":
                 fixed_slit = im[0].header["APERNAME"].split("_")[1].lower()
             else:
                 fixed_slit = "s200a1"
