@@ -1822,10 +1822,10 @@ def drizzled_hdu_figure(
             lw=2,
         )
         ap.step(
-            ptab["pfit"] / pmax, xpr, color="r", where="pre", alpha=0.5, lw=1
+            ptab["pfit"] / pmax, xpr, color="coral", where="pre", alpha=0.5, lw=1
         )
         ap.fill_betweenx(
-            xpr + 0.5, xpr * 0.0, ptab["pfit"] / pmax, color="r", alpha=0.2
+            xpr + 0.5, xpr * 0.0, ptab["pfit"] / pmax, color="coral", alpha=0.2
         )
 
         ap.text(
