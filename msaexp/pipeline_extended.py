@@ -338,6 +338,13 @@ def extend_sflat(
 
     sf.dq -= sf.dq & 2**18
 
+    # Reset all
+    msg = f"{log_prefix} {fbase} Set unity SFlat SCI"
+    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+    sf.data = np.ones_like(sf.data)
+    sf.err = np.ones_like(sf.data) * 1.0e-3
+
     # Just reset wavelength metadata, don't add extensions
     head_ = sf.extra_fits.SCI.header
     nflat = sf.data.shape[0]
@@ -671,6 +678,8 @@ def run_pipeline(
     preprocess_kwargs={},
     ranges=EXTENDED_RANGES,
     make_trace_figures=False,
+    run_pathloss=True,
+    run_barshadow=True,
     **kwargs,
 ):
     """
@@ -711,6 +720,12 @@ def run_pipeline(
 
     make_trace_figures : bool
         Make some diagnostic figures
+
+    run_pathloss : bool
+        Run PathLoss step for MSA exposures
+
+    run_barshadow : bool
+        Run BarShadow step for MSA exposures
 
     Returns
     -------
@@ -954,61 +969,68 @@ def run_pipeline(
 
     if ext2d.meta.exposure.type == "NRS_MSASPEC":
 
-        ##########
-        # PathLoss
-        msg = f"{file} NRS_MSASPEC run PathLossStep"
-        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        if run_pathloss:
+            ##########
+            # PathLoss
+            msg = f"{file} NRS_MSASPEC run PathLossStep"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-        path_step = PathLossStep()
-        path_filename = path_step.get_reference_file(flat_corr, "pathloss")
+            path_step = PathLossStep()
+            path_filename = path_step.get_reference_file(flat_corr, "pathloss")
 
-        if full_range is not None:
-            new_path_filename = os.path.basename(path_filename).replace(
-                ".fits", "_ext.fits"
-            )
-
-            if not os.path.exists(new_path_filename):
-                path_hdul = extend_pathloss(
-                    path_filename, full_range=full_range
+            if full_range is not None:
+                new_path_filename = os.path.basename(path_filename).replace(
+                    ".fits", "_ext.fits"
                 )
-                path_hdul.writeto(new_path_filename, overwrite=True)
-                path_hdul.close()
 
-            path_result = path_step.call(
-                flat_corr, override_pathloss=new_path_filename
-            )
-        else:
-            path_result = path_step.call(flat_corr)
+                if not os.path.exists(new_path_filename):
+                    path_hdul = extend_pathloss(
+                        path_filename, full_range=full_range
+                    )
+                    path_hdul.writeto(new_path_filename, overwrite=True)
+                    path_hdul.close()
 
-        ###########
-        # BarShadow
-        msg = f"{file} NRS_MSASPEC run BarShadowStep"
-        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-
-        bar_step = BarShadowStep()
-
-        bar_filename = bar_step.get_reference_file(path_result, "barshadow")
-
-        if full_range is not None:
-            new_bar_filename = os.path.basename(bar_filename).replace(
-                ".fits", "_ext.fits"
-            )
-
-            if not os.path.exists(new_bar_filename):
-                bar_hdul = extend_barshadow(
-                    bar_filename, full_range=full_range
+                path_result = path_step.call(
+                    flat_corr, override_pathloss=new_path_filename
                 )
-                bar_hdul.writeto(new_bar_filename, overwrite=True)
-                bar_hdul.close()
-
-            bar_result = bar_step.call(
-                path_result, override_barshadow=new_bar_filename
-            )
+            else:
+                path_result = path_step.call(flat_corr)
         else:
-            bar_result = bar_step.call(path_result)
+            path_result = flat_corr
 
-        last_result = bar_result
+        if run_barshadow:
+            ###########
+            # BarShadow
+            msg = f"{file} NRS_MSASPEC run BarShadowStep"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
+            bar_step = BarShadowStep()
+
+            bar_filename = bar_step.get_reference_file(
+                path_result, "barshadow"
+            )
+
+            if full_range is not None:
+                new_bar_filename = os.path.basename(bar_filename).replace(
+                    ".fits", "_ext.fits"
+                )
+
+                if not os.path.exists(new_bar_filename):
+                    bar_hdul = extend_barshadow(
+                        bar_filename, full_range=full_range
+                    )
+                    bar_hdul.writeto(new_bar_filename, overwrite=True)
+                    bar_hdul.close()
+
+                bar_result = bar_step.call(
+                    path_result, override_barshadow=new_bar_filename
+                )
+            else:
+                bar_result = bar_step.call(path_result)
+
+            last_result = bar_result
+        else:
+            last_result = path_result
     else:
         last_result = flat_corr
 
@@ -1057,6 +1079,8 @@ def run_pipeline(
         fig.tight_layout(pad=1)
 
         fig.savefig(f"{slit_prefix_}_final.png".lower())
+
+    # result.write(os.path.basename(file).replace('_rate.fits', '_photom.fits'))
 
     ########
     # Write calibrated slitlet files
