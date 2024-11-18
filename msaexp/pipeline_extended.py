@@ -610,7 +610,7 @@ def extend_pathloss(
 
         max_wavelength = h[crval] + h[naxis] * h[cdelt]
         if max_wavelength / to_meters < full_range[1]:
-            h[cdelt] = ( full_range[1] * to_meters - h[crval] ) / h[naxis]
+            h[cdelt] = (full_range[1] * to_meters - h[crval]) / h[naxis]
 
     return hdu
 
@@ -784,7 +784,7 @@ def run_pipeline(
         )
         new_waverange = new_waverange.replace(".asdf", "_ext.asdf")
 
-        print(f'extend_wavelengthrange: {new_waverange}')
+        print(f"extend_wavelengthrange: {new_waverange}")
         if not os.path.exists(new_waverange):
             extend_wavelengthrange(
                 ref_file=os.path.basename(
