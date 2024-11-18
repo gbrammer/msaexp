@@ -597,12 +597,20 @@ def extend_pathloss(
             continue
 
         if h["NAXIS"] == 3:
-            key = "CRVAL3"
+            crval = "CRVAL3"
+            cdelt = "CDELT3"
+            naxis = "NAXIS3"
         else:
-            key = "CRVAL1"
+            crval = "CRVAL1"
+            cdelt = "CDELT1"
+            naxis = "NAXIS1"
 
-        to_meters = 1.0e-6 if h[key] < 1.0e-5 else 1.0
-        h[key] = full_range[0] * to_meters
+        to_meters = 1.0e-6 if h[crval] < 1.0e-5 else 1.0
+        h[crval] = full_range[0] * to_meters
+
+        max_wavelength = h[crval] + h[naxis] * h[cdelt]
+        if max_wavelength / to_meters < full_range[1]:
+            h[cdelt] = ( full_range[1] * to_meters - h[crval] ) / h[naxis]
 
     return hdu
 
@@ -776,6 +784,7 @@ def run_pipeline(
         )
         new_waverange = new_waverange.replace(".asdf", "_ext.asdf")
 
+        print(f'extend_wavelengthrange: {new_waverange}')
         if not os.path.exists(new_waverange):
             extend_wavelengthrange(
                 ref_file=os.path.basename(
@@ -967,36 +976,38 @@ def run_pipeline(
         override_dflat=flat_reference_files["dflat"],
     )
 
-    if ext2d.meta.exposure.type == "NRS_MSASPEC":
+    if run_pathloss:
+        ##########
+        # PathLoss
+        msg = f"{file} NRS_MSASPEC run PathLossStep"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-        if run_pathloss:
-            ##########
-            # PathLoss
-            msg = f"{file} NRS_MSASPEC run PathLossStep"
-            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        path_step = PathLossStep()
+        path_filename = path_step.get_reference_file(flat_corr, "pathloss")
 
-            path_step = PathLossStep()
-            path_filename = path_step.get_reference_file(flat_corr, "pathloss")
+        if full_range is not None:
+            new_path_filename = os.path.basename(path_filename).replace(
+                ".fits", "_ext.fits"
+            )
 
-            if full_range is not None:
-                new_path_filename = os.path.basename(path_filename).replace(
-                    ".fits", "_ext.fits"
+            if not os.path.exists(new_path_filename):
+                path_hdul = extend_pathloss(
+                    path_filename, full_range=full_range
                 )
+                path_hdul.writeto(new_path_filename, overwrite=True)
+                path_hdul.close()
 
-                if not os.path.exists(new_path_filename):
-                    path_hdul = extend_pathloss(
-                        path_filename, full_range=full_range
-                    )
-                    path_hdul.writeto(new_path_filename, overwrite=True)
-                    path_hdul.close()
-
-                path_result = path_step.call(
-                    flat_corr, override_pathloss=new_path_filename
-                )
-            else:
-                path_result = path_step.call(flat_corr)
+            path_result = path_step.call(
+                flat_corr, override_pathloss=new_path_filename
+            )
         else:
-            path_result = flat_corr
+            path_result = path_step.call(flat_corr)
+    else:
+        path_result = flat_corr
+
+    last_result = path_result
+
+    if ext2d.meta.exposure.type == "NRS_MSASPEC":
 
         if run_barshadow:
             ###########
@@ -1029,10 +1040,6 @@ def run_pipeline(
                 bar_result = bar_step.call(path_result)
 
             last_result = bar_result
-        else:
-            last_result = path_result
-    else:
-        last_result = flat_corr
 
     ########
     # Photom
