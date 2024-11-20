@@ -2820,9 +2820,23 @@ def fixed_slit_flat_field(
         get_matrix=True,
     )
 
+    # Wavelength-dependent?
+    if fs_data["wdf"] > 0:
+        wspl = grizli.utils.bspline_templates(
+            slit_data["wave"].flatten(),
+            df=fs_data["wdf"],
+            minmax=fs_data["wminmax"],
+            get_matrix=True,
+        )
+
+        A = np.vstack([bspl.T * row for row in wspl.T]).T
+    else:
+        A = bspl
+
     coeffs = np.array(fs_data["coeffs"])
-    flat_profile = bspl.dot(coeffs).reshape(slit.data.shape)
+    flat_profile = A.dot(coeffs).reshape(slit.data.shape)
     flat_profile[flat_profile < 0] = 0.0
+    flat_profile[flat_profile > 1.5] = 0.0
 
     if apply:
         if (not hasattr(slit, "flat_profile")) | force:
