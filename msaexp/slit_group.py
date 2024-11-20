@@ -1,0 +1,738 @@
+import numpy as np
+import astropy.io.fits as pyfits
+import os
+import glob
+import msaexp.utils as msautils
+from msaexp import pipeline_extended
+
+from tqdm import tqdm
+
+import jwst.datamodels
+from grizli import utils
+import matplotlib.pyplot as plt
+
+# Standard error on the median
+SE_MEDIAN = 1.2533
+
+from msaexp.pipeline_extended import (
+    extend_wavelengthrange,
+    step_reference_files,
+    EXTENDED_RANGES,
+)
+
+ranges = EXTENDED_RANGES
+ranges["CLEAR_PRISM"] = [0.5, 5.7]
+ranges["F290LP_G395M"] = [2.5, 5.6]
+
+
+class MultiSlitGroup:
+    def __init__(self, file="jw02750002001_03101_00001_nrs1_photom.fits", **kwargs):
+        """ """
+        self.file = file
+
+        self.hdu = pyfits.open(file)
+
+        self.source_name = []
+        self.slit_id = []
+        self.extver = []
+
+        for i, ext in enumerate(self.hdu):
+            h = ext.header
+            if "EXTNAME" not in h:
+                continue
+
+            if h["EXTNAME"] == "SCI":
+                self.source_name.append(h["SRCNAME"])
+                self.slit_id.append(h["SLITID"])
+                self.extver.append(h["EXTVER"])
+
+    def get_slit(self, idx=1, source_name=None, slit_id=None):
+        """ """
+        if source_name is not None:
+            if source_name in self.source_name:
+                idx = self.extver[self.source_name.index(source_name)]
+            else:
+                return None
+
+        if slit_id is not None:
+            if slit_id in self.slit_id:
+                idx = self.extver[self.slit_id.index(slit_id)]
+            else:
+                return None
+
+        ext = [
+            "SCI",
+            "DQ",
+            "ERR",
+            "WAVELENGTH",
+            "BARSHADOW",
+            "VAR_POISSON",
+            "VAR_RNOISE",
+            "VAR_FLAT",
+            "PATHLOSS_PS",
+            "PATHLOSS_UN",
+        ]
+
+        hdul = [self.hdu[0]]
+        for e in ext:
+            if (e, idx) in self.hdu:
+                hdul.append(self.hdu[e, idx].copy())
+
+        hdul = pyfits.HDUList(hdul)
+
+        # hdul = pyfits.HDUList(
+        #     [self.hdu[0]] +
+        #     [self.hdu[e, idx].copy() for e in ext]
+        # )
+
+        for i in range(len(hdul) - 1):
+            hdul[i + 1].header["EXTVER"] = 1
+
+        dm = jwst.datamodels.open(hdul)
+        return dm.slits[0]
+
+
+class NirspecCalibrated:
+    def __init__(
+        self,
+        file="jw02750002001_03101_00001_nrs1_rate.fits",
+        pedestal=0.0,
+        read_slitlet=False,
+        write_results=True,
+        **kwargs,
+    ):
+
+        self.file = file
+
+        with pyfits.open(file) as hdu:
+            self.rate_data = hdu["SCI"].data
+            self.h0 = hdu[0].header
+            self.h1 = hdu["SCI"].header
+
+        slitlet_file = self.file.replace("_rate.fits", "_slitlet.fits")
+        if os.path.exists(slitlet_file) & (read_slitlet):
+            self.read_from_slitlet_file()
+        else:
+            self.run_pipeline(**kwargs)
+            self.fs_extractor = MultiSlitGroup(self.fs_photom_file)
+            self.extractor = MultiSlitGroup(self.photom_file)
+            self.slits_to_full_frame(**kwargs)
+
+            if write_results:
+                hdul = self.write_full_file()
+
+        self.set_mask(**kwargs)
+        self.mask_stuck_closed(**kwargs)
+
+        self.pedestal = pedestal
+        self.global_flat = np.ones((2048, 2048))
+        self.FLAT_ON = 1
+
+    @property
+    def grating(self):
+        return self.h0["GRATING"]
+
+    @property
+    def filter(self):
+        return self.h0["FILTER"]
+
+    @property
+    def detector(self):
+        return self.h0["DETECTOR"]
+
+    def __getitem__(self, key):
+        """
+        Get item from ``full`` dictionary
+        """
+        if key == "mask":
+            return self.mask
+        elif key == "bkg":
+            return self.full["data"] - self.pedestal * self.flat_guess
+        elif key == "corr":
+            return (
+                (self.full["data"] - self.pedestal * self.flat_guess)
+                * 1.0
+                / self.full["bar"]
+                / self.global_flat**self.FLAT_ON
+            )
+        elif key == "corr_err":
+            return self.full["err"] / self.full["bar"] / self.global_flat
+        elif key == "corr_rnoise":
+            p = self.FLAT_ON * 2
+            return self.full["var_rnoise"] / self.full["bar"] ** 2 / self.global_flat**p
+        elif key == "corr_poisson":
+            p = self.FLAT_ON * 2
+            return (
+                self.full["var_poisson"] / self.full["bar"] ** 2 / self.global_flat**p
+            )
+        elif key in self.full:
+            return self.full[key]
+        else:
+            print(f"{key} not found")
+            return None
+
+    def run_pipeline(self, ranges=ranges, **kwargs):
+        file = self.file
+
+        self.photom_file = file.replace("rate.fits", "photom.fits")
+
+        if os.path.exists(self.photom_file):
+            print("Read ", self.photom_file)
+            photom = jwst.datamodels.open(self.photom_file)
+            print(f"{len(photom.slits)} slits")
+        else:
+            photom = pipeline_extended.run_pipeline(
+                file,
+                slit_index=0,
+                all_slits=True,
+                write_output=False,
+                set_log=True,
+                skip_existing_log=False,
+                undo_flat=True,
+                preprocess_kwargs={},
+                ranges=ranges,
+                make_trace_figures=False,
+                run_pathloss=False,
+                **kwargs,
+            )
+
+            print("write file")
+            photom.write(self.photom_file)
+
+        self.fs_photom_file = file.replace("rate.fits", "fs_photom.fits")
+
+        if os.path.exists(self.fs_photom_file):
+            print("Read ", self.fs_photom_file)
+            fs_photom = jwst.datamodels.open(self.fs_photom_file)
+        else:
+            _file = file
+
+            with pyfits.open(_file, mode="update") as _im:
+                ORIG_EXPTYPE = _im[0].header["EXP_TYPE"]
+                if ORIG_EXPTYPE != "NRS_FIXEDSLIT":
+                    print(f"Set {_file} MSA > FIXEDSLIT keywords")
+                    _im[0].header["EXP_TYPE"] = "NRS_FIXEDSLIT"
+                    _im[0].header["APERNAME"] = "NRS_S200A2_SLIT"
+                    _im[0].header["OPMODE"] = "FIXEDSLIT"
+                    _im[0].header["FXD_SLIT"] = "S200A2"
+                    _im.flush()
+
+            fs_photom = pipeline_extended.run_pipeline(
+                _file,
+                slit_index=0,
+                all_slits=True,
+                write_output=False,
+                set_log=True,
+                skip_existing_log=False,
+                undo_flat=True,
+                preprocess_kwargs={},
+                ranges=ranges,
+                make_trace_figures=False,
+                run_pathloss=False,
+                **kwargs,
+            )
+
+            with pyfits.open(_file, mode="update") as _im:
+                if ORIG_EXPTYPE == "NRS_MSASPEC":
+                    print(f"Reset {_file} FIXEDSLIT > MSA keywords")
+                    _im[0].header["EXP_TYPE"] = "NRS_MSASPEC"
+                    _im[0].header["APERNAME"] = "NRS_FULL_MSA"
+                    _im[0].header["OPMODE"] = "MSASPEC"
+                    _im[0].header.pop("FXD_SLIT")
+                    _im.flush()
+
+            fs_photom.write(self.fs_photom_file)
+
+        self.photom = photom
+        self.fs_photom = fs_photom
+
+        for slit in self.fs_photom.slits:
+            flat_profile = msautils.fixed_slit_flat_field(slit, apply=True)
+
+    def slits_to_full_frame(self, area_correction=False, shutter_pad=0.5, **kwargs):
+        """
+        tbd
+        """
+        sh = (2048, 2048)
+        full = {
+            "data": np.zeros(sh, dtype=np.float32),
+            "err": np.zeros(sh, dtype=np.float32),
+            "var_rnoise": np.zeros(sh, dtype=np.float32),
+            "var_poisson": np.zeros(sh, dtype=np.float32),
+            "yslit": np.zeros(sh, dtype=np.float32),
+            "wave": np.zeros(sh, dtype=np.float32),
+            "bar": np.zeros(sh, dtype=np.float32),
+            "nexp": np.zeros(sh, dtype=int),
+            "num_shutters": np.zeros(sh, dtype=int),
+            "exp_index": np.zeros(sh, dtype=int),
+            "slit": np.zeros((3, 2048, 2048), dtype=int),
+        }
+
+        self.with_pixelarea = area_correction
+
+        counter = 0
+
+        self.slit_counter = []
+        self.slit_names = []
+        self.slit_slices = []
+
+        for slit_group in [self.fs_photom, self.photom]:
+            progress = tqdm(enumerate(slit_group.slits))
+            for i, slit in progress:
+                counter += 1
+                progress.set_description(f"Process slit #{counter} {slit.name}")
+
+                slit_data = msautils.get_slit_data(slit)
+                if slit_data["num_shutters"] > 3:
+                    print(i, slit_data["num_shutters"])
+
+                if slit_data["num_shutters"] > 8:
+                    continue
+
+                shutter_center = slit_data["shutter_y"] - np.nanmedian(
+                    slit_data["shutter_y"], axis=0
+                )
+
+                # ymax = np.floor(np.nanmax(np.abs(shutter_center)))
+                try:
+                    yhi = np.nanmax(shutter_center[np.isfinite(slit.data)])
+                    ylo = np.nanmin(shutter_center[np.isfinite(slit.data)])
+                except:
+                    continue
+
+                edge_mask = shutter_center > (ylo + shutter_pad)
+                edge_mask &= shutter_center < (yhi - shutter_pad)
+                edge_mask &= slit_data["bar"] > 0
+
+                MSA_FAILED_OPEN = jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"]
+                stuck_open = ((slit.dq & MSA_FAILED_OPEN) > 0) & np.isfinite(slit.data)
+
+                if stuck_open.sum() > 0:
+                    print(
+                        i,
+                        counter,
+                        slit.name,
+                        stuck_open.sum(),
+                        "Has failed open shutters",
+                    )
+
+                sly, slx = slit_data["sly"], slit_data["slx"]
+                full["wave"][sly, slx] += slit_data["wave"] * edge_mask
+                full["bar"][sly, slx] += slit_data["bar"] * edge_mask
+                full["nexp"][sly, slx] += (slit_data["bar"] > 0) * edge_mask
+                full["num_shutters"][sly, slx] += slit_data["num_shutters"] * edge_mask
+                full["exp_index"][sly, slx] += counter * edge_mask
+
+                self.slit_counter.append(counter)
+                self.slit_names.append(slit.name.strip())
+                self.slit_slices.append((sly, slx))
+
+                if slit.name in ["S200A1", "S200A2", "S200B1", "S400A1", "S1600A1"]:
+                    full["slit"][0, sly, slx] = 5 * edge_mask
+                else:
+                    full["slit"][0, sly, slx] = slit.quadrant * edge_mask
+                    full["slit"][1, sly, slx] = slit.xcen * edge_mask
+                    full["slit"][2, sly, slx] = slit.ycen * edge_mask
+
+                fslit = slit  # photom.slits[i]
+                fslit_data = fslit.data * 1
+                if hasattr(fslit, "barshadow"):
+                    if fslit.barshadow.shape[0] == 0:
+                        fslit_bar = np.ones_like(fslit_data)
+                    else:
+                        fslit_bar = fslit.barshadow * 1
+                else:
+                    fslit_bar = np.ones_like(fslit_data)
+
+                if fslit.source_type is None:
+                    path_data = fslit.pathloss_uniform
+                else:
+                    path_data = fslit.pathloss_point
+
+                if path_data.shape[0] == 0:
+                    fslit_path = np.ones_like(fslit_data)
+                else:
+                    fslit_path = path_data * 1
+
+                fslit_rnoise = fslit.var_rnoise * 1
+                fslit_poisson = fslit.var_poisson * 1
+                fslit_msk = edge_mask & np.isfinite(fslit_data)
+
+                fslit_data[~fslit_msk] = 0.0
+                fslit_rnoise[~fslit_msk] = 0.0
+                fslit_poisson[~fslit_msk] = 0.0
+                fslit_bar[~fslit_msk] = 0
+                fslit_path[~fslit_msk] = 1
+
+                yslit_i = slit_data["yslit"]
+                yslit_i[~fslit_msk] = 0
+
+                if area_correction:
+                    fslit_scale = fslit.meta.photometry.pixelarea_steradians * 1.0e12
+                else:
+                    fslit_scale = 1.0
+
+                fslit_scale = fslit_scale * fslit_bar * fslit_path
+
+                full["data"][sly, slx] += fslit_data * fslit_scale
+                full["var_rnoise"][sly, slx] += fslit_rnoise * fslit_scale**2
+                full["var_poisson"][sly, slx] += fslit_poisson * fslit_scale**2
+                full["yslit"][sly, slx] += yslit_i
+
+        self.full = full
+        self.flat_guess = self.full["data"] / self.rate_data
+
+        self.mask = np.isfinite(full["data"]) & (full["data"] != 0)
+        self.stuck_mask = self.mask * 1 > 10
+
+    def read_from_slitlet_file(self, **kwargs):
+        """ """
+        slitlet_file = self.file.replace("_rate.fits", "_slitlet.fits")
+        print(f"Read from {slitlet_file}")
+
+        full = {}
+        with pyfits.open(slitlet_file) as hdul:
+            for ext in hdul[1:]:
+                full[ext.header["EXTNAME"].lower()] = hdul[ext].data * 1
+
+            nslits = hdul[0].header["NSLITS"]
+            self.slit_counter = []
+            self.slit_names = []
+            self.slit_slices = []
+
+            h0 = hdul[0].header
+            for k in h0:
+                if k.startswith("SLIT"):
+                    c = int(k[4:])
+                    self.slit_counter.append(c)
+                    self.slit_names.append(h0[k])
+
+                    sly = slice(h0[f"SY0_{c:04d}"], h0[f"SY1_{c:04d}"])
+                    slx = slice(h0[f"SX0_{c:04d}"], h0[f"SX1_{c:04d}"])
+                    self.slit_slices.append((sly, slx))
+
+        self.full = full
+
+        self.flat_guess = self.full["data"] / self.rate_data
+
+        self.mask = np.isfinite(full["data"]) & (full["data"] != 0)
+        self.stuck_mask = self.mask * 1 > 10
+
+    def set_global_flat(self):
+        """
+        tbd
+        """
+        sq, sx, sy = self["slit"]
+        msk = (self["nexp"] == 1) & (sq > 0) & (sq < 5)
+
+        mskf = msk.flatten()
+        sqf = sq.flatten()
+        sxf = sx.flatten()
+        syf = sy.flatten()
+
+        unq = utils.Unique(sqf[mskf], verbose=False)
+
+        full_wave = self["wave"].flatten()
+
+        global_flat = np.ones((2048, 2048)).flatten()
+
+        for qi in unq.values:
+            flat_file = f"flat_coeffs_{self.h0['DETECTOR']}_q{qi}.fits".lower()
+            if not os.path.exists(flat_file):
+                continue
+
+            print(f"Compute flat for quadrant {qi} with {flat_file}")
+
+            ftab = utils.read_catalog(flat_file)
+
+            xlim = (ftab.meta["XMIN"], ftab.meta["XMAX"])
+            ylim = (ftab.meta["YMIN"], ftab.meta["YMAX"])
+
+            xg = np.linspace(*xlim, xlim[1] - xlim[0])
+            yg = np.linspace(*ylim, ylim[1] - ylim[0])
+            xg, yg = np.meshgrid(xg, yg)
+
+            gxbspl = utils.bspline_templates(
+                xg.flatten(), df=ftab.meta["DFX"], minmax=xlim, get_matrix=True
+            )
+            gybspl = utils.bspline_templates(
+                yg.flatten(), df=ftab.meta["DFY"], minmax=ylim, get_matrix=True
+            )
+
+            gbspl = np.vstack([gxbspl.T * row for row in gybspl.T]).T
+
+            gmodels = []
+            for c in ftab["coeffs"]:
+                gmodels.append(gbspl.dot(c).reshape(xg.shape))
+
+            gmodels = np.array(gmodels)
+
+            qix = np.where(mskf)[0][unq[qi]]
+            unx = utils.Unique(sxf[qix], verbose=False)
+
+            for xi in unx.values:
+                unxi = unx[xi]
+                uny = utils.Unique(syf[qix][unxi], verbose=False)
+                for yi in uny.values:
+                    # print(qi, xi, yi)
+                    ixi = qix[unxi][uny[yi]]
+                    flat_ = gmodels[:, yi, xi]
+                    fok = flat_ > 0
+                    global_flat[ixi] = np.interp(
+                        full_wave[ixi], ftab["wave"][fok], flat_[fok]
+                    )
+
+        global_flat[global_flat <= 0] = 1.0
+
+        self.global_flat = global_flat.reshape((2048, 2048))
+
+    def write_full_file(self, overwrite=True, **kwargs):
+        """
+        TBD
+        """
+
+        hdul = [pyfits.PrimaryHDU(header=self.h0.copy())]
+
+        hdul[0].header["WITHPIXA"] = self.with_pixelarea
+
+        hdul[0].header["NSLITS"] = len(self.slit_counter)
+        for i, name_, (sly, slx) in zip(
+            self.slit_counter, self.slit_names, self.slit_slices
+        ):
+            hdul[0].header[f"SLIT{i:04d}"] = name_
+            hdul[0].header[f"SX0_{i:04d}"] = slx.start
+            hdul[0].header[f"SX1_{i:04d}"] = slx.stop
+            hdul[0].header[f"SY0_{i:04d}"] = sly.start
+            hdul[0].header[f"SY1_{i:04d}"] = sly.stop
+
+        # hdul[0].header["PEDESTAL"] = self.pedestal
+
+        for k in self.full:
+            hdul.append(pyfits.ImageHDU(self.full[k], name=k))
+
+        for k in self.h1:
+            if k in ["COMMENT", ""]:
+                continue
+            if k not in hdul[1].header:
+                hdul[1].header[k] = self.h1[k], self.h1.comments[k]
+
+        hdul = pyfits.HDUList(hdul)
+
+        slitlet_file = self.file.replace("_rate.fits", "_slitlet.fits")
+        print(f"Write {slitlet_file}")
+
+        if os.path.exists(slitlet_file):
+            if overwrite:
+                hdul.writeto(slitlet_file, overwrite=overwrite)
+        else:
+            hdul.writeto(slitlet_file, overwrite=overwrite)
+
+        return hdul
+
+    def set_mask(
+        self,
+        min_yslit=2.0,
+        bar_threshold=0.35,
+        low_sigma=-3,
+        keep_fixed_slits=["S200A1", "S200A2", "S200B1"],
+        **kwargs,
+    ):
+        """
+        tbd
+        """
+        yp, xp = np.indices(self.rate_data.shape)
+
+        msk = self["nexp"] == 1
+        msk &= self["bar"] > bar_threshold
+        msk &= self["exp_index"] > 0
+
+        mask_sources = self["num_shutters"] > 2
+        mask_sources &= np.abs(self["yslit"]) < min_yslit
+        msk &= ~mask_sources
+
+        fs_ind = []
+        for i, sname in enumerate(self.slit_names):
+            if not sname.startswith("S"):
+                break
+            elif sname not in keep_fixed_slits:
+                ind = self.slit_counter[self.slit_names.index(sname)]
+                print(f"exclude {sname} index={ind}")
+                fs_ind.append(ind)
+
+        msk &= ~np.isin(self["exp_index"], fs_ind)
+        msk &= self["data"] > low_sigma * np.sqrt(self.full["var_rnoise"])
+
+        self.mask = msk
+
+    def mask_stuck_closed(self, prism_threshold=0.28, plot=False, **kwargs):
+        """ """
+        low = self.mask & (self["data"] < 2 * np.sqrt(self["var_rnoise"]))
+        ind = utils.Unique(self["exp_index"][low], verbose=False)
+        all_ind = utils.Unique(self["exp_index"][self.mask], verbose=False)
+
+        low_fraction = []
+        for i, v in enumerate(ind.values):
+            low_fraction.append(ind.counts[i] / all_ind.counts[all_ind.values.index(v)])
+
+        if self.h0["GRATING"] == "PRISM":
+            bad_slits = np.array(ind.values)[np.array(low_fraction) > prism_threshold]
+        else:
+            bad_slits = np.array(ind.values)[np.array(low_fraction) > 0.99]
+
+        self.bad_slits = bad_slits.tolist()
+
+        print("bad slits (stuck closed?): ", bad_slits)
+        self.stuck_mask = np.isin(self["exp_index"], bad_slits)
+
+        if plot:
+            plt.scatter(
+                ind.values,
+                low_fraction,
+                c=np.isin(ind.values, bad_slits),
+                vmin=0,
+                vmax=1.5,
+            )
+
+    def plot_slit(self, counter=1, slit_name=None, aspect="auto", **kwargs):
+        """ """
+
+        idx = self.slit_counter.index(counter)
+
+        if slit_name is not None:
+            idx = self.slit_names.index(str(slit_name))
+
+        fig, axes = plt.subplots(3, 1, figsize=(10, 6), sharex=True, sharey=True)
+
+        sly, slx = self.slit_slices[idx]
+        axes[0].imshow(self["data"][sly, slx], aspect=aspect, **kwargs)
+        axes[1].imshow(self["corr"][sly, slx], aspect=aspect, **kwargs)
+        axes[2].imshow(
+            self["corr"][sly, slx] * self.mask[sly, slx], aspect=aspect, **kwargs
+        )
+
+        axes[0].set_ylabel("data")
+        axes[1].set_ylabel("bar")
+        axes[2].set_ylabel("masked")
+
+        axes[0].set_title(f'slit #{self.slit_counter[idx]}: "{self.slit_names[idx]}"')
+
+        fig.tight_layout(pad=1)
+
+    def percentile_bins(
+        self,
+        sample=0.5,
+        pvals=[5, 16, 50, 84, 95],
+        extra=None,
+        key="corr",
+        column_prefix="p",
+        **kwargs,
+    ):
+        """ """
+
+        wgrid = msautils.get_standard_wavelength_grid(
+            sample=sample,
+            grating=self.h0["GRATING"],
+        )
+        wbins = msautils.array_to_bin_edges(wgrid)
+        nbin = len(wgrid)
+        xgrid = np.linspace(0, 1, nbin)
+
+        mask = self.mask & (~self.stuck_mask)
+        if extra is not None:
+            mask &= extra
+
+        full_wave = self["wave"]
+        so = full_wave[mask]
+        corr = self[key]
+
+        perc_data = []
+        npix = []
+
+        for i in range(nbin):
+            xsub = mask & (full_wave >= wbins[i]) & (full_wave < wbins[i + 1])
+            if xsub.sum() == 0:
+                perc_data.append(np.zeros(len(pvals)))
+                npix.append(0)
+            else:
+                perc_data.append(np.percentile(corr[xsub], pvals))
+                npix.append(xsub.sum())
+
+        perc_data = np.array(perc_data)
+
+        tab = utils.GTable(perc_data, names=[f"{column_prefix}{v}" for v in pvals])
+        tab["wave"] = wgrid
+        tab["grid"] = xgrid
+        tab[f"{column_prefix}npix"] = npix
+        tab[f"{column_prefix}err"] = (
+            (perc_data[:, 2] - perc_data[:, 1]) / np.sqrt(npix) * SE_MEDIAN
+        )
+        return tab
+
+    def percentile_table(
+        self,
+        sample=0.5,
+        pvals=[5, 16, 50, 84, 95],
+        make_plot=False,
+        extra=None,
+        **kwargs,
+    ):
+        """ """
+
+        tab = self.percentile_bins(sample=sample, pvals=pvals, extra=None)
+
+        yp, xp = np.indices((2048, 2048))
+
+        btab = self.percentile_bins(
+            sample=sample, pvals=pvals, extra=(yp < 1000), column_prefix="b"
+        )
+
+        ttab = self.percentile_bins(
+            sample=sample, pvals=pvals, extra=(yp > 1100), column_prefix="t"
+        )
+
+        for t in [btab, ttab]:
+            for c in t.colnames:
+                if c not in tab.colnames:
+                    tab[c] = t[c]
+
+        full_wave = self["wave"]
+
+        full_corr_med = np.interp(full_wave, tab["wave"], tab["p50"])
+        full_corr_lo = np.interp(full_wave, tab["wave"], tab[f"p{pvals[0]}"])
+
+        self.full_corr_med = full_corr_med
+        self.full_corr_lo = full_corr_lo
+
+        threshold_mask = self["corr"] < (
+            full_corr_med + (full_corr_med - full_corr_lo) * 2
+        )
+
+        threshold_mask &= self["corr"] > (
+            full_corr_med - (full_corr_med - full_corr_lo) * 1.5
+        )
+
+        self.percentiles = tab
+
+        self.threshold_mask = threshold_mask
+
+        return tab
+
+
+def run_all():
+    import glob
+    from importlib import reload
+    import slit_group
+
+    reload(slit_group)
+    import matplotlib.pyplot as plt
+
+    plt.rcParams["backend"] = "tkagg"
+    plt.ioff()
+
+    files = glob.glob("*nrs1_rate.fits")
+    files.sort()
+
+    for file in files:
+        grp = slit_group.NirspecCalibrated(
+            file, read_slitlet=True, make_plot=False, area_correction=False
+        )
