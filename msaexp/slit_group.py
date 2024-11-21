@@ -26,7 +26,9 @@ ranges["F290LP_G395M"] = [2.5, 5.6]
 
 
 class MultiSlitGroup:
-    def __init__(self, file="jw02750002001_03101_00001_nrs1_photom.fits", **kwargs):
+    def __init__(
+        self, file="jw02750002001_03101_00001_nrs1_photom.fits", **kwargs
+    ):
         """ """
         self.file = file
 
@@ -159,11 +161,17 @@ class NirspecCalibrated:
             return self.full["err"] / self.full["bar"] / self.global_flat
         elif key == "corr_rnoise":
             p = self.FLAT_ON * 2
-            return self.full["var_rnoise"] / self.full["bar"] ** 2 / self.global_flat**p
+            return (
+                self.full["var_rnoise"]
+                / self.full["bar"] ** 2
+                / self.global_flat**p
+            )
         elif key == "corr_poisson":
             p = self.FLAT_ON * 2
             return (
-                self.full["var_poisson"] / self.full["bar"] ** 2 / self.global_flat**p
+                self.full["var_poisson"]
+                / self.full["bar"] ** 2
+                / self.global_flat**p
             )
         elif key in self.full:
             return self.full[key]
@@ -249,7 +257,9 @@ class NirspecCalibrated:
         for slit in self.fs_photom.slits:
             flat_profile = msautils.fixed_slit_flat_field(slit, apply=True)
 
-    def slits_to_full_frame(self, area_correction=False, shutter_pad=0.5, **kwargs):
+    def slits_to_full_frame(
+        self, area_correction=False, shutter_pad=0.5, **kwargs
+    ):
         """
         tbd
         """
@@ -280,7 +290,9 @@ class NirspecCalibrated:
             progress = tqdm(enumerate(slit_group.slits))
             for i, slit in progress:
                 counter += 1
-                progress.set_description(f"Process slit #{counter} {slit.name}")
+                progress.set_description(
+                    f"Process slit #{counter} {slit.name}"
+                )
 
                 slit_data = msautils.get_slit_data(slit)
                 if slit_data["num_shutters"] > 3:
@@ -304,8 +316,12 @@ class NirspecCalibrated:
                 edge_mask &= shutter_center < (yhi - shutter_pad)
                 edge_mask &= slit_data["bar"] > 0
 
-                MSA_FAILED_OPEN = jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"]
-                stuck_open = ((slit.dq & MSA_FAILED_OPEN) > 0) & np.isfinite(slit.data)
+                MSA_FAILED_OPEN = jwst.datamodels.dqflags.pixel[
+                    "MSA_FAILED_OPEN"
+                ]
+                stuck_open = ((slit.dq & MSA_FAILED_OPEN) > 0) & np.isfinite(
+                    slit.data
+                )
 
                 if stuck_open.sum() > 0:
                     print(
@@ -320,14 +336,22 @@ class NirspecCalibrated:
                 full["wave"][sly, slx] += slit_data["wave"] * edge_mask
                 full["bar"][sly, slx] += slit_data["bar"] * edge_mask
                 full["nexp"][sly, slx] += (slit_data["bar"] > 0) * edge_mask
-                full["num_shutters"][sly, slx] += slit_data["num_shutters"] * edge_mask
+                full["num_shutters"][sly, slx] += (
+                    slit_data["num_shutters"] * edge_mask
+                )
                 full["exp_index"][sly, slx] += counter * edge_mask
 
                 self.slit_counter.append(counter)
                 self.slit_names.append(slit.name.strip())
                 self.slit_slices.append((sly, slx))
 
-                if slit.name in ["S200A1", "S200A2", "S200B1", "S400A1", "S1600A1"]:
+                if slit.name in [
+                    "S200A1",
+                    "S200A2",
+                    "S200B1",
+                    "S400A1",
+                    "S1600A1",
+                ]:
                     full["slit"][0, sly, slx] = 5 * edge_mask
                 else:
                     full["slit"][0, sly, slx] = slit.quadrant * edge_mask
@@ -368,7 +392,9 @@ class NirspecCalibrated:
                 yslit_i[~fslit_msk] = 0
 
                 if area_correction:
-                    fslit_scale = fslit.meta.photometry.pixelarea_steradians * 1.0e12
+                    fslit_scale = (
+                        fslit.meta.photometry.pixelarea_steradians * 1.0e12
+                    )
                 else:
                     fslit_scale = 1.0
 
@@ -441,9 +467,12 @@ class NirspecCalibrated:
             if not os.path.exists(flat_file):
                 continue
 
-            print(f"Compute flat for quadrant {qi} with {flat_file}")
-
             ftab = utils.read_catalog(flat_file)
+            msg = f"Compute flat for quadrant {qi} with {flat_file}"
+            if 'MTIME' in ftab.meta:
+                msg += f" (mtime: {ftab.meta['MTIME']})"
+                
+            print(msg)
 
             xlim = (ftab.meta["XMIN"], ftab.meta["XMAX"])
             ylim = (ftab.meta["YMIN"], ftab.meta["YMAX"])
@@ -572,10 +601,14 @@ class NirspecCalibrated:
 
         low_fraction = []
         for i, v in enumerate(ind.values):
-            low_fraction.append(ind.counts[i] / all_ind.counts[all_ind.values.index(v)])
+            low_fraction.append(
+                ind.counts[i] / all_ind.counts[all_ind.values.index(v)]
+            )
 
         if self.h0["GRATING"] == "PRISM":
-            bad_slits = np.array(ind.values)[np.array(low_fraction) > prism_threshold]
+            bad_slits = np.array(ind.values)[
+                np.array(low_fraction) > prism_threshold
+            ]
         else:
             bad_slits = np.array(ind.values)[np.array(low_fraction) > 0.99]
 
@@ -601,20 +634,26 @@ class NirspecCalibrated:
         if slit_name is not None:
             idx = self.slit_names.index(str(slit_name))
 
-        fig, axes = plt.subplots(3, 1, figsize=(10, 6), sharex=True, sharey=True)
+        fig, axes = plt.subplots(
+            3, 1, figsize=(10, 6), sharex=True, sharey=True
+        )
 
         sly, slx = self.slit_slices[idx]
         axes[0].imshow(self["data"][sly, slx], aspect=aspect, **kwargs)
         axes[1].imshow(self["corr"][sly, slx], aspect=aspect, **kwargs)
         axes[2].imshow(
-            self["corr"][sly, slx] * self.mask[sly, slx], aspect=aspect, **kwargs
+            self["corr"][sly, slx] * self.mask[sly, slx],
+            aspect=aspect,
+            **kwargs,
         )
 
         axes[0].set_ylabel("data")
         axes[1].set_ylabel("bar")
         axes[2].set_ylabel("masked")
 
-        axes[0].set_title(f'slit #{self.slit_counter[idx]}: "{self.slit_names[idx]}"')
+        axes[0].set_title(
+            f'slit #{self.slit_counter[idx]}: "{self.slit_names[idx]}"'
+        )
 
         fig.tight_layout(pad=1)
 
@@ -659,13 +698,17 @@ class NirspecCalibrated:
 
         perc_data = np.array(perc_data)
 
-        tab = utils.GTable(perc_data, names=[f"{column_prefix}{v}" for v in pvals])
+        tab = utils.GTable(
+            perc_data, names=[f"{column_prefix}{v}" for v in pvals]
+        )
         tab["wave"] = wgrid
         tab["grid"] = xgrid
         tab[f"{column_prefix}npix"] = npix
         tab[f"{column_prefix}err"] = (
             (perc_data[:, 2] - perc_data[:, 1]) / np.sqrt(npix) * SE_MEDIAN
         )
+        tab.meta["sample"] = (sample, "Wavelength sample factor")
+        tab.meta["datakey"] = (key, "Data type")
         return tab
 
     def percentile_table(
@@ -719,6 +762,10 @@ class NirspecCalibrated:
 
 
 def run_all():
+
+    step = 1
+    det = 1
+
     import glob
     from importlib import reload
     import slit_group
@@ -729,10 +776,10 @@ def run_all():
     plt.rcParams["backend"] = "tkagg"
     plt.ioff()
 
-    files = glob.glob("*nrs1_rate.fits")
+    files = glob.glob(f"*nrs{det}_rate.fits")
     files.sort()
 
-    for file in files:
+    for file in files[::step]:
         grp = slit_group.NirspecCalibrated(
             file, read_slitlet=True, make_plot=False, area_correction=False
         )
