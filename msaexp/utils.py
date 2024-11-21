@@ -2766,6 +2766,10 @@ def get_slit_data(slit, wrap=True, **kwargs):
     return data
 
 
+SFLAT_DATA = {}
+SFLAT_STRAIGHTEN = 0
+
+
 def load_sflat_data(flat_file):
     """
     Load MSAEXP MSA quadrant/detector S-flat reference data
@@ -2781,6 +2785,10 @@ def load_sflat_data(flat_file):
         Table with added ``shutter_sflat`` column
 
     """
+    global SFLAT_DATA, SFLAT_STRAIGHTEN
+
+    if flat_file in SFLAT_DATA:
+        return SFLAT_DATA[flat_file]
 
     ftab = grizli.utils.read_catalog(flat_file)
 
@@ -2805,7 +2813,18 @@ def load_sflat_data(flat_file):
         shutter_sflat.append(gbspl.dot(c).reshape(xg.shape))
 
     shutter_sflat = np.array(shutter_sflat)
+
+    if SFLAT_STRAIGHTEN > 0:
+        wsub = (ftab["wave"] > 1) & (ftab["wave"] < 4.5)
+        med = np.nanmedian(np.nanmedian(shutter_sflat, axis=1), axis=1)
+        wsub &= med > 0
+        c = np.polyfit(ftab["wave"][wsub], med[wsub], SFLAT_STRAIGHTEN - 1)
+        cfit = np.polyval(c, ftab["wave"])
+        shutter_sflat = (shutter_sflat.T / cfit).T
+
     ftab["shutter_sflat"] = shutter_sflat
+
+    SFLAT_DATA[flat_file] = ftab
 
     return ftab
 
