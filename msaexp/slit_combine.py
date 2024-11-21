@@ -39,8 +39,13 @@ SIGMA_PRIOR = 0.6
 
 HUBER_ALPHA = 7
 
+# Mask parameters
 PRISM_MAX_VALID = 10000
 PRISM_MIN_VALID_SN = -3
+# Mask pixels above this percentile of the RN arrays
+# RNOISE_THRESHOLD = 95 # version <= 3
+RNOISE_THRESHOLD = 99.5
+
 SPLINE_BAR_GRATINGS = [
     "PRISM",
     "G395M",
@@ -573,6 +578,7 @@ class SlitGroup:
         bar_corr_mode="wave",
         fix_prism_norm=True,
         extended_calibration_kwargs={"threshold": 0.01},
+        with_sflat_correction=True,
         slit_hotpix_kwargs={},
         sky_arrays=None,
         sky_file="read",
@@ -660,6 +666,9 @@ class SlitGroup:
 
         extended_calibration_kwargs : dict
             Keyword arguments to `~msaexp.utils.slit_extended_flux_calibration`
+
+        with_sflat_correction : bool
+            Additional field-dependent s-flat correction
 
         sky_arrays : array-like
             Optional sky data (in progress)
@@ -833,6 +842,7 @@ class SlitGroup:
             "sky_file": "N/A",
             "global_sky_df": global_sky_df,
             "with_fs_offset": with_fs_offset,
+            "with_sflat_correction": with_sflat_correction,
         }
 
         # Comments on meta for header keywords
@@ -865,6 +875,7 @@ class SlitGroup:
             "sky_file": "Filename of a global sky background table",
             "global_sky_df": "Degrees of freedom of fit with global sky",
             "with_fs_offset": "Extra fixed slit offset",
+            "with_sflat_correction": "Field-dependent s-flat correction",
         }
 
         self.shapes = []
@@ -894,7 +905,7 @@ class SlitGroup:
 
         self.calculate_slices()
 
-        self.parse_data()
+        self.parse_data(with_sflat_correction=with_sflat_correction)
 
         if sky_file is not None:
             self.get_global_sky(sky_file=sky_file)
@@ -1315,7 +1326,7 @@ class SlitGroup:
         for s, slit in zip(slices, self.slits):
             slit.slice = s
 
-    def parse_data(self, debug=False):
+    def parse_data(self, debug=False, with_sflat_correction=True):
         """
         Read science, variance and trace data from the ``slits`` SlitModel
         files
@@ -1323,7 +1334,7 @@ class SlitGroup:
         """
         import scipy.ndimage as nd
 
-        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN
+        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN, RNOISE_THRESHOLD
 
         slits = self.slits
 
@@ -1331,6 +1342,18 @@ class SlitGroup:
             self.meta["nod_offset"] = MSA_NOD_ARCSEC / self.slit_pixel_scale
 
         sl = (slice(0, self.sh[0]), slice(0, self.sh[1]))
+
+        ##################
+        # Extra flat field
+        for slit in slits:
+            is_ext = msautils.slit_data_from_extended_reference(slit)
+            if not is_ext:
+                continue
+
+            if slit.meta.exposure.type == "NRS_FIXEDSLIT":
+                flat_profile = msautils.fixed_slit_flat_field(
+                    slit, apply=True, verbose=VERBOSE_LOG
+                )
 
         sci = np.array([slit.data[slit.slice].flatten() * 1 for slit in slits])
         try:
@@ -1393,6 +1416,9 @@ class SlitGroup:
             if k not in self.info.colnames:
                 self.info[k] = 0.0
 
+        # Will be populated if needed
+        sflat_data = None
+
         for j, slit in enumerate(slits):
 
             sh = slit.data.shape
@@ -1437,7 +1463,7 @@ class SlitGroup:
                 )
 
                 # jwst < 1.15 correction was wrong
-                if jwst.__version__ < "1.15":
+                if (jwst.__version__ < "1.15") & (jwst.__version__ > "1.12"):
                     msg = (
                         f"  Flip sign of wavelength correction for"
                         + f" jwst=={jwst.__version__}"
@@ -1457,7 +1483,7 @@ class SlitGroup:
                     _note = ""
 
                 msg = (
-                    "  Apply wavelength correction for "
+                    "   Apply wavelength correction for "
                     f"source_xpos = {slit.source_xpos:.2f}: {_note}"
                     f"dx = {dwave_step[0]:.2f} to {dwave_step[2]:.2f} pixels"
                 )
@@ -1472,6 +1498,27 @@ class SlitGroup:
             wtr.append(_wtr[sl[1]])
             wave.append(_wave[sl].flatten())
             dwave_dx.append(np.gradient(_wave, axis=1)[sl].flatten())
+
+            # SFLAT from shutter names of first exposure
+            needs_sflat = (j == 0) & (slit.meta.exposure.type == "NRS_MSASPEC")
+            needs_sflat &= msautils.slit_data_from_extended_reference(slit)
+            needs_sflat &= with_sflat_correction
+
+            if needs_sflat:
+                sflat_data = msautils.msa_slit_sflat(
+                    slit,
+                    slit_wave=_wave,
+                    apply=False,
+                    force=False,
+                    verbose=VERBOSE_LOG,
+                )
+                if sflat_data is not None:
+                    sflat_data = sflat_data[sl].flatten()
+
+            if sflat_data is not None:
+                sci[j, :] /= sflat_data
+                var_rnoise[j, :] /= sflat_data**2
+                var_poisson[j, :] /= sflat_data**2
 
             slit_frame_y.append(_sy.flatten())
 
@@ -1538,7 +1585,9 @@ class SlitGroup:
                 np.nanmedian((var_rnoise + var_poisson)[~bad])
             )
 
-            bad |= var_rnoise > 10 * np.nanpercentile(var_rnoise[~bad], 95)
+            bad |= var_rnoise > 10 * np.nanpercentile(
+                var_rnoise[~bad], RNOISE_THRESHOLD
+            )
             # print('dq after threshold:', bad.sum())
 
         if self.meta["pad_border"] > 0:
@@ -1562,6 +1611,8 @@ class SlitGroup:
         self.bkg_mask = mask & True
         self.var_rnoise = var_rnoise * phot_corr**2
         self.var_poisson = var_poisson * phot_corr**2
+
+        self.sflat_data = sflat_data
 
         for j, slit in enumerate(slits):
 
@@ -5102,7 +5153,12 @@ def extract_spectra(
                 continue
 
         if obj.mask.sum() < 256:
-            msg = f"\n    skip npix={obj.mask.sum()} shape=({obj.sh}) {obj.grating}\n"
+            msg = f"\n    skip npix={obj.mask.sum()} shape={obj.sh} "
+            msg += (
+                f" ({np.nanmin(obj.wave):.2f}, {np.nanmax(obj.wave):.2f} um)"
+            )
+            msg += f" {obj.grating}\n"
+
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             continue
 
