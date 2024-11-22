@@ -285,6 +285,7 @@ class NirspecCalibrated:
         self.slit_counter = []
         self.slit_names = []
         self.slit_slices = []
+        self.slit_shutter = []
 
         for slit_group in [self.fs_photom, self.photom]:
             progress = tqdm(enumerate(slit_group.slits))
@@ -344,6 +345,7 @@ class NirspecCalibrated:
                 self.slit_counter.append(counter)
                 self.slit_names.append(slit.name.strip())
                 self.slit_slices.append((sly, slx))
+                self.slit_shutter.append((slit.quadrant, slit.xcen, slit.ycen))
 
                 if slit.name in [
                     "S200A1",
@@ -425,8 +427,10 @@ class NirspecCalibrated:
             self.slit_counter = []
             self.slit_names = []
             self.slit_slices = []
+            self.slit_shutter = []
 
             h0 = hdul[0].header
+
             for k in h0:
                 if k.startswith("SLIT"):
                     c = int(k[4:])
@@ -437,6 +441,14 @@ class NirspecCalibrated:
                     slx = slice(h0[f"SX0_{c:04d}"], h0[f"SX1_{c:04d}"])
                     self.slit_slices.append((sly, slx))
 
+                    self.slit_shutter.append(
+                        (
+                            h0[f"SHUQ{c:04d}"],
+                            h0[f"SHUX{c:04d}"],
+                            h0[f"SHUY{c:04d}"],
+                        )
+                    )
+
         self.full = full
 
         self.flat_guess = self.full["data"] / self.rate_data
@@ -444,7 +456,7 @@ class NirspecCalibrated:
         self.mask = np.isfinite(full["data"]) & (full["data"] != 0)
         self.stuck_mask = self.mask * 1 > 10
 
-    def set_global_flat(self):
+    def set_global_flat(self, use_local=True):
         """
         tbd
         """
@@ -463,15 +475,25 @@ class NirspecCalibrated:
         global_flat = np.ones((2048, 2048)).flatten()
 
         for qi in unq.values:
-            flat_file = f"flat_coeffs_{self.h0['DETECTOR']}_q{qi}.fits".lower()
+            if use_local:
+                flat_file = (
+                    f"flat_coeffs_{self.h0['DETECTOR']}_q{qi}.fits".lower()
+                )
+            else:
+                os.path.join(
+                    os.path.dirname(msautils.__file__),
+                    "data",
+                    f"sflat_coeffs_prism_q{qi}.fits".lower(),
+                )
+
             if not os.path.exists(flat_file):
                 continue
 
             ftab = utils.read_catalog(flat_file)
             msg = f"Compute flat for quadrant {qi} with {flat_file}"
-            if 'MTIME' in ftab.meta:
+            if "MTIME" in ftab.meta:
                 msg += f" (mtime: {ftab.meta['MTIME']})"
-                
+
             print(msg)
 
             xlim = (ftab.meta["XMIN"], ftab.meta["XMAX"])
@@ -525,14 +547,22 @@ class NirspecCalibrated:
         hdul[0].header["WITHPIXA"] = self.with_pixelarea
 
         hdul[0].header["NSLITS"] = len(self.slit_counter)
-        for i, name_, (sly, slx) in zip(
-            self.slit_counter, self.slit_names, self.slit_slices
+        for i, name_, (sly, slx), shutter_ in zip(
+            self.slit_counter,
+            self.slit_names,
+            self.slit_slices,
+            self.slit_shutter,
         ):
             hdul[0].header[f"SLIT{i:04d}"] = name_
-            hdul[0].header[f"SX0_{i:04d}"] = slx.start
-            hdul[0].header[f"SX1_{i:04d}"] = slx.stop
-            hdul[0].header[f"SY0_{i:04d}"] = sly.start
-            hdul[0].header[f"SY1_{i:04d}"] = sly.stop
+            hdul[0].header[f"SX0_{i:04d}"] = (slx.start, "Slice x start")
+            hdul[0].header[f"SX1_{i:04d}"] = (slx.stop, "Slice x stop")
+            hdul[0].header[f"SY0_{i:04d}"] = (sly.start, "Slice y start")
+            hdul[0].header[f"SY1_{i:04d}"] = (sly.stop, "Slice y stop")
+
+            sq, sx, sy = shutter_
+            hdul[0].header[f"SHUQ{i:04d}"] = (sq, "Shutter quadrant")
+            hdul[0].header[f"SHUX{i:04d}"] = (sx, "Shutter xcen")
+            hdul[0].header[f"SHUY{i:04d}"] = (sy, "Shutter ycen")
 
         # hdul[0].header["PEDESTAL"] = self.pedestal
 
@@ -778,6 +808,8 @@ def run_all():
 
     files = glob.glob(f"*nrs{det}_rate.fits")
     files.sort()
+
+    reload(slit_group)
 
     for file in files[::step]:
         grp = slit_group.NirspecCalibrated(
