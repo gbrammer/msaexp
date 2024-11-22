@@ -2777,7 +2777,7 @@ def load_sflat_data(flat_file):
     Parameters
     ----------
     flat_file : str
-        Path to flat coeffs file, e.g., ``flat_coeffs_prism_nrs1_q2.fits``
+        Path to flat coeffs file, e.g., ``sflat_coeffs_prism_q2.fits``
 
     Returns
     -------
@@ -2860,9 +2860,8 @@ def msa_slit_sflat(
     flat_file = os.path.join(
         os.path.dirname(__file__),
         "data/extended_sensitivity/",
-        "flat_coeffs_{0}_{1}_q{2}.fits".format(
-            "prism",  # slit.meta.instrument.grating.lower(),
-            slit.meta.instrument.detector.lower(),
+        "sflat_coeffs_{0}_q{1}.fits".format(
+            "prism",
             slit.quadrant,
         ),
     )
