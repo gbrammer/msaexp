@@ -101,10 +101,13 @@ class NirspecCalibrated:
         pedestal=0.0,
         read_slitlet=False,
         write_results=True,
+        pixel_area_ref=4.88e-13,
         **kwargs,
     ):
 
         self.file = file
+
+        self.pixel_area_ref = pixel_area_ref
 
         with pyfits.open(file) as hdu:
             self.rate_data = hdu["SCI"].data
@@ -129,6 +132,9 @@ class NirspecCalibrated:
         self.pedestal = pedestal
         self.global_flat = np.ones((2048, 2048))
         self.FLAT_ON = 1
+        self.PIXEL_AREA_EXP = 0
+
+        self.set_pixel_area()
 
     @property
     def grating(self):
@@ -156,22 +162,27 @@ class NirspecCalibrated:
                 * 1.0
                 / self.full["bar"]
                 / self.global_flat**self.FLAT_ON
+                * self.pixel_area**self.PIXEL_AREA_EXP
             )
         elif key == "corr_err":
             return self.full["err"] / self.full["bar"] / self.global_flat
         elif key == "corr_rnoise":
             p = self.FLAT_ON * 2
+            pa = self.PIXEL_AREA_EXP * 2
             return (
                 self.full["var_rnoise"]
                 / self.full["bar"] ** 2
                 / self.global_flat**p
+                * self.pixel_area**pa
             )
         elif key == "corr_poisson":
             p = self.FLAT_ON * 2
+            pa = self.PIXEL_AREA_EXP * 2
             return (
                 self.full["var_poisson"]
                 / self.full["bar"] ** 2
                 / self.global_flat**p
+                * self.pixel_area**pa
             )
         elif key in self.full:
             return self.full[key]
@@ -286,6 +297,7 @@ class NirspecCalibrated:
         self.slit_names = []
         self.slit_slices = []
         self.slit_shutter = []
+        self.pixel_areas = []
 
         for slit_group in [self.fs_photom, self.photom]:
             progress = tqdm(enumerate(slit_group.slits))
@@ -346,6 +358,9 @@ class NirspecCalibrated:
                 self.slit_names.append(slit.name.strip())
                 self.slit_slices.append((sly, slx))
                 self.slit_shutter.append((slit.quadrant, slit.xcen, slit.ycen))
+                self.pixel_areas.append(
+                    slit.meta.photometry.pixelarea_steradians
+                )
 
                 if slit.name in [
                     "S200A1",
@@ -428,6 +443,7 @@ class NirspecCalibrated:
             self.slit_names = []
             self.slit_slices = []
             self.slit_shutter = []
+            self.pixel_areas = []
 
             h0 = hdul[0].header
 
@@ -449,6 +465,8 @@ class NirspecCalibrated:
                         )
                     )
 
+                    self.pixel_areas.append(h0[f"PIXA{c:04d}"])
+
         self.full = full
 
         self.flat_guess = self.full["data"] / self.rate_data
@@ -456,7 +474,23 @@ class NirspecCalibrated:
         self.mask = np.isfinite(full["data"]) & (full["data"] != 0)
         self.stuck_mask = self.mask * 1 > 10
 
-    def set_global_flat(self, use_local=True):
+    def set_pixel_area(self):
+        """ """
+        sq, sx, sy = self["slit"]
+        msk = np.where(((self["nexp"] == 1) & (sq > 0) & (sq < 6)).flatten())[
+            0
+        ]
+
+        pixel_area = np.zeros((2048, 2048), dtype=np.float32).flatten()
+
+        un = utils.Unique(self["exp_index"].flatten()[msk], verbose=False)
+        for i, area in zip(self.slit_counter, self.pixel_areas):
+            if i in un.values:
+                pixel_area[msk[un[i]]] = area / self.pixel_area_ref
+
+        self.pixel_area = pixel_area.reshape((2048, 2048))
+
+    def set_global_flat(self, use_local=True, skip_quads=True):
         """
         tbd
         """
@@ -475,18 +509,28 @@ class NirspecCalibrated:
         global_flat = np.ones((2048, 2048)).flatten()
 
         for qi in unq.values:
+            if skip_quads:
+                if "nrs1" in self.file:
+                    if qi in [1, 2]:
+                        continue
+                else:
+                    if qi in [3, 4]:
+                        continue
+
             if use_local:
                 flat_file = (
-                    f"flat_coeffs_{self.h0['DETECTOR']}_q{qi}.fits".lower()
+                    # f"flat_coeffs_{self.h0['DETECTOR']}_q{qi}.fits".lower()
+                    f"sflat_spl_coeffs_q{qi}.fits".lower()
                 )
             else:
-                os.path.join(
+                flat_file = os.path.join(
                     os.path.dirname(msautils.__file__),
-                    "data",
-                    f"sflat_coeffs_prism_q{qi}.fits".lower(),
+                    "data/extended_sensitivity",
+                    f"sflat_spl_coeffs_prism_q{qi}.fits".lower(),
                 )
 
             if not os.path.exists(flat_file):
+                print(f"file {flat_file} not found")
                 continue
 
             ftab = utils.read_catalog(flat_file)
@@ -521,6 +565,8 @@ class NirspecCalibrated:
             qix = np.where(mskf)[0][unq[qi]]
             unx = utils.Unique(sxf[qix], verbose=False)
 
+            Nf = len(ftab)
+
             for xi in unx.values:
                 unxi = unx[xi]
                 uny = utils.Unique(syf[qix][unxi], verbose=False)
@@ -529,9 +575,23 @@ class NirspecCalibrated:
                     ixi = qix[unxi][uny[yi]]
                     flat_ = gmodels[:, yi, xi]
                     fok = flat_ > 0
-                    global_flat[ixi] = np.interp(
-                        full_wave[ixi], ftab["wave"][fok], flat_[fok]
+                    # global_flat[ixi] = np.interp(
+                    #     full_wave[ixi], ftab["wave"][fok], flat_[fok]
+                    # )
+                    cspl = utils.bspline_templates(
+                        np.interp(
+                            full_wave[ixi], ftab["wave"], np.linspace(0, 1, Nf)
+                        ),
+                        df=Nf,
+                        minmax=(0, 1),
+                        get_matrix=True,
                     )
+
+                    # Flatten it out in the middle
+                    wg = np.abs(full_wave[ixi] - 3.1)
+                    yg = (1 - np.exp(-(wg**2) / 2 / 0.7**2)) ** 1 * 0.8 + 0.2
+                    spl_flat = (cspl.dot(flat_) - 1) * yg + 1
+                    global_flat[ixi] = spl_flat
 
         global_flat[global_flat <= 0] = 1.0
 
@@ -547,11 +607,12 @@ class NirspecCalibrated:
         hdul[0].header["WITHPIXA"] = self.with_pixelarea
 
         hdul[0].header["NSLITS"] = len(self.slit_counter)
-        for i, name_, (sly, slx), shutter_ in zip(
+        for i, name_, (sly, slx), shutter_, area_ in zip(
             self.slit_counter,
             self.slit_names,
             self.slit_slices,
             self.slit_shutter,
+            self.pixel_areas,
         ):
             hdul[0].header[f"SLIT{i:04d}"] = name_
             hdul[0].header[f"SX0_{i:04d}"] = (slx.start, "Slice x start")
@@ -563,6 +624,8 @@ class NirspecCalibrated:
             hdul[0].header[f"SHUQ{i:04d}"] = (sq, "Shutter quadrant")
             hdul[0].header[f"SHUX{i:04d}"] = (sx, "Shutter xcen")
             hdul[0].header[f"SHUY{i:04d}"] = (sy, "Shutter ycen")
+
+            hdul[0].header[f"PIXA{i:04d}"] = (area_, "PIXAR_SR at shutter")
 
         # hdul[0].header["PEDESTAL"] = self.pedestal
 
