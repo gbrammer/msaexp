@@ -2829,8 +2829,27 @@ def load_sflat_data(flat_file):
     return ftab
 
 
+def shutter_xcen_ycen_from_id(shutter_id):
+    """
+    Get MSA shutter xcen and ycen from the shutter_id
+
+    Parameters
+    ----------
+    shutter_id : int
+        ``shutter_id = xcen + (ycen - 1) * 365``
+
+    Returns
+    -------
+    xcen, ycen : int
+        Shutter coordinates
+    """
+    xcen = shutter_id % 365
+    ycen = (shutter_id - xcen) // 365 + 1
+    return (xcen, ycen)
+
+
 def msa_slit_sflat(
-    slit, slit_wave=None, apply=True, force=False, verbose=True
+    slit=None, qxy=None, slit_wave=None, apply=True, force=False, verbose=True
 ):
     """
     Field dependent S-Flat for MSA slitlets derived from empty sky spectra
@@ -2854,24 +2873,42 @@ def msa_slit_sflat(
 
     """
 
-    if slit.meta.exposure.type != "NRS_MSASPEC":
-        return None
+    if slit is not None:
+        if slit.meta.exposure.type != "NRS_MSASPEC":
+            return None
+
+        qxy = (slit.quadrant, slit.xcen, slit.ycen)
+    else:
+        if qxy is None:
+            msg = "msa_slit_sflat: either slit or qxy must be provided"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+            return None
+
+        if slit_wave is None:
+            msg = "msa_slit_sflat: slit_wave must be provided along with qxy"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+            return None
+
+        apply = False
+
+    quadrant, xcen, ycen = qxy
 
     flat_file = os.path.join(
         os.path.dirname(__file__),
         "data/extended_sensitivity/",
-        "sflat_coeffs_{0}_q{1}.fits".format(
-            "prism",
-            slit.quadrant,
-        ),
+        "sflat_spl_coeffs_{0}_q{1}.fits".format("prism", quadrant),
     )
 
     if not os.path.exists(flat_file):
-        # msg = f"   msa_slit_sflat: {flat_file} not found"
-        # grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        msg = f"   msa_slit_sflat: {flat_file} not found"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
         return None
 
-    shutter_label = f"q:{slit.quadrant} x:{slit.xcen} y:{slit.ycen}"
+    shutter_label = f"q:{quadrant} x:{xcen} y:{ycen}"
     msg = f"   msa_slit_sflat: compute s-flat for {shutter_label} with "
     msg += f"{os.path.basename(flat_file)}"
 
@@ -2882,7 +2919,7 @@ def msa_slit_sflat(
 
     grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
 
-    flat_ = ftab["shutter_sflat"][:, slit.ycen, slit.xcen] * 1.0
+    flat_ = ftab["shutter_sflat"][:, ycen, xcen] * 1.0
 
     fok = flat_ > 0
 
@@ -2890,10 +2927,29 @@ def msa_slit_sflat(
         slit_data = get_slit_data(slit)
         slit_wave = slit_data["wave"]
 
-    sflat_data = np.interp(
-        slit_wave, ftab["wave"][fok], flat_[fok], left=np.nan, right=np.nan
+    # sflat_data = np.interp(
+    #     slit_wave, ftab["wave"][fok], flat_[fok], left=np.nan, right=np.nan
+    # )
+    cspl = grizli.utils.bspline_templates(
+        np.interp(
+            slit_wave.flatten(), ftab["wave"], np.linspace(0, 1, len(ftab))
+        ),
+        df=len(ftab),
+        minmax=(0, 1),
+        get_matrix=True,
     )
+    sflat_data = cspl.dot(flat_).reshape(slit_wave.shape)
+
+    wsm = np.abs(slit_wave - 3.1)
+    ysm = (1 - np.exp(-(wsm**2) / 2 / 0.7**2)) * 0.8 + 0.2
+    sflat_data = (sflat_data - 1) * ysm + 1
+
     sflat_data[sflat_data <= 0] = np.nan
+
+    # Unreliable extrapolation
+    sflat_data[sflat_data > 5] = np.nan
+    sflat_data[slit_wave > 5.50] = np.nan
+    sflat_data[slit_wave < 0.55] = np.nan
 
     if apply:
         if (not hasattr(slit, "sflat_data")) | force:
