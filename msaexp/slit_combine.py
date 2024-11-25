@@ -1503,6 +1503,7 @@ class SlitGroup:
             needs_sflat = (j == 0) & (slit.meta.exposure.type == "NRS_MSASPEC")
             needs_sflat &= msautils.slit_data_from_extended_reference(slit)
             needs_sflat &= with_sflat_correction
+            needs_sflat &= slit.meta.instrument.grating.upper() == 'PRISM'
 
             if needs_sflat:
                 sflat_data = msautils.msa_slit_sflat(
@@ -3993,6 +3994,19 @@ def obj_header(obj, index=0):
 
     # Exposure time
     for i, sl in enumerate(obj.slits):
+        # Shutter quadrant
+        if (i == 0):
+            if (sl.quadrant is not None):
+                header['SHUTTRQ'] = (sl.quadrant, 'MSA quadrant of first slitlet')
+                header['SHUTTRX'] = (sl.xcen, 'MSA shutter row/xcen of first slitlet')
+                header['SHUTTRY'] = (sl.ycen, 'MSA shutter col/ycen of first slitlet')
+            else:
+                header['SHUTTRQ'] = (5, 'Pseudo quadrant for fixed slit')
+                # header['SHUTTRX'] = (0, 'MSA shutter row/xcen')
+                # header['SHUTTRY'] = (0, 'MSA shutter col/ycen')
+
+        header[f'SFILE{i:03d}'] = os.path.basename(sl.meta.filename)
+
         fbase = sl.meta.filename.split("_nrs")[0]
         if fbase in files:
             continue
