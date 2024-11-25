@@ -935,7 +935,7 @@ class SpectrumSampler(object):
         self,
         sens_file=None,
         prefix="msaexp_sensitivity",
-        version="002",
+        version="001",
         file_template="{prefix}_{grating}_{filter}_{version}.fits",
         verbose=False,
         **kwargs,
@@ -971,6 +971,7 @@ class SpectrumSampler(object):
         utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
         sens_data = utils.read_catalog(os.path.join(file_path, sens_file))
+        self.sensitivity_file = sens_file
 
         self.sensitivity = np.interp(
             self.spec["wave"],
