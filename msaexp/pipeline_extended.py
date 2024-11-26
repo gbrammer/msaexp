@@ -25,6 +25,7 @@ from grizli import utils
 import msaexp.utils as msautils
 from .msa import slit_best_source_alias
 from . import pipeline
+from .fork.assign_wcs.nirspec import zeroth_order_mask
 
 # NEW_WAVERANGE_REF = "jwst_nirspec_wavelengthrange_0008_ext.asdf"
 
@@ -688,6 +689,7 @@ def run_pipeline(
     make_trace_figures=False,
     run_pathloss=True,
     run_barshadow=True,
+    mask_zeroth_kwargs={},
     **kwargs,
 ):
     """
@@ -768,6 +770,19 @@ def run_pipeline(
     if preprocess_kwargs is not None:
         # 1/f, bias & rnoise
         status = pipeline.exposure_detector_effects(file, **preprocess_kwargs)
+
+    # Mask zeroth orders
+    if mask_zeroth_kwargs is not None:
+        with pyfits.open(file, mode='update') as hdul:
+            with jwst.datamodels.open(hdul) as input_model:
+                dq, slits_, bounding_boxes = zeroth_order_mask(
+                    input_model,
+                    **mask_zeroth_kwargs
+                )
+                hdul['DQ'].data |= dq
+            
+            hdul.flush()
+            
 
     wstep = AssignWcsStep()
 

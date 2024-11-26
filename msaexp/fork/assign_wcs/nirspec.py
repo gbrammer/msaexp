@@ -247,7 +247,7 @@ def get_open_slits(
     return slits
 
 
-def zeroth_order_contamination_mask(
+def zeroth_order_mask(
     input_model,
     reference_files=None,
     slit_y_range=[-0.55, 0.55],
@@ -255,6 +255,7 @@ def zeroth_order_contamination_mask(
     min_ysize=3,
     dq_flag="MSA_FAILED_OPEN",
     apply=True,
+    **kwargs,
 ):
     """
     Add mask for zeroth order contamination to dq array.
@@ -377,7 +378,7 @@ def zeroth_order_contamination_mask(
 
 
 if 0:
-    dq, slits_, bounding_boxes = zeroth_order_contamination_mask(
+    dq, slits_, bounding_boxes = zeroth_order_mask(
         input_model,
         reference_files=None,
         slit_y_range=[-0.55, 0.55],
