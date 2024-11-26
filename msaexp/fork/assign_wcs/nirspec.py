@@ -68,6 +68,7 @@ from jwst.assign_wcs.nirspec import (
     collimator_to_gwa,
     slit_to_msa,
     compute_bounding_box,
+    get_open_fixed_slits
 )
 
 
