@@ -490,7 +490,7 @@ class NirspecCalibrated:
 
         self.pixel_area = pixel_area.reshape((2048, 2048))
 
-    def set_global_flat(self, use_local=True, skip_quads=True):
+    def set_global_flat(self, use_local=True, skip_quads=True, ratio_smooth_params=(3.1, 0.7, 0.8)):
         """
         tbd
         """
@@ -561,6 +561,15 @@ class NirspecCalibrated:
                 gmodels.append(gbspl.dot(c).reshape(xg.shape))
 
             gmodels = np.array(gmodels)
+            SFLAT_STRAIGHTEN = 0
+            if SFLAT_STRAIGHTEN > 0:
+                print('Straighten')
+                wsub = (ftab["wave"] > 0.8) & (ftab["wave"] < 5.25)
+                med = np.nanmedian(np.nanmedian(gmodels, axis=1), axis=1)
+                wsub &= med > 0
+                c = np.polyfit(ftab["wave"][wsub], med[wsub], SFLAT_STRAIGHTEN - 1)
+                cfit = np.polyval(c, ftab["wave"])
+                gmodels = (gmodels.T / cfit).T
 
             qix = np.where(mskf)[0][unq[qi]]
             unx = utils.Unique(sxf[qix], verbose=False)
@@ -588,9 +597,13 @@ class NirspecCalibrated:
                     )
 
                     # Flatten it out in the middle
-                    wg = np.abs(full_wave[ixi] - 3.1)
-                    yg = (1 - np.exp(-(wg**2) / 2 / 0.7**2)) ** 1 * 0.8 + 0.2
-                    spl_flat = (cspl.dot(flat_) - 1) * yg + 1
+                    # wg = np.abs(full_wave[ixi] - 3.1)
+                    # yg = (1 - np.exp(-(wg**2) / 2 / 0.7**2)) ** 1 * 0.8 + 0.2
+                    # spl_flat = (cspl.dot(flat_) - 1) * yg + 1
+                    wsm = np.abs(full_wave[ixi] - ratio_smooth_params[0])
+                    ysm = (1-np.exp(-wsm**2 / 2 / ratio_smooth_params[1]**2))**1 * ratio_smooth_params[2] + (1 - ratio_smooth_params[2])
+                    spl_flat = (cspl.dot(flat_) - 1) * ysm + 1
+                    
                     global_flat[ixi] = spl_flat
 
         global_flat[global_flat <= 0] = 1.0
