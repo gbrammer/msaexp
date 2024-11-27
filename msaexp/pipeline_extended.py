@@ -852,7 +852,10 @@ def run_pipeline(
 
     _slit = ext2d[slit_index]
 
-    targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
+    if _slit.meta.target.catalog_name is not None:
+        targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
+    else:
+        targ_ = 'cat'
 
     inst_key = (
         f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"
