@@ -2,6 +2,8 @@ import os
 import yaml
 
 import warnings
+import logging
+
 import numpy as np
 import astropy.io.fits as pyfits
 
@@ -9,6 +11,9 @@ import jwst.datamodels
 
 import grizli.utils
 
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 MSAEXP_BADPIX = None
 
@@ -2770,7 +2775,7 @@ SFLAT_DATA = {}
 SFLAT_STRAIGHTEN = 0
 
 
-def load_sflat_data(flat_file):
+def load_sflat_data(flat_file, verbose=True):
     """
     Load MSAEXP MSA quadrant/detector S-flat reference data
 
@@ -2815,12 +2820,27 @@ def load_sflat_data(flat_file):
     shutter_sflat = np.array(shutter_sflat)
 
     if SFLAT_STRAIGHTEN > 0:
-        wsub = (ftab["wave"] > 1) & (ftab["wave"] < 4.5)
+        wsub = (ftab["wave"] > 0.8) & (ftab["wave"] < 5.25)
         med = np.nanmedian(np.nanmedian(shutter_sflat, axis=1), axis=1)
         wsub &= med > 0
         c = np.polyfit(ftab["wave"][wsub], med[wsub], SFLAT_STRAIGHTEN - 1)
         cfit = np.polyval(c, ftab["wave"])
         shutter_sflat = (shutter_sflat.T / cfit).T
+
+        msg = f"{__name__}: straighten sflat {flat_file} {SFLAT_STRAIGHTEN}"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    if ('SM_WAVE' not in ftab.meta):
+        ftab.meta['SM_WAVE'] = 3.1
+        ftab.meta['SM_WIDTH'] = 0.7
+        ftab.meta['SM_SCALE'] = 0.8
+
+    wsm = np.abs(ftab["wave"] - ftab.meta['SM_WAVE'])
+    ysm = (1 - np.exp(-(wsm**2) / 2 / ftab.meta['SM_WIDTH']**2))
+    ysm = ysm * ftab.meta['SM_SCALE'] + (1 - ftab.meta['SM_SCALE'])
+    shutter_sflat = ((shutter_sflat.T - 1) * ysm + 1).T
+    msg = f"{__name__}: smooth middle of sflat {ftab.meta['SM_SCALE']}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
 
     ftab["shutter_sflat"] = shutter_sflat
 
@@ -2912,7 +2932,7 @@ def msa_slit_sflat(
     msg = f"   msa_slit_sflat: compute s-flat for {shutter_label} with "
     msg += f"{os.path.basename(flat_file)}"
 
-    ftab = load_sflat_data(flat_file)
+    ftab = load_sflat_data(flat_file, verbose=verbose)
 
     if "MTIME" in ftab.meta:
         msg += f" (mtime: {ftab.meta['MTIME']})"
@@ -2939,10 +2959,6 @@ def msa_slit_sflat(
         get_matrix=True,
     )
     sflat_data = cspl.dot(flat_).reshape(slit_wave.shape)
-
-    wsm = np.abs(slit_wave - 3.1)
-    ysm = (1 - np.exp(-(wsm**2) / 2 / 0.7**2)) * 0.8 + 0.2
-    sflat_data = (sflat_data - 1) * ysm + 1
 
     sflat_data[sflat_data <= 0] = np.nan
 
