@@ -3,6 +3,8 @@ Extend CRDS reference files for fixed-slit observations
 """
 
 import os
+import time
+
 import numpy as np
 import astropy.io.fits as pyfits
 import astropy.table
@@ -16,6 +18,7 @@ from jwst.flatfield import FlatFieldStep
 from jwst.pathloss import PathLossStep
 from jwst.barshadow import BarShadowStep
 from jwst.photom import PhotomStep
+from jwst.assign_wcs.util import NoDataOnDetectorError
 
 from jwst.assign_wcs.assign_wcs import load_wcs
 from jwst.flatfield import flat_field
@@ -745,8 +748,6 @@ def run_pipeline(
         ``NoDataOnDetectorError`` exception.
 
     """
-    import time
-    from jwst.assign_wcs.util import NoDataOnDetectorError
 
     ORIG_LOGFILE = utils.LOGFILE
     if set_log:
