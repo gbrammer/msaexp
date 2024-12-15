@@ -256,9 +256,10 @@ class SpectrumSampler(object):
 
         self.initialize_emission_line()
 
-        self.sensitivity = None
-        self.sensitivity_2 = None
-        self.sensitivity_3 = None
+        self.sensitivity_file = None
+        self.sensitivity = {1: 1.0}
+        for i in range(1, 4):
+            self.sensitivity[i + 1] = None
 
         if with_sensitivity:
             self.load_sensitivity_curve(**kwargs)
@@ -365,7 +366,8 @@ class SpectrumSampler(object):
         fnu=True,
         nsig=4,
         with_igm=False,
-        extra_orders=True,
+        orders=[1, 2, 3, 4],
+        verbose=False,
         **kwargs,
     ):
         """
@@ -393,9 +395,9 @@ class SpectrumSampler(object):
         nsig : int
             Number of standard deviations to sample for the convolution
 
-        extra_orders : bool
-            Include additional spectral orders if ``sensitivity_2`` and/or
-            ``sensitivity_3`` attributes are found.
+        orders : list
+            List of spectral orders to include if the sensitivity curves have been
+            read along with the spectrum.
 
         Returns
         -------
@@ -417,37 +419,26 @@ class SpectrumSampler(object):
             # Turn off
             igmz = 1.0
 
-        res = RESAMPLE_FUNC(
-            self.spec_wobs,
-            self.spec_R_fwhm * scale_disp,
-            templ_wobs,
-            templ_flux * igmz,
-            velocity_sigma=velocity_sigma,
-            nsig=nsig,
-        )
+        res = np.zeros_like(self.spec_wobs)
 
-        if extra_orders:
-            if self.sensitivity_2 is not None:
-                res2 = RESAMPLE_FUNC(
-                    self.spec_wobs,
-                    self.spec_R_fwhm * scale_disp * 2,
-                    templ_wobs * 2,
-                    templ_flux * igmz,
-                    velocity_sigma=velocity_sigma,
-                    nsig=nsig,
-                )
-                res += res2 * self.sensitivity_2 / self.sensitivity
+        for order in orders:
+            if order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
 
-            if self.sensitivity_3 is not None:
-                res3 = RESAMPLE_FUNC(
-                    self.spec_wobs,
-                    self.spec_R_fwhm * scale_disp * 3,
-                    templ_wobs * 3,
-                    templ_flux * igmz,
-                    velocity_sigma=velocity_sigma,
-                    nsig=nsig,
-                )
-                res += res3 * self.sensitivity_3 / self.sensitivity
+            res_i = RESAMPLE_FUNC(
+                self.spec_wobs,
+                self.spec_R_fwhm * scale_disp * order,
+                templ_wobs * order,
+                templ_flux * igmz,
+                velocity_sigma=velocity_sigma,
+                nsig=nsig,
+            )
+
+            res += res_i * self.sensitivity[order] / self.sensitivity[1]
 
         return res
 
@@ -458,7 +449,7 @@ class SpectrumSampler(object):
         scale_disp=1.0,
         velocity_sigma=100.0,
         nsig=4,
-        **kwargs
+        **kwargs,
     ):
         """
         Make an emission line template - *deprecated in favor of*
@@ -503,7 +494,8 @@ class SpectrumSampler(object):
         line_flux=1,
         scale_disp=1.0,
         velocity_sigma=100.0,
-        extra_orders=True,
+        orders=[1, 2, 3, 4],
+        verbose=False,
     ):
         """
         Make an emission line template with numerically correct pixel
@@ -523,53 +515,46 @@ class SpectrumSampler(object):
         velocity_sigma : float
             Velocity sigma width in km/s
 
-        extra_orders : bool
-            Include additional spectral orders if ``sensitivity_2`` and/or
-            ``sensitivity_3`` attributes are found.
+        orders : list
+            List of spectral orders to include if the sensitivity curves have been
+            read along with the spectrum.
 
         Returns
         -------
         res : array-like
             Gaussian emission line sampled at the spectrum wavelengths
         """
-        res = SAMPLE_LINE_FUNC(
-            self.spec_wobs,
-            self.spec_R_fwhm * scale_disp,
-            line_um,
-            line_flux=line_flux,
-            velocity_sigma=velocity_sigma,
-        )
+        res = np.zeros_like(self.spec_wobs)
 
-        if extra_orders:
-            if self.sensitivity_2 is not None:
-                res2 = SAMPLE_LINE_FUNC(
-                    self.spec_wobs,
-                    self.spec_R_fwhm * scale_disp * 2,
-                    line_um * 2,
-                    line_flux=line_flux,
-                    velocity_sigma=velocity_sigma,
-                )
-                res += res2 * self.sensitivity_2 / self.sensitivity
+        for order in orders:
+            if order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
 
-            if self.sensitivity_3 is not None:
-                res3 = SAMPLE_LINE_FUNC(
-                    self.spec_wobs,
-                    self.spec_R_fwhm * scale_disp * 3,
-                    line_um * 3,
-                    line_flux=line_flux,
-                    velocity_sigma=velocity_sigma,
-                )
-                res += res3 * self.sensitivity_3 / self.sensitivity
+            res_i = SAMPLE_LINE_FUNC(
+                self.spec_wobs,
+                self.spec_R_fwhm * scale_disp * order,
+                line_um * order,
+                line_flux=line_flux,
+                velocity_sigma=velocity_sigma,
+            )
+
+            res += res_i * self.sensitivity[order] / self.sensitivity[1]
 
         return res
 
     def bspline_array(
         self,
         nspline=13,
+        remap_arrays=None,
+        minmax=None,
         log=False,
         by_wavelength=False,
         get_matrix=True,
-        extra_orders=True,
+        orders=[1, 2, 3, 4],
     ):
         """
         Initialize bspline templates for continuum fits
@@ -602,65 +587,82 @@ class SpectrumSampler(object):
                 df=nspline,
                 log=log,
                 get_matrix=get_matrix,
+                minmax=minmax,
             )
         else:
+            if remap_arrays is None:
+                xvalue = np.arange(len(self.spec_wobs))
+            else:
+                xvalue = np.interp(
+                    self.spec_wobs, *remap_arrays, left=0.0, right=0.0
+                )
+
             bspl = utils.bspline_templates(
-                wave=np.arange(len(self.spec_wobs)),
+                wave=xvalue,
                 degree=3,
                 df=nspline,
                 log=log,
                 get_matrix=get_matrix,
+                minmax=minmax,
             )
 
-        if extra_orders:
+        if 1 not in orders:
             if get_matrix:
-                if self.sensitivity_2 is not None:
-                    for i in range(nspline):
-                        extra = np.interp(
-                            self.spec_wobs,
-                            self.spec_wobs * 2,
-                            bspl[:, i],
-                            left=0,
-                            right=0,
-                        )
-                        extra *= self.sensitivity_2 / self.sensitivity
-                        bspl[:, i] += extra
-
-                if self.sensitivity_3 is not None:
-                    for i in range(nspline):
-                        extra = np.interp(
-                            self.spec_wobs,
-                            self.spec_wobs * 3,
-                            bspl[:, i],
-                            left=0,
-                            right=0,
-                        )
-                        extra *= self.sensitivity_3 / self.sensitivity
-                        bspl[:, i] += extra
+                bspl1 = bspl * 1
             else:
-                if self.sensitivity_2 is not None:
-                    for t in bspl:
-                        extra = np.interp(
-                            self.spec_wobs,
-                            self.spec_wobs * 2,
-                            bspl[t].flux,
-                            left=0,
-                            right=0,
-                        )
-                        extra *= self.sensitivity_2 / self.sensitivity
-                        bspl[t].flux += extra
+                bspl1 = {}
+                for t in bspl:
+                    bspl1[t] = bspl[t].flux * 1
+        else:
+            bspl1 = None
 
-                if self.sensitivity_3 is not None:
-                    for t in bspl:
-                        extra = np.interp(
-                            self.spec_wobs,
-                            self.spec_wobs * 3,
-                            bspl[t].flux,
-                            left=0,
-                            right=0,
-                        )
-                        extra *= self.sensitivity_3 / self.sensitivity
-                        bspl[t].flux += extra
+        inv_order1 = 1.0 / self.sensitivity[1]
+        inv_order1[~np.isfinite(inv_order1)] = 0
+
+        for order in orders:
+            if order == 1:
+                # Computed above
+                continue
+            elif order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
+
+            if get_matrix:
+                for i in range(nspline):
+                    extra = np.interp(
+                        self.spec_wobs,
+                        self.spec_wobs * order,
+                        bspl[:, i],
+                        left=0,
+                        right=0,
+                    )
+                    extra *= self.sensitivity[order] * inv_order1
+                    extra[~np.isfinite(extra)] = 0
+                    bspl[:, i] += extra
+            else:
+                for t in bspl:
+                    extra = np.interp(
+                        self.spec_wobs,
+                        self.spec_wobs * order,
+                        bspl[t].flux,
+                        left=0,
+                        right=0,
+                    )
+                    extra *= self.sensitivity[order] * inv_order1
+                    extra[~np.isfinite(extra)] = 0
+                    bspl[t].flux += extra
+
+        if 1 not in orders:
+            if get_matrix:
+                bspl = bspl - bspl1
+            else:
+                for t in bspl:
+                    bspl[t].flux -= bspl1[t].flux
+
+        del bspl1
 
         if get_matrix:
             bspl = bspl.T
@@ -847,7 +849,7 @@ class SpectrumSampler(object):
         model_comp=None,
         nsig=5,
         scale_disp=1.3,
-        extra_orders=True,
+        orders=[1, 2, 3, 4],
     ):
         """
         Resample a `bagpipes` model to the wavelength grid of the spectrum.
@@ -858,35 +860,27 @@ class SpectrumSampler(object):
         if "scale_disp" in model_comp:
             scale_disp = model_comp["scale_disp"]
 
-        spectrum = resample_bagpipes_model(
-            model_galaxy,
-            model_comp=model_comp,
-            spec_wavs=self.spec_wobs * 1.0e4,
-            R_curve=self.spec["R"] * scale_disp,
-            nsig=nsig,
-        )
-        if extra_orders:
-            if self.sensitivity_2 is not None:
-                res2 = resample_bagpipes_model(
-                    model_galaxy,
-                    model_comp=model_comp,
-                    spec_wavs=self.spec_wobs * 1.0e4,
-                    R_curve=self.spec["R"] * scale_disp * 2,
-                    nsig=nsig,
-                    wave_scale=2,
-                )
-                spectrum += res2 * self.sensitivity_2 / self.sensitivity
+        spectrum = np.zeros_like(self.spec_wobs)
 
-            if self.sensitivity_3 is not None:
-                res3 = resample_bagpipes_model(
-                    model_galaxy,
-                    model_comp=model_comp,
-                    spec_wavs=self.spec_wobs * 1.0e4,
-                    R_curve=self.spec["R"] * scale_disp * 3,
-                    nsig=nsig,
-                    wave_scale=3,
-                )
-                spectrum += res3 * self.sensitivity_3 / self.sensitivity
+        for order in orders:
+            if order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
+
+            spectrum_i = resample_bagpipes_model(
+                model_galaxy,
+                model_comp=model_comp,
+                spec_wavs=self.spec_wobs * 1.0e4,
+                R_curve=self.spec["R"] * scale_disp * order,
+                nsig=nsig,
+                wave_scale=order,
+            )
+            spectrum += (
+                spectrum_i * self.sensitivity[order] / self.sensitivity[1]
+            )
 
         return spectrum
 
@@ -973,42 +967,46 @@ class SpectrumSampler(object):
         sens_data = utils.read_catalog(os.path.join(file_path, sens_file))
         self.sensitivity_file = sens_file
 
-        self.sensitivity = np.interp(
+        self.sensitivity_correction = 1.0
+        self.sensitivity_correction_type = None
+
+        if "nrs1_s200a1" in sens_data.colnames:
+            if "APERNAME" in self.meta:
+                if "_SLIT" in self.meta["APERNAME"]:
+                    self.sensitivity_correction = (
+                        1.0 / sens_data["nrs1_s200a1"]
+                    )
+                    self.sensitivity_correction_type = "nrs1_s200a1"
+
+        self.sensitivity[1] = np.interp(
             self.spec["wave"],
             sens_data["wavelength"],
-            sens_data["sensitivity"],
+            sens_data["sensitivity"] * self.sensitivity_correction,
             left=1.0,
             right=1.0,
         )
+
         # Avoid divide by zero
-        self.sensitivity[self.sensitivity == 0] = 1.0
+        self.sensitivity_mask = 0
+        self.sensitivity[1][self.sensitivity == 0] = 1.0
 
-        if "sensitivity_2" in sens_data.colnames:
-            self.sensitivity_2 = np.interp(
-                self.spec["wave"],
-                sens_data["wavelength"] * 2,
-                sens_data["sensitivity_2"],
-                left=0.0,
-                right=0.0,
-            )
-            if np.nanmax(self.sensitivity_2) == 0:
-                self.sensitivity_2 = None
+        for order in range(2, 5):
+            if f"sensitivity_{order}" in sens_data.colnames:
+                sens_i = np.interp(
+                    self.spec["wave"],
+                    sens_data["wavelength"] * order,
+                    sens_data[f"sensitivity_{order}"]
+                    * self.sensitivity_correction,
+                    left=0.0,
+                    right=0.0,
+                )
+                if np.nanmax(sens_i) == 0:
+                    self.sensitivity[order] = None
+                else:
+                    self.sensitivity[order] = sens_i
 
-        else:
-            self.sensitivity_2 = None
-
-        if "sensitivity_3" in sens_data.colnames:
-            self.sensitivity_3 = np.interp(
-                self.spec["wave"],
-                sens_data["wavelength"] * 3,
-                sens_data["sensitivity_3"],
-                left=0.0,
-                right=0.0,
-            )
-            if np.nanmax(self.sensitivity_3) == 0:
-                self.sensitivity_3 = None
-        else:
-            self.sensitivity_3 = None
+            else:
+                self.sensitivity[order] = None
 
 
 def smooth_template_disp_eazy(
