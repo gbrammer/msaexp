@@ -582,6 +582,7 @@ class SlitGroup:
         slit_hotpix_kwargs={},
         sky_arrays=None,
         sky_file="read",
+        set_background_spectra_kwargs={},
         global_sky_df=7,
         estimate_sky_kwargs=None,
         flag_profile_kwargs=None,
@@ -975,6 +976,9 @@ class SlitGroup:
 
         if fit_shutter_offset_kwargs is not None:
             self.fit_shutter_offset(**fit_shutter_offset_kwargs)
+
+        if set_background_spectra_kwargs is not None:
+            self.set_background_spectra(**set_background_spectra_kwargs)
 
         self.fit = None
 
@@ -1503,7 +1507,7 @@ class SlitGroup:
             needs_sflat = (j == 0) & (slit.meta.exposure.type == "NRS_MSASPEC")
             needs_sflat &= msautils.slit_data_from_extended_reference(slit)
             needs_sflat &= with_sflat_correction
-            needs_sflat &= slit.meta.instrument.grating.upper() == 'PRISM'
+            needs_sflat &= slit.meta.instrument.grating.upper() == "PRISM"
 
             if needs_sflat:
                 sflat_data = msautils.msa_slit_sflat(
@@ -1612,8 +1616,10 @@ class SlitGroup:
         self.bkg_mask = mask & True
         self.var_rnoise = var_rnoise * phot_corr**2
         self.var_poisson = var_poisson * phot_corr**2
+        self.var_sky = np.zeros_like(sci)
 
         self.sflat_data = sflat_data
+        self.pathloss_corr = np.ones_like(self.sci)
 
         for j, slit in enumerate(slits):
 
@@ -1635,10 +1641,11 @@ class SlitGroup:
                         utils.log_comment(
                             utils.LOGFILE, msg, verbose=VERBOSE_LOG
                         )
-
-                        phot_scl *= (
+                        path_j_ = (
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
                         )
+                        phot_scl *= path_j_
+                        self.pathloss_corr[j, :] *= path_j_
                         self.meta["removed_pathloss"] = pl_ext
                     else:
                         msg = f"   {self.files[j]} source_type={slit.source_type} "
@@ -1659,11 +1666,12 @@ class SlitGroup:
                             sim[pl_ps].data.astype(sci.dtype)[sl].flatten()
                         )
 
+            self.phot_corr[j, :] *= phot_scl
             self.sci[j, :] *= phot_scl
             self.var_rnoise[j, :] *= phot_scl**2
             self.var_poisson[j, :] *= phot_scl**2
 
-        self.var_total = self.var_rnoise + self.var_poisson
+        self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
 
         self.xslit = xslit
         self.yslit = yslit
@@ -1859,6 +1867,71 @@ class SlitGroup:
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
+
+    def set_background_spectra(self, path="", **kwargs):
+        """
+        Try to read global sky background spectra
+        """
+
+        bkg_files = []
+        for j, slit in enumerate(self.slits):
+            file_root = "_".join(slit.meta.filename.split("_")[:4])
+            bkg_file = os.path.join(path, file_root + "_gbkg.fits")
+            if os.path.exists(bkg_file):
+                bkg_files.append(bkg_file)
+
+        if len(bkg_files) != len(self.slits):
+            return None
+
+        self.sky_data = {"use": True, "sky2d": np.zeros_like(self.sci)}
+
+        for j, slit in enumerate(self.slits):
+            file_root = "_".join(slit.meta.filename.split("_")[:4])
+            bkg_file = file_root + "_gbkg.fits"
+            if os.path.exists(bkg_file):
+                msg = (
+                    f"{__name__} set_background_spectra: read file {bkg_file}"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+                bkg_ = utils.read_catalog(bkg_file)
+
+                sky_ = np.interp(
+                    self.wave[j, :],
+                    bkg_["wave"],
+                    bkg_["p50"],
+                    left=0,
+                    right=0.0,
+                )
+
+                esky_ = np.interp(
+                    self.wave[j, :],
+                    bkg_["wave"],
+                    bkg_["perr"],
+                    left=0,
+                    right=0.0,
+                )
+
+                if "REFPAREA" in bkg_.meta:
+                    ref_pixarea = bkg_.meta["REFPAREA"]
+                else:
+                    ref_pixarea = 4.88e-13
+
+                area_corr = (
+                    slit.meta.photometry.pixelarea_steradians / ref_pixarea
+                )
+                sky_ *= (
+                    self.phot_corr[j, :] / self.pathloss_corr[j, :] / area_corr
+                )
+                esky_ *= (
+                    self.phot_corr[j, :] / self.pathloss_corr[j, :] / area_corr
+                )
+                vsky_ = esky_**2 + (0.03 * sky_) ** 2
+                self.sky_data["sky2d"][j, :] = sky_
+                self.var_sky[j, :] = vsky_
+
+        self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
+        self.mask &= np.isfinite(self.var_total) & (self.var_total > 0)
 
     def estimate_sky(
         self,
@@ -2542,7 +2615,7 @@ class SlitGroup:
 
         self.mask &= np.isfinite(corr)
 
-        self.var_total = self.var_poisson + self.var_rnoise
+        self.var_total = self.var_poisson + self.var_rnoise + self.var_sky
 
     def apply_spline_bar_correction(self):
         """
@@ -2608,7 +2681,7 @@ class SlitGroup:
         self.sci *= self.bar / bar
         self.var_rnoise *= (self.bar / bar) ** 2
         self.var_poisson *= (self.bar / bar) ** 2
-        self.var_total = self.var_poisson + self.var_rnoise
+        self.var_total = self.var_poisson + self.var_rnoise + self.var_sky
 
         self.orig_bar = self.bar * 1
         self.bar = bar * 1
@@ -3549,9 +3622,7 @@ class SlitGroup:
 
         fix_sigma = sn_value < sigma_threshold
 
-        msg = (
-            f"fit_params_by_sn: {self.name}"  # {degree_sn[0]} {degree_sn[1]}'
-        )
+        msg = f" fit_params_by_sn{' ':>12}: {self.name}"  # {degree_sn[0]} {degree_sn[1]}'
         msg += f"  SN({sn_percentile:.0f}%) = {sn_value:.1f}  fix_sigma={fix_sigma}"
         msg += f"  degree={interp_degree} "
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
@@ -3995,17 +4066,26 @@ def obj_header(obj, index=0):
     # Exposure time
     for i, sl in enumerate(obj.slits):
         # Shutter quadrant
-        if (i == 0):
-            if (sl.quadrant is not None):
-                header['SHUTTRQ'] = (sl.quadrant, 'MSA quadrant of first slitlet')
-                header['SHUTTRX'] = (sl.xcen, 'MSA shutter row/xcen of first slitlet')
-                header['SHUTTRY'] = (sl.ycen, 'MSA shutter col/ycen of first slitlet')
+        if i == 0:
+            if sl.quadrant is not None:
+                header["SHUTTRQ"] = (
+                    sl.quadrant,
+                    "MSA quadrant of first slitlet",
+                )
+                header["SHUTTRX"] = (
+                    sl.xcen,
+                    "MSA shutter row/xcen of first slitlet",
+                )
+                header["SHUTTRY"] = (
+                    sl.ycen,
+                    "MSA shutter col/ycen of first slitlet",
+                )
             else:
-                header['SHUTTRQ'] = (5, 'Pseudo quadrant for fixed slit')
+                header["SHUTTRQ"] = (5, "Pseudo quadrant for fixed slit")
                 # header['SHUTTRX'] = (0, 'MSA shutter row/xcen')
                 # header['SHUTTRY'] = (0, 'MSA shutter col/ycen')
 
-        header[f'SFILE{i:03d}'] = os.path.basename(sl.meta.filename)
+        header[f"SFILE{i:03d}"] = os.path.basename(sl.meta.filename)
 
         fbase = sl.meta.filename.split("_nrs")[0]
         if fbase in files:
@@ -4802,7 +4882,7 @@ def set_lookup_prf(
         Use "M" versions of files for "H" gratings
 
     prism_merged : bool
-        Always use "merged" for PRISM, e..g, with ``lookup_prf_type="by_grating"``.
+        Always use "merged" for PRISM, e.g., with ``lookup_prf_type="by_grating"``.
 
     Returns
     -------
@@ -5273,7 +5353,7 @@ def extract_spectra(
             obj.mask &= np.isfinite(obj.sci)
 
     if mask_cross_dispersion is not None:
-        msg = f"{'slit_combine':<28}: mask_cross_dispersion {mask_cross_dispersion}"
+        msg = f" {'slit_combine':<28}: mask_cross_dispersion {mask_cross_dispersion}"
         msg += f"  cross_dispersion_mask_type={cross_dispersion_mask_type}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
