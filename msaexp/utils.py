@@ -2830,16 +2830,16 @@ def load_sflat_data(flat_file, verbose=True):
         msg = f"{__name__}: straighten sflat {flat_file} {SFLAT_STRAIGHTEN}"
         grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
 
-    if ('SM_WAVE' not in ftab.meta):
-        ftab.meta['SM_WAVE'] = 3.1
-        ftab.meta['SM_WIDTH'] = 0.7
-        ftab.meta['SM_SCALE'] = 0.8
+    if "SM_WAVE" not in ftab.meta:
+        ftab.meta["SM_WAVE"] = 3.1
+        ftab.meta["SM_WIDTH"] = 0.7
+        ftab.meta["SM_SCALE"] = 0.8
 
-    wsm = np.abs(ftab["wave"] - ftab.meta['SM_WAVE'])
-    ysm = (1 - np.exp(-(wsm**2) / 2 / ftab.meta['SM_WIDTH']**2))
-    ysm = ysm * ftab.meta['SM_SCALE'] + (1 - ftab.meta['SM_SCALE'])
+    wsm = np.abs(ftab["wave"] - ftab.meta["SM_WAVE"])
+    ysm = 1 - np.exp(-(wsm**2) / 2 / ftab.meta["SM_WIDTH"] ** 2)
+    ysm = ysm * ftab.meta["SM_SCALE"] + (1 - ftab.meta["SM_SCALE"])
     shutter_sflat = ((shutter_sflat.T - 1) * ysm + 1).T
-    msg = f"{__name__}: smooth middle of sflat {ftab.meta['SM_SCALE']}"
+    msg = f"   {__name__}.load_sflat_data: smooth middle of sflat {ftab.meta['SM_SCALE']}"
     grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
 
     ftab["shutter_sflat"] = shutter_sflat
@@ -2869,7 +2869,13 @@ def shutter_xcen_ycen_from_id(shutter_id):
 
 
 def msa_slit_sflat(
-    slit=None, qxy=None, slit_wave=None, apply=True, force=False, verbose=True
+    slit=None,
+    qxy=None,
+    flat_file=None,
+    slit_wave=None,
+    apply=True,
+    force=False,
+    verbose=True,
 ):
     """
     Field dependent S-Flat for MSA slitlets derived from empty sky spectra
@@ -2878,6 +2884,9 @@ def msa_slit_sflat(
     ----------
     slit : `~jwst.datamodels.SlitModel`
         Slitlet data object
+
+    flat_file : str
+        Explicit filename of coefficients file to use
 
     slit_wave : array-like, None
         Slit wavelengths.  If not provided, will calculate with
@@ -2917,11 +2926,13 @@ def msa_slit_sflat(
 
     quadrant, xcen, ycen = qxy
 
-    flat_file = os.path.join(
-        os.path.dirname(__file__),
-        "data/extended_sensitivity/",
-        "sflat_spl_coeffs_{0}_q{1}.fits".format("prism", quadrant),
-    )
+    if flat_file is None:
+        flat_file = os.path.join(
+            os.path.dirname(__file__),
+            "data/extended_sensitivity/",
+            "sflat_spl_coeffs_{0}_q{1}.fits".format("prism", quadrant),
+            # "sflat_lamp_spl_coeffs_q{1}.fits".format("prism", quadrant),
+        )
 
     if not os.path.exists(flat_file):
         msg = f"   msa_slit_sflat: {flat_file} not found"
@@ -2964,7 +2975,7 @@ def msa_slit_sflat(
 
     # Unreliable extrapolation
     sflat_data[sflat_data > 5] = np.nan
-    sflat_data[slit_wave > 5.50] = np.nan
+    sflat_data[slit_wave > 5.60] = np.nan
     sflat_data[slit_wave < 0.55] = np.nan
 
     if apply:
@@ -3138,6 +3149,17 @@ def slit_extended_flux_calibration(
     version="001",
     file_template="{prefix}_{grating}_{filter}_{version}.fits",
     threshold=0,
+    fixed_slit_correction=True,
+    quadrant_correction=True,
+    nrs2_scale_gratings=[
+        "PRISM",
+        "G140M",
+        "G140H",
+        "G235M",
+        "G235H",
+        "G395M",
+        "G395H",
+    ],
     verbose=True,
     **kwargs,
 ):
@@ -3159,6 +3181,21 @@ def slit_extended_flux_calibration(
         Template filename of the sensitivity curve to use, generated with
         ``file_template.format(prefix=prefix, filter=filter, grating=grating)``
 
+    fixed_slit_correction : bool, int
+        The sensitivity curves were derived from fixed slit observations and then
+        include a transformation from the FS to MSA.  If this is True and the ``slit``
+        is itself from a fixed slit observation, remove that correction to put the
+        sensitivity curve back in the frame of the fixed slits.  If an int value is
+        provided > 1, then correct to the FS frame even if the ``slit`` comes from the
+        MSA.
+
+    quadrant_correction : bool
+        Apply quadrant-specific correction if ``q[1-4]`` columns found in the
+        sensitivity table
+
+    nrs2_scale_gratings : list
+        List of gratings where the NRS2 / NRS1 correction will be applied if necessary
+
     verbose : bool
         Verbose messaging
 
@@ -3177,14 +3214,6 @@ def slit_extended_flux_calibration(
               and ``var_poisson`` attributes.
     """
 
-    # test = False
-    # refs = slit.meta.ref_file.instance
-    #
-    # if "fflat" in refs:
-    #     test |= "_ext.fits" in refs["fflat"]["name"]
-    #
-    # if "sflat" in refs:
-    #     test |= "_ext.fits" in refs["sflat"]["name"]
     is_extended = slit_data_from_extended_reference(slit)
 
     if not is_extended:
@@ -3226,13 +3255,18 @@ def slit_extended_flux_calibration(
     grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
 
     needs_det_correction = slit.meta.instrument.detector.upper() == "NRS2"
+    needs_det_correction &= (
+        slit.meta.instrument.grating.upper() in nrs2_scale_gratings
+    )
 
-    # Turn off, this is now handled in the MSA S-flat
-    # needs_det_correction = False
+    slit.detector_correction_type = None
 
     if needs_det_correction:
         msg = f"   slit_extended_flux_calibration: scale NRS2 to NRS1"
         grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+        det_correction = sens["nrs1_nrs2"]
+        slit.detector_correction_type = "nrs1_nrs2"
 
         # The correction nrs1_nrs2 is multiplied to the flux column,
         # so divide from senstivity here
@@ -3242,6 +3276,8 @@ def slit_extended_flux_calibration(
         else:
             sens["sensitivity"] /= sens["nrs1_nrs2"]
     else:
+        det_correction = np.ones_like(sens["wavelength"])
+
         if threshold < 0:
             sens["sensitivity"] = 1.0
 
@@ -3261,6 +3297,57 @@ def slit_extended_flux_calibration(
         right=np.nan,
     )
 
+    slit.sensitivity_correction = np.ones_like(phot_corr)
+    slit.sensitivity_correction_type = None
+
+    if "nrs1_s200a1" in sens.colnames:
+        if ("_SLIT" in slit.meta.aperture.name.upper()) | (
+            fixed_slit_correction > 1
+        ):
+            msg = (
+                "   slit_extended_flux_calibration: correction for Fixed Slit "
+                + f"{slit.meta.aperture.name.upper()}"
+            )
+
+            try:
+                slit.sensitivity_correction = np.interp(
+                    _wave,
+                    sens["wavelength"],
+                    sens["nrs1_s200a1"],
+                    left=np.nan,
+                    right=np.nan,
+                )
+                slit.sensitivity_correction_type = "nrs1_s200a1"
+            except (ValueError, TypeError):
+                msg += "  FAILED...."
+
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+
+    phot_corr *= slit.sensitivity_correction
+
+    slit.quadrant_correction = np.ones_like(phot_corr)
+    slit.quadrant_correction_type = None
+
+    if (slit.quadrant is not None) & (quadrant_correction):
+        qc = f"q{slit.quadrant}"
+        if (qc in sens.colnames) & (slit.quadrant < 4):
+            msg = f"   slit_extended_flux_calibration: {qc.upper()} quadrant correction"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+            slit.quadrant_correction = 1.0 / np.interp(
+                _wave,
+                sens["wavelength"],
+                sens[qc],
+                left=np.nan,
+                right=np.nan,
+            )
+            slit.quadrant_correction_type = qc.upper()
+
+    phot_corr *= slit.quadrant_correction
+
     phot_corr[~np.isfinite(phot_corr)] = 0
     valid = phot_corr > 0
 
@@ -3269,6 +3356,14 @@ def slit_extended_flux_calibration(
         phot_corr[phot_corr >= 1.0 / (max_sens * threshold)] = np.nan
     else:
         phot_corr[~valid] = np.nan
+
+    slit.detector_correction = np.interp(
+        _wave,
+        sens["wavelength"],
+        det_correction,
+        left=np.nan,
+        right=np.nan,
+    )
 
     slit.phot_corr = phot_corr
     # slit.data *= phot_corr
@@ -3306,6 +3401,8 @@ def cache_badpix_arrays():
             path_to_ref,
         )
 
+    return MSAEXP_BADPIX
+
 
 def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     """
@@ -3333,7 +3430,7 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     global MSAEXP_BADPIX
 
     if MSAEXP_BADPIX is None:
-        cache_badpix_arrays()
+        MSAEXP_BADPIX = cache_badpix_arrays()
 
     if dq_arr is None:
         dq_arr, flags, path_to_ref = MSAEXP_BADPIX[
