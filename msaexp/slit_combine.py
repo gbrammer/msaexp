@@ -1644,6 +1644,10 @@ class SlitGroup:
                         path_j_ = (
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
                         )
+
+                        if path_j_.size == 0:
+                            path_j_ = np.ones_like(self.pathloss_corr[j, :])
+
                         phot_scl *= path_j_
                         self.pathloss_corr[j, :] *= path_j_
                         self.meta["removed_pathloss"] = pl_ext
