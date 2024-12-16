@@ -3,6 +3,8 @@ Extend CRDS reference files for fixed-slit observations
 """
 
 import os
+import time
+
 import numpy as np
 import astropy.io.fits as pyfits
 import astropy.table
@@ -16,6 +18,7 @@ from jwst.flatfield import FlatFieldStep
 from jwst.pathloss import PathLossStep
 from jwst.barshadow import BarShadowStep
 from jwst.photom import PhotomStep
+from jwst.assign_wcs.util import NoDataOnDetectorError
 
 from jwst.assign_wcs.assign_wcs import load_wcs
 from jwst.flatfield import flat_field
@@ -25,6 +28,7 @@ from grizli import utils
 import msaexp.utils as msautils
 from .msa import slit_best_source_alias
 from . import pipeline
+from .fork.assign_wcs.nirspec import zeroth_order_mask
 
 # NEW_WAVERANGE_REF = "jwst_nirspec_wavelengthrange_0008_ext.asdf"
 
@@ -338,6 +342,13 @@ def extend_sflat(
 
     sf.dq -= sf.dq & 2**18
 
+    # Reset all
+    msg = f"{log_prefix} {fbase} Set unity SFlat SCI"
+    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+    sf.data = np.ones_like(sf.data)
+    sf.err = np.ones_like(sf.data) * 1.0e-3
+
     # Just reset wavelength metadata, don't add extensions
     head_ = sf.extra_fits.SCI.header
     nflat = sf.data.shape[0]
@@ -590,12 +601,20 @@ def extend_pathloss(
             continue
 
         if h["NAXIS"] == 3:
-            key = "CRVAL3"
+            crval = "CRVAL3"
+            cdelt = "CDELT3"
+            naxis = "NAXIS3"
         else:
-            key = "CRVAL1"
+            crval = "CRVAL1"
+            cdelt = "CDELT1"
+            naxis = "NAXIS1"
 
-        to_meters = 1.0e-6 if h[key] < 1.0e-5 else 1.0
-        h[key] = full_range[0] * to_meters
+        to_meters = 1.0e-6 if h[crval] < 1.0e-5 else 1.0
+        h[crval] = full_range[0] * to_meters
+
+        max_wavelength = h[crval] + h[naxis] * h[cdelt]
+        if max_wavelength / to_meters < full_range[1]:
+            h[cdelt] = (full_range[1] * to_meters - h[crval]) / h[naxis]
 
     return hdu
 
@@ -671,6 +690,9 @@ def run_pipeline(
     preprocess_kwargs={},
     ranges=EXTENDED_RANGES,
     make_trace_figures=False,
+    run_pathloss=True,
+    run_barshadow=True,
+    mask_zeroth_kwargs={},
     **kwargs,
 ):
     """
@@ -712,6 +734,12 @@ def run_pipeline(
     make_trace_figures : bool
         Make some diagnostic figures
 
+    run_pathloss : bool
+        Run PathLoss step for MSA exposures
+
+    run_barshadow : bool
+        Run BarShadow step for MSA exposures
+
     Returns
     -------
     result : None, `jwst.datamodels.MultiSlitModel`
@@ -720,8 +748,6 @@ def run_pipeline(
         ``NoDataOnDetectorError`` exception.
 
     """
-    import time
-    from jwst.assign_wcs.util import NoDataOnDetectorError
 
     ORIG_LOGFILE = utils.LOGFILE
     if set_log:
@@ -746,6 +772,19 @@ def run_pipeline(
         # 1/f, bias & rnoise
         status = pipeline.exposure_detector_effects(file, **preprocess_kwargs)
 
+    # Mask zeroth orders
+    if mask_zeroth_kwargs is not None:
+        with pyfits.open(file, mode='update') as hdul:
+            with jwst.datamodels.open(hdul) as input_model:
+                dq, slits_, bounding_boxes = zeroth_order_mask(
+                    input_model,
+                    **mask_zeroth_kwargs
+                )
+                hdul['DQ'].data |= dq
+            
+            hdul.flush()
+            
+
     wstep = AssignWcsStep()
 
     msg = f"{file} AssignWCS"
@@ -761,6 +800,7 @@ def run_pipeline(
         )
         new_waverange = new_waverange.replace(".asdf", "_ext.asdf")
 
+        print(f"extend_wavelengthrange: {new_waverange}")
         if not os.path.exists(new_waverange):
             extend_wavelengthrange(
                 ref_file=os.path.basename(
@@ -813,7 +853,10 @@ def run_pipeline(
 
     _slit = ext2d[slit_index]
 
-    targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
+    if _slit.meta.target.catalog_name is not None:
+        targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
+    else:
+        targ_ = 'cat'
 
     inst_key = (
         f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"
@@ -952,8 +995,7 @@ def run_pipeline(
         override_dflat=flat_reference_files["dflat"],
     )
 
-    if ext2d.meta.exposure.type == "NRS_MSASPEC":
-
+    if run_pathloss:
         ##########
         # PathLoss
         msg = f"{file} NRS_MSASPEC run PathLossStep"
@@ -979,38 +1021,44 @@ def run_pipeline(
             )
         else:
             path_result = path_step.call(flat_corr)
-
-        ###########
-        # BarShadow
-        msg = f"{file} NRS_MSASPEC run BarShadowStep"
-        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-
-        bar_step = BarShadowStep()
-
-        bar_filename = bar_step.get_reference_file(path_result, "barshadow")
-
-        if full_range is not None:
-            new_bar_filename = os.path.basename(bar_filename).replace(
-                ".fits", "_ext.fits"
-            )
-
-            if not os.path.exists(new_bar_filename):
-                bar_hdul = extend_barshadow(
-                    bar_filename, full_range=full_range
-                )
-                bar_hdul.writeto(new_bar_filename, overwrite=True)
-                bar_hdul.close()
-
-            bar_result = bar_step.call(
-                path_result, override_barshadow=new_bar_filename
-            )
-        else:
-            bar_result = bar_step.call(path_result)
-
-        last_result = bar_result
-
     else:
-        last_result = flat_corr
+        path_result = flat_corr
+
+    last_result = path_result
+
+    if ext2d.meta.exposure.type == "NRS_MSASPEC":
+
+        if run_barshadow:
+            ###########
+            # BarShadow
+            msg = f"{file} NRS_MSASPEC run BarShadowStep"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+            bar_step = BarShadowStep()
+
+            bar_filename = bar_step.get_reference_file(
+                path_result, "barshadow"
+            )
+
+            if full_range is not None:
+                new_bar_filename = os.path.basename(bar_filename).replace(
+                    ".fits", "_ext.fits"
+                )
+
+                if not os.path.exists(new_bar_filename):
+                    bar_hdul = extend_barshadow(
+                        bar_filename, full_range=full_range
+                    )
+                    bar_hdul.writeto(new_bar_filename, overwrite=True)
+                    bar_hdul.close()
+
+                bar_result = bar_step.call(
+                    path_result, override_barshadow=new_bar_filename
+                )
+            else:
+                bar_result = bar_step.call(path_result)
+
+            last_result = bar_result
 
     ########
     # Photom
@@ -1057,6 +1105,8 @@ def run_pipeline(
         fig.tight_layout(pad=1)
 
         fig.savefig(f"{slit_prefix_}_final.png".lower())
+
+    # result.write(os.path.basename(file).replace('_rate.fits', '_photom.fits'))
 
     ########
     # Write calibrated slitlet files
