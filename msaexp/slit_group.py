@@ -11,6 +11,8 @@ import jwst.datamodels
 from grizli import utils
 import matplotlib.pyplot as plt
 
+from .msa import slit_best_source_alias
+
 # Standard error on the median
 SE_MEDIAN = 1.2533
 
@@ -23,6 +25,8 @@ from msaexp.pipeline_extended import (
 ranges = EXTENDED_RANGES
 ranges["CLEAR_PRISM"] = [0.5, 5.7]
 ranges["F290LP_G395M"] = [2.5, 5.6]
+
+VERBOSITY = True
 
 
 def load_used_flat_models(
@@ -353,6 +357,75 @@ class NirspecCalibrated:
 
         for slit in self.fs_photom.slits:
             flat_profile = msautils.fixed_slit_flat_field(slit, apply=True)
+
+    def write_slitlet_files(
+        self,
+    ):
+        """
+        Write individual slitlet files
+        """
+        if not hasattr(self, "photom"):
+            msg = "failed: photom and fs_photom SlitGroups missing"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+            return None
+
+        for slit_obj in [self.photom, self.fs_photom]:
+            # flat_reference_files = load_used_flat_models(slit_obj)
+            ref_files = slit_obj.meta.ref_file.instance
+
+            for _slit in slit_obj.slits:
+                catalog_name_ = _slit.meta.target.catalog_name
+                if catalog_name_ is not None:
+                    targ_ = catalog_name_.replace(" ", "-").replace("_", "-")
+                else:
+                    targ_ = "cat"
+
+                inst_key = f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"
+
+                root_ = self.file.split("_rate")[0]
+                if _slit.meta.exposure.type == "NRS_FIXEDSLIT":
+                    slit_prefix_ = f"{root_}_{targ_}_{inst_key}_{_slit.name}"
+                else:
+                    if "_ext" in ref_files["fflat"]["name"]:
+                        plabel = "raw"
+                    else:
+                        plabel = "phot"
+
+                    try:
+                        source_alias = slit_best_source_alias(
+                            _slit,
+                            require_primary=False,
+                            which="min",
+                            verbose=False,
+                        )
+                    except:
+                        source_alias = _slit.source_name
+
+                    slit_prefix_ = (
+                        f"{root_}_{inst_key}_{plabel}."
+                        + f"{_slit.name}.{source_alias}"
+                    )
+
+                slit_file = slit_prefix_.lower() + ".fits"
+
+                msg = f"slit_group.MultiSlitGroup: write slitlet {slit_file}"
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+                slit_model = jwst.datamodels.SlitModel(_slit.instance)
+                slit_model.write(slit_file, overwrite=True)
+
+                with pyfits.open(slit_file, mode="update") as im:
+                    im[0].header["NOFLAT"] = (
+                        True,
+                        "Dummy flat field with extended wavelength references",
+                    )
+
+                    for ftype in ["fflat", "sflat", "dflat", "photom"]:
+                        im[0].header["R_" + ftype.upper()] = ref_files[ftype][
+                            "name"
+                        ]
+
+                    im.flush()
 
     def slits_to_full_frame(
         self, area_correction=False, shutter_pad=0.5, **kwargs
