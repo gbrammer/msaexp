@@ -37,6 +37,8 @@ BAD_PIXEL_NAMES = [
 
 BAD_PIXEL_FLAG = 1 | 1024
 
+# Valid NRS pixels ((ymin, ymax), (xmin, xmax))
+DETECTOR_EDGES = ((0, 2048), (0, 2038))
 
 def _set_bad_pixel_flag():
     """
@@ -3376,7 +3378,13 @@ def slit_extended_flux_calibration(
 
 def cache_badpix_arrays():
     """
-    Load badpixel arrays into global data
+    Load bad pixel arrays into global dictionaries
+
+    Returns
+    -------
+    MSAEXP_BADPIX : dict
+        Bad pixel data with keys "NRS1" and "NRS2" and values ``(dq, flags, path)``.
+        This is also cached as a global variable on `msaexp.utils.MSAEXP_BADPIX`.
     """
     global MSAEXP_BADPIX
 
@@ -3406,7 +3414,10 @@ def cache_badpix_arrays():
 
 def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     """
-    Set extra DQ flags, including a big stuck open shutter on NRS1
+    Set extra DQ flags, including a big stuck open shutter on NRS1.
+
+    Includes edge mask from
+    ``msaexp.utils.DETECTOR_EDGES = ((ymin, ymax), (xmin, xmax))``.
 
     Parameters
     ----------
@@ -3427,7 +3438,7 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     """
     import yaml
 
-    global MSAEXP_BADPIX
+    global MSAEXP_BADPIX, BAD_PIXEL_FLAG, DETECTOR_EDGES
 
     if MSAEXP_BADPIX is None:
         MSAEXP_BADPIX = cache_badpix_arrays()
@@ -3443,6 +3454,12 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
 
     slx = slice(slit.xstart - 1, slit.xstart - 1 + slit.xsize)
     sly = slice(slit.ystart - 1, slit.ystart - 1 + slit.ysize)
+
+    if DETECTOR_EDGES is not None:
+        yp, xp = np.indices((2048, 2048))
+        outside_edges = (yp < DETECTOR_EDGES[0][0]) | (yp > DETECTOR_EDGES[0][1])
+        outside_edges |= (xp < DETECTOR_EDGES[1][0]) | (xp > DETECTOR_EDGES[1][1])
+        dq_arr[outside_edges] |= BAD_PIXEL_FLAG
 
     dq = dq_arr[sly, slx]  # .reshape(dq_data["shape"])[sly, slx]
 
