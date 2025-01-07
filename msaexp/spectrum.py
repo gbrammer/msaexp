@@ -2672,7 +2672,7 @@ def read_spectrum(
         valid &= spec["err"] > _min_err
 
     if err_median_filter is not None:
-        med = nd.median_filter(spec["err"][valid], err_median_filter[0])
+        med = nd.median_filter(spec["err"][valid].astype(float), err_median_filter[0])
         medi = np.interp(
             spec["wave"], spec["wave"][valid], med, left=0, right=0
         )

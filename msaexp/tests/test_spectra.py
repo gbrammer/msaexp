@@ -186,7 +186,7 @@ def sampler_checks(spec, with_numba=False):
             kws = dict(
                 scale_disp=s,
                 velocity_sigma=v,
-                extra_orders=False
+                orders=[1]
             )
 
             gau = spec.emission_line(line_um, line_flux=1, **kws)
