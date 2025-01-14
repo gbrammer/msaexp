@@ -258,6 +258,8 @@ class SpectrumSampler(object):
 
         self.sensitivity_file = None
         self.sensitivity = {1: 1.0}
+        self.inv_sensitivity = 1.0
+
         for i in range(1, 4):
             self.sensitivity[i + 1] = None
 
@@ -438,7 +440,10 @@ class SpectrumSampler(object):
                 nsig=nsig,
             )
 
-            res += res_i * self.sensitivity[order] / self.sensitivity[1]
+            if order != 1:
+                res += res_i * self.sensitivity[order] * self.inv_sensitivity
+            else:
+                res += res_i
 
         return res
 
@@ -542,7 +547,10 @@ class SpectrumSampler(object):
                 velocity_sigma=velocity_sigma,
             )
 
-            res += res_i * self.sensitivity[order] / self.sensitivity[1]
+            if order != 1:
+                res += res_i * self.sensitivity[order] * self.inv_sensitivity
+            else:
+                res += res_i
 
         return res
 
@@ -616,9 +624,6 @@ class SpectrumSampler(object):
         else:
             bspl1 = None
 
-        inv_order1 = 1.0 / self.sensitivity[1]
-        inv_order1[~np.isfinite(inv_order1)] = 0
-
         for order in orders:
             if order == 1:
                 # Computed above
@@ -639,7 +644,7 @@ class SpectrumSampler(object):
                         left=0,
                         right=0,
                     )
-                    extra *= self.sensitivity[order] * inv_order1
+                    extra *= self.sensitivity[order] * self.inv_sensitivity
                     extra[~np.isfinite(extra)] = 0
                     bspl[:, i] += extra
             else:
@@ -651,7 +656,7 @@ class SpectrumSampler(object):
                         left=0,
                         right=0,
                     )
-                    extra *= self.sensitivity[order] * inv_order1
+                    extra *= self.sensitivity[order] * self.inv_sensitivity
                     extra[~np.isfinite(extra)] = 0
                     bspl[t].flux += extra
 
@@ -879,7 +884,7 @@ class SpectrumSampler(object):
                 wave_scale=order,
             )
             spectrum += (
-                spectrum_i * self.sensitivity[order] / self.sensitivity[1]
+                spectrum_i * self.sensitivity[order] * self.inv_sensitivity
             )
 
         return spectrum
@@ -982,13 +987,13 @@ class SpectrumSampler(object):
             self.spec["wave"],
             sens_data["wavelength"],
             sens_data["sensitivity"] * self.sensitivity_correction,
-            left=1.0,
-            right=1.0,
+            left=0.0,
+            right=0.0,
         )
 
-        # Avoid divide by zero
-        self.sensitivity_mask = 0
-        self.sensitivity[1][self.sensitivity == 0] = 1.0
+        # Precompute inv_sensitivity = 1 / sensitivity[1] to avoid divide by zero
+        self.inv_sensitivity = 1.0 / self.sensitivity[1]
+        self.inv_sensitivity[~np.isfinite(self.inv_sensitivity)] = 0.0
 
         for order in range(2, 5):
             if f"sensitivity_{order}" in sens_data.colnames:
@@ -2665,14 +2670,16 @@ def read_spectrum(
     valid &= spec["err"] > 0
     valid &= spec["flux"] != 0
 
-    if (valid.sum() > 0) & (err_mask is not None):
+    if (err_mask is not None) & (valid.sum() > 0):
         _min_err = (
             np.nanpercentile(spec["err"][valid], err_mask[0]) * err_mask[1]
         )
         valid &= spec["err"] > _min_err
 
-    if err_median_filter is not None:
-        med = nd.median_filter(spec["err"][valid].astype(float), err_median_filter[0])
+    if (err_median_filter is not None) & (valid.sum() > 0):
+        med = nd.median_filter(
+            spec["err"][valid].astype(float), err_median_filter[0]
+        )
         medi = np.interp(
             spec["wave"], spec["wave"][valid], med, left=0, right=0
         )
