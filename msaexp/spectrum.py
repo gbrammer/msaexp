@@ -1249,9 +1249,6 @@ def smooth_template_disp(
     return tsmooth
 
 
-SMOOTH_TEMPLATE_DISP_FUNC = smooth_template_disp_eazy
-
-
 def fit_redshift(
     file="jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits",
     z0=[0.2, 10],
@@ -1914,298 +1911,6 @@ def make_templates(
     return templates, np.array(tline), _A
 
 
-def old_make_templates(
-    wobs,
-    z,
-    wfull,
-    wmask=None,
-    bspl={},
-    eazy_templates=None,
-    vel_width=100,
-    broad_width=4000,
-    broad_lines=[],
-    scale_disp=1.3,
-    use_full_dispersion=False,
-    disp=None,
-    grating="prism",
-    halpha_prism=["Ha+NII"],
-    oiii=["OIII"],
-    o4363=[],
-    sii=["SII"],
-    lorentz=False,
-    **kwargs,
-):
-    """
-    Generate fitting templates
-
-    wobs : array
-        Observed-frame wavelengths of the spectrum to fit, microns
-
-    z : float
-        Redshift
-
-    wfull : array
-        Full wavelength array of the templates
-
-    wmask : array-like
-        Boolean mask on `wobs` for valid data
-
-    bspl : dict
-        Spline templates for dummy continuum
-
-    eazy_templates : list
-        Optional list of `eazy.templates.Template` template objects to use in
-        place of the spline + line templates
-
-    vel_width : float
-        Velocity width of the individual emission line templates
-
-    broad_width : float
-        Velocity width of the broad emission line templates
-
-    broad_lines : list
-        List of line template names to be modeled as broad lines
-
-    scale_disp : float
-        Scaling factor for the dispersion of the emission line templates
-
-    grating : str
-        Grating used for the observation
-
-    halpha_prism : ['Ha+NII'], ['Ha','NII']
-        Line template names to use for Halpha and [NII], i.e., ``['Ha+NII']``
-        fits with a fixed line ratio and `['Ha','NII']` fits them separately
-        but with a fixed line ratio 6548:6584 = 1:3
-
-    oiii : ['OIII'], ['OIII-4959','OIII-5007']
-        Similar for [OIII]4959+5007, ``['OIII']`` fits as a doublet with fixed
-        ratio 4959:5007 = 1:2.98 and ``['OIII-4949', 'OIII-5007']`` fits them
-        independently.
-
-    o4363 : [] or ['OIII-4363']
-        How to fit [OIII]4363.
-
-    sii : ['SII'], ['SII-6717','SII-6731']
-        [SII] doublet
-
-    lorentz : bool
-        Use Lorentzian profile for lines
-
-    use_full_dispersion : bool
-        Whether to use the full dispersion information in the templates
-
-    disp : dict
-        Dispersion information for the templates
-
-    Returns
-    -------
-    templates : list
-        List of the computed template objects
-
-    tline : array
-        Boolean list of which templates are line components
-
-    _A : (NT, NWAVE) array
-        Design matrix of templates interpolated at `wobs`
-
-    """
-    from grizli import utils
-
-    lw, lr = utils.get_line_wavelengths()
-
-    wrest = wobs / (1 + z) * 1.0e4
-
-    if wmask is None:
-        wmask = np.isfinite(wobs)
-
-    wmin = wobs[wmask].min()
-    wmax = wobs[wmask].max()
-
-    if eazy_templates is None:
-        templates = {}
-        for k in bspl:
-            templates[k] = bspl[k]
-
-        # templates = {}
-        if grating in ["prism"]:
-            hlines = ["Hb", "Hg", "Hd"]
-
-            if z > 4:
-                oiii = ["OIII-4959", "OIII-5007"]
-                hene = ["HeII-4687", "NeIII-3867", "HeI-3889"]
-                o4363 = ["OIII-4363"]
-
-            else:
-                # oiii = ['OIII']
-                hene = ["HeI-3889"]
-                # o4363 = []
-
-            # sii = ['SII']
-            # sii = ['SII-6717', 'SII-6731']
-
-            hlines += halpha_prism + ["NeIII-3968"]
-            fuv = ["OIII-1663"]
-            oii_7320 = ["OII-7325"]
-            extra = []
-
-        else:
-            hlines = ["Hb", "Hg", "Hd", "H8", "H9", "H10", "H11", "H12"]
-
-            hene = ["HeII-4687", "NeIII-3867"]
-            o4363 = ["OIII-4363"]
-            oiii = ["OIII-4959", "OIII-5007"]
-            sii = ["SII-6717", "SII-6731"]
-            hlines += ["Ha", "NII-6549", "NII-6584"]
-            hlines += ["H7", "NeIII-3968"]
-            fuv = ["OIII-1663", "HeII-1640", "CIV-1549"]
-            oii_7320 = ["OII-7323", "OII-7332"]
-
-            extra = ["HeI-6680", "SIII-6314"]
-
-        for li in [
-            *hlines,
-            *oiii,
-            *o4363,
-            "OII",
-            *hene,
-            *sii,
-            *oii_7320,
-            "ArIII-7138",
-            "ArIII-7753",
-            "SIII-9068",
-            "SIII-9531",
-            "OI-6302",
-            "PaD",
-            "PaG",
-            "PaB",
-            "PaA",
-            "HeI-1083",
-            "BrA",
-            "BrB",
-            "BrG",
-            "BrD",
-            "PfB",
-            "PfG",
-            "PfD",
-            "PfE",
-            "Pa8",
-            "Pa9",
-            "Pa10",
-            "HeI-5877",
-            *fuv,
-            "CIII-1906",
-            "NIII-1750",
-            "Lya",
-            "MgII",
-            "NeV-3346",
-            "NeVI-3426",
-            "HeI-7065",
-            "HeI-8446",
-            *extra,
-        ]:
-
-            if li not in lw:
-                continue
-
-            lwi = lw[li][0] * (1 + z)
-
-            if lwi < wmin * 1.0e4:
-                continue
-
-            if lwi > wmax * 1.0e4:
-                continue
-
-            name = f"line {li}"
-
-            for i, (lwi0, lri) in enumerate(zip(lw[li], lr[li])):
-                lwi = lwi0 * (1 + z)
-                disp_r = (
-                    np.interp(lwi / 1.0e4, disp["WAVELENGTH"], disp["R"])
-                    * scale_disp
-                )
-
-                if li in broad_lines:
-                    vel_i = broad_width
-                else:
-                    vel_i = vel_width
-
-                fwhm_ang = np.sqrt(
-                    (lwi / disp_r) ** 2 + (vel_i / 3.0e5 * lwi) ** 2
-                )
-
-                # print(f'Add component: {l} {lwi0} {lri}')
-
-                if i == 0:
-                    templates[name] = utils.SpectrumTemplate(
-                        wave=wfull,
-                        flux=None,
-                        central_wave=lwi,
-                        fwhm=fwhm_ang,
-                        name=name,
-                        lorentz=lorentz,
-                    )
-                    templates[name].flux *= lri / np.sum(lr[li])
-                else:
-                    templates[name].flux += (
-                        utils.SpectrumTemplate(
-                            wave=wfull,
-                            flux=None,
-                            central_wave=lwi,
-                            fwhm=fwhm_ang,
-                            lorentz=lorentz,
-                            name=name,
-                        ).flux
-                        * lri
-                        / np.sum(lr[li])
-                    )
-
-        _, _A, tline = utils.array_templates(
-            templates,
-            max_R=10000,
-            wave=wobs.astype(float) * 1.0e4,
-            apply_igm=False,
-        )
-
-        igmz = IGM_FUNC(z, wobs.value * 1.0e4)
-        _A *= np.maximum(igmz, 0.01)
-    else:
-        templates = {}
-        if use_full_dispersion:
-            _A = []
-            tline = np.zeros(len(eazy_templates), dtype=bool)
-            for i, t in enumerate(eazy_templates):
-                templates[t.name] = 0.0
-                tflam = SMOOTH_TEMPLATE_DISP_FUNC(
-                    t,
-                    wobs,
-                    disp,
-                    z,
-                    velocity_fwhm=vel_width,
-                    scale_disp=scale_disp,
-                    flambda=True,
-                )
-                _A.append(tflam)
-                tline[i] = t.name.startswith("line ")
-
-            _A = np.array(_A)
-        else:
-            for t in eazy_templates:
-                tflam = t.flux_flam(z=z)
-                templates[t.name] = utils.SpectrumTemplate(
-                    wave=t.wave, flux=tflam, name=t.name
-                )
-
-            # ToDo: smooth with dispersion
-            _, _A, tline = utils.array_templates(
-                templates, max_R=10000, wave=wrest, z=z, apply_igm=True
-            )
-
-            for i in range(len(templates)):
-                _A[i, :] = nd.gaussian_filter(_A[i, :], 0.5)
-
-    return templates, tline, _A
-
-
 def fit_redshift_grid(
     file="jw02767005001-02-clear-prism-nrs2-2767_11027.spec.fits",
     zgrid=None,
@@ -2272,7 +1977,6 @@ def fit_redshift_grid(
             vel_width=vel_width,
             scale_disp=scale_disp,
             use_full_dispersion=use_full_dispersion,
-            disp=spec.disp,
             grating=spec.grating,
             **kwargs,
         )
@@ -2697,20 +2401,14 @@ def read_spectrum(
     _filter = spec.meta["FILTER"].lower()
 
     if "R" not in spec.colnames:
-        _data_path = os.path.dirname(__file__)
-        disp = utils.read_catalog(
-            f"{_data_path}/data/jwst_nirspec_{grating}_disp.fits"
+        R_fwhm = msautils.get_default_resolution_curve(
+            grating=grating,
+            wave=spec['wave'],
+            # grating_degree=2 default poly fit for gratings
+            **kwargs
         )
-
-        spec.disp = disp
-
-        spec["R"] = np.interp(
-            spec["wave"],
-            disp["WAVELENGTH"],
-            disp["R"],
-            left=disp["R"][0],
-            right=disp["R"][-1],
-        )
+        spec["R"] = R_fwhm
+        spec["R"].description = "Spectral resolution from tabulated curves"
 
     spec.grating = grating
     spec.filter = _filter
@@ -2905,7 +2603,6 @@ def plot_spectrum(
         vel_width=vel_width,
         scale_disp=scale_disp,
         use_full_dispersion=use_full_dispersion,
-        disp=spec.disp,
         grating=spec.grating,
         apply_igm=apply_igm,
         **kwargs,

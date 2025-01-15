@@ -30,6 +30,58 @@ def test_wavelength_grids():
     grid = utils.get_standard_wavelength_grid("prism", free_prism=False)
 
 
+def test_resolution_curves():
+    """
+    """
+    for gr in utils.GRATING_LIMITS:
+
+        wgrid = utils.get_standard_wavelength_grid(gr)
+
+        for grating in [gr.upper(), gr.lower()]:
+            # calculate grid internally
+            R = utils.get_default_resolution_curve(
+                grating=grating,
+                wave=None,
+                grating_degree=2
+            )
+
+            # With grating fit
+            Rg = utils.get_default_resolution_curve(
+                grating=grating,
+                wave=wgrid,
+                grating_degree=2
+            )
+
+            # Without extrapolation
+            Ri = utils.get_default_resolution_curve(
+                grating=grating,
+                wave=wgrid,
+                grating_degree=None
+            )
+
+            # Only test over first part of the array
+            sl = slice(0, 200)
+            assert np.allclose(R[sl], Rg[sl], rtol=1.e-3)
+            assert np.allclose(R[sl], Ri[sl], rtol=1.e-3)
+    
+    # Test extrapolation from fit
+    grating = 'G235M'
+    wgrid = np.array([
+        2.0, # In nominal range
+        4.0, # Extended
+    ])
+
+    # With polynomial extrapolation
+    for deg in [0, 1, 2, 3]:
+        Rg = utils.get_default_resolution_curve(
+            grating=grating,
+            wave=wgrid,
+            grating_degree=deg
+        )
+        # R(2 x lam) ~ 2 * R(lam)
+        assert np.allclose(Rg[1] / Rg[0], 2.0, rtol=0.05)
+
+
 def test_fwhm():
 
     import numpy as np
