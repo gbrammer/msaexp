@@ -393,7 +393,7 @@ def get_standard_wavelength_grid(
     return target_waves
 
 
-def get_default_resolution_curve(grating="PRISM", wave=None, **kwargs):
+def get_default_resolution_curve(grating="PRISM", wave=None, grating_degree=2, **kwargs):
     """
     Parameters
     ----------
@@ -403,6 +403,11 @@ def get_default_resolution_curve(grating="PRISM", wave=None, **kwargs):
     wave : array-like, None
         Wavelength grid, microns
 
+    grating_degree : int, None
+        If specified, fit a polynomial with this order to the tabulated resolution.
+        The polynomial coefficients are fit to ``lambda / R``, which is nearly linear
+        for the NIRSpec gratings [(Jakobsen et al. 2022)](https://ui.adsabs.harvard.edu/abs/2022A%26A...661A..80J).
+        
     Returns
     -------
     R_fwhm : array-like
@@ -411,19 +416,30 @@ def get_default_resolution_curve(grating="PRISM", wave=None, **kwargs):
     """
     _data_path = os.path.dirname(__file__)
     disp = grizli.utils.read_catalog(
-        f"{_data_path}/data/jwst_nirspec_{grating}_disp.fits"
+        f"{_data_path}/data/jwst_nirspec_{grating.lower()}_disp.fits"
     )
 
     if wave is None:
         wave = get_standard_wavelength_grid(grating, **kwargs)
 
-    R_fwhm = np.interp(
-        wave,
-        disp["WAVELENGTH"],
-        disp["R"],
-        left=disp["R"][0],
-        right=disp["R"][-1],
-    )
+    if (grating.upper() != 'PRISM') & (grating_degree is not None):
+        # Fit polynomial to dlam = lam / R
+        coeffs = np.polyfit(
+            disp["WAVELENGTH"],
+            disp["WAVELENGTH"] / disp['R'],
+            grating_degree
+        )
+        
+        R_fwhm = wave / np.polyval(coeffs, wave)
+
+    else:
+        R_fwhm = np.interp(
+            wave,
+            disp["WAVELENGTH"],
+            disp["R"],
+            left=disp["R"][0],
+            right=disp["R"][-1],
+        )
 
     return R_fwhm
 
