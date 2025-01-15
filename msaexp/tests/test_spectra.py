@@ -183,7 +183,11 @@ def sampler_checks(spec, with_numba=False):
 
     for s in [1, 1.3, 1.8, 2.0]:
         for v in [50, 100, 300, 500, 1000]:
-            kws = dict(scale_disp=s, velocity_sigma=v)
+            kws = dict(
+                scale_disp=s,
+                velocity_sigma=v,
+                orders=[1]
+            )
 
             gau = spec.emission_line(line_um, line_flux=1, **kws)
             assert np.allclose(np.trapz(gau, spec.spec_wobs), 1.0, rtol=5.0e-2)

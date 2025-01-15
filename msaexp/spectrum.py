@@ -115,6 +115,7 @@ def resample_bagpipes_model(
     R_curve=None,
     nsig=5,
     scale_disp=1.3,
+    wave_scale=1,
 ):
     """
 
@@ -137,6 +138,9 @@ def resample_bagpipes_model(
 
     nsig : int
         Number of sigmas for resample.
+
+    wave_scale : float
+        Scalar multipled to model wavelengths, i.e., for additional spectral orders
 
     Returns
     -------
@@ -175,7 +179,7 @@ def resample_bagpipes_model(
     fluxes = resample_template_numba(
         spec_wavs,
         R_curve,
-        redshifted_wavs,
+        redshifted_wavs * wave_scale,
         model_galaxy.spectrum_full,
         velocity_sigma=velocity_sigma,
         nsig=nsig,
@@ -204,7 +208,11 @@ class SpectrumSampler(object):
     valid = None
 
     def __init__(
-        self, spec_input, oversample_kwargs=dict(factor=5, pad=12), **kwargs
+        self,
+        spec_input,
+        oversample_kwargs=dict(factor=5, pad=12),
+        with_sensitivity=True,
+        **kwargs,
     ):
         """
         Helper functions for sampling templates onto the wavelength grid
@@ -215,6 +223,10 @@ class SpectrumSampler(object):
         spec_input : str, `~astropy.io.fits.HDUList`
             - `str` : spectrum filename, usually `[root].spec.fits`
             - `~astropy.io.fits.HDUList` : FITS data
+
+        with_sensitivity : bool
+            Initialize sensitivity curves for including multiple spectral orders
+            in the model generation.
 
         Attributes
         ----------
@@ -243,6 +255,16 @@ class SpectrumSampler(object):
         self.oversamp_wobs = self.oversampled_wavelengths(**oversample_kwargs)
 
         self.initialize_emission_line()
+
+        self.sensitivity_file = None
+        self.sensitivity = {1: 1.0}
+        self.inv_sensitivity = 1.0
+
+        for i in range(1, 4):
+            self.sensitivity[i + 1] = None
+
+        if with_sensitivity:
+            self.load_sensitivity_curve(**kwargs)
 
     def __getitem__(self, key):
         """
@@ -346,6 +368,8 @@ class SpectrumSampler(object):
         fnu=True,
         nsig=4,
         with_igm=False,
+        orders=[1, 2, 3, 4],
+        verbose=False,
         **kwargs,
     ):
         """
@@ -373,6 +397,10 @@ class SpectrumSampler(object):
         nsig : int
             Number of standard deviations to sample for the convolution
 
+        orders : list
+            List of spectral orders to include if the sensitivity curves have been
+            read along with the spectrum.
+
         Returns
         -------
         res : array-like
@@ -393,14 +421,30 @@ class SpectrumSampler(object):
             # Turn off
             igmz = 1.0
 
-        res = RESAMPLE_FUNC(
-            self.spec_wobs,
-            self.spec_R_fwhm * scale_disp,
-            templ_wobs,
-            templ_flux * igmz,
-            velocity_sigma=velocity_sigma,
-            nsig=nsig,
-        )
+        res = np.zeros_like(self.spec_wobs)
+
+        for order in orders:
+            if order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
+
+            res_i = RESAMPLE_FUNC(
+                self.spec_wobs,
+                self.spec_R_fwhm * scale_disp * order,
+                templ_wobs * order,
+                templ_flux * igmz,
+                velocity_sigma=velocity_sigma,
+                nsig=nsig,
+            )
+
+            if order != 1:
+                res += res_i * self.sensitivity[order] * self.inv_sensitivity
+            else:
+                res += res_i
+
         return res
 
     def emission_line(
@@ -410,6 +454,7 @@ class SpectrumSampler(object):
         scale_disp=1.0,
         velocity_sigma=100.0,
         nsig=4,
+        **kwargs,
     ):
         """
         Make an emission line template - *deprecated in favor of*
@@ -449,7 +494,13 @@ class SpectrumSampler(object):
         return res * line_flux / line_um
 
     def fast_emission_line(
-        self, line_um, line_flux=1, scale_disp=1.0, velocity_sigma=100.0
+        self,
+        line_um,
+        line_flux=1,
+        scale_disp=1.0,
+        velocity_sigma=100.0,
+        orders=[1, 2, 3, 4],
+        verbose=False,
     ):
         """
         Make an emission line template with numerically correct pixel
@@ -469,22 +520,49 @@ class SpectrumSampler(object):
         velocity_sigma : float
             Velocity sigma width in km/s
 
+        orders : list
+            List of spectral orders to include if the sensitivity curves have been
+            read along with the spectrum.
+
         Returns
         -------
         res : array-like
             Gaussian emission line sampled at the spectrum wavelengths
         """
-        res = SAMPLE_LINE_FUNC(
-            self.spec_wobs,
-            self.spec_R_fwhm * scale_disp,
-            line_um,
-            line_flux=line_flux,
-            velocity_sigma=velocity_sigma,
-        )
+        res = np.zeros_like(self.spec_wobs)
+
+        for order in orders:
+            if order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
+
+            res_i = SAMPLE_LINE_FUNC(
+                self.spec_wobs,
+                self.spec_R_fwhm * scale_disp * order,
+                line_um * order,
+                line_flux=line_flux,
+                velocity_sigma=velocity_sigma,
+            )
+
+            if order != 1:
+                res += res_i * self.sensitivity[order] * self.inv_sensitivity
+            else:
+                res += res_i
+
         return res
 
     def bspline_array(
-        self, nspline=13, log=False, by_wavelength=False, get_matrix=True
+        self,
+        nspline=13,
+        remap_arrays=None,
+        minmax=None,
+        log=False,
+        by_wavelength=False,
+        get_matrix=True,
+        orders=[1, 2, 3, 4],
     ):
         """
         Initialize bspline templates for continuum fits
@@ -517,15 +595,79 @@ class SpectrumSampler(object):
                 df=nspline,
                 log=log,
                 get_matrix=get_matrix,
+                minmax=minmax,
             )
         else:
+            if remap_arrays is None:
+                xvalue = np.arange(len(self.spec_wobs))
+            else:
+                xvalue = np.interp(
+                    self.spec_wobs, *remap_arrays, left=0.0, right=0.0
+                )
+
             bspl = utils.bspline_templates(
-                wave=np.arange(len(self.spec_wobs)),
+                wave=xvalue,
                 degree=3,
                 df=nspline,
                 log=log,
                 get_matrix=get_matrix,
+                minmax=minmax,
             )
+
+        if 1 not in orders:
+            if get_matrix:
+                bspl1 = bspl * 1
+            else:
+                bspl1 = {}
+                for t in bspl:
+                    bspl1[t] = bspl[t].flux * 1
+        else:
+            bspl1 = None
+
+        for order in orders:
+            if order == 1:
+                # Computed above
+                continue
+            elif order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
+
+            if get_matrix:
+                for i in range(nspline):
+                    extra = np.interp(
+                        self.spec_wobs,
+                        self.spec_wobs * order,
+                        bspl[:, i],
+                        left=0,
+                        right=0,
+                    )
+                    extra *= self.sensitivity[order] * self.inv_sensitivity
+                    extra[~np.isfinite(extra)] = 0
+                    bspl[:, i] += extra
+            else:
+                for t in bspl:
+                    extra = np.interp(
+                        self.spec_wobs,
+                        self.spec_wobs * order,
+                        bspl[t].flux,
+                        left=0,
+                        right=0,
+                    )
+                    extra *= self.sensitivity[order] * self.inv_sensitivity
+                    extra[~np.isfinite(extra)] = 0
+                    bspl[t].flux += extra
+
+        if 1 not in orders:
+            if get_matrix:
+                bspl = bspl - bspl1
+            else:
+                for t in bspl:
+                    bspl[t].flux -= bspl1[t].flux
+
+        del bspl1
 
         if get_matrix:
             bspl = bspl.T
@@ -707,7 +849,12 @@ class SpectrumSampler(object):
         return fig
 
     def resample_bagpipes_model(
-        self, model_galaxy, model_comp=None, nsig=5, scale_disp=1.3
+        self,
+        model_galaxy,
+        model_comp=None,
+        nsig=5,
+        scale_disp=1.3,
+        orders=[1, 2, 3, 4],
     ):
         """
         Resample a `bagpipes` model to the wavelength grid of the spectrum.
@@ -718,13 +865,27 @@ class SpectrumSampler(object):
         if "scale_disp" in model_comp:
             scale_disp = model_comp["scale_disp"]
 
-        spectrum = resample_bagpipes_model(
-            model_galaxy,
-            model_comp=model_comp,
-            spec_wavs=self.spec_wobs * 1.0e4,
-            R_curve=self.spec["R"] * scale_disp,
-            nsig=nsig,
-        )
+        spectrum = np.zeros_like(self.spec_wobs)
+
+        for order in orders:
+            if order not in self.sensitivity:
+                msg = f"resample_eazy_template: order {order} not found in sensitivity"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                continue
+            elif self.sensitivity[order] is None:
+                continue
+
+            spectrum_i = resample_bagpipes_model(
+                model_galaxy,
+                model_comp=model_comp,
+                spec_wavs=self.spec_wobs * 1.0e4,
+                R_curve=self.spec["R"] * scale_disp * order,
+                nsig=nsig,
+                wave_scale=order,
+            )
+            spectrum += (
+                spectrum_i * self.sensitivity[order] * self.inv_sensitivity
+            )
 
         return spectrum
 
@@ -768,6 +929,89 @@ class SpectrumSampler(object):
         )
 
         return igm
+
+    def load_sensitivity_curve(
+        self,
+        sens_file=None,
+        prefix="msaexp_sensitivity",
+        version="001",
+        file_template="{prefix}_{grating}_{filter}_{version}.fits",
+        verbose=False,
+        **kwargs,
+    ):
+        """ """
+
+        if sens_file is None:
+            sens_file = file_template.format(
+                prefix=prefix,
+                filter=self.meta["FILTER"],
+                grating=self.meta["GRATING"],
+                version=version,
+            ).lower()
+
+        # paths to search
+        paths = [
+            "",
+            os.path.join(
+                os.path.dirname(__file__), "data/extended_sensitivity"
+            ),
+        ]
+
+        file_path = None
+        for path in paths:
+            if os.path.exists(os.path.join(path, sens_file)):
+                file_path = path
+                break
+
+        if file_path is None:
+            return None
+
+        msg = f"load_sensitivity_curve: {sens_file}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+        sens_data = utils.read_catalog(os.path.join(file_path, sens_file))
+        self.sensitivity_file = sens_file
+
+        self.sensitivity_correction = 1.0
+        self.sensitivity_correction_type = None
+
+        if "nrs1_s200a1" in sens_data.colnames:
+            if "APERNAME" in self.meta:
+                if "_SLIT" in self.meta["APERNAME"]:
+                    self.sensitivity_correction = (
+                        1.0 / sens_data["nrs1_s200a1"]
+                    )
+                    self.sensitivity_correction_type = "nrs1_s200a1"
+
+        self.sensitivity[1] = np.interp(
+            self.spec["wave"],
+            sens_data["wavelength"],
+            sens_data["sensitivity"] * self.sensitivity_correction,
+            left=0.0,
+            right=0.0,
+        )
+
+        # Precompute inv_sensitivity = 1 / sensitivity[1] to avoid divide by zero
+        self.inv_sensitivity = 1.0 / self.sensitivity[1]
+        self.inv_sensitivity[~np.isfinite(self.inv_sensitivity)] = 0.0
+
+        for order in range(2, 5):
+            if f"sensitivity_{order}" in sens_data.colnames:
+                sens_i = np.interp(
+                    self.spec["wave"],
+                    sens_data["wavelength"] * order,
+                    sens_data[f"sensitivity_{order}"]
+                    * self.sensitivity_correction,
+                    left=0.0,
+                    right=0.0,
+                )
+                if np.nanmax(sens_i) == 0:
+                    self.sensitivity[order] = None
+                else:
+                    self.sensitivity[order] = sens_i
+
+            else:
+                self.sensitivity[order] = None
 
 
 def smooth_template_disp_eazy(
@@ -1297,6 +1541,7 @@ EXTRA_NIR_LINES = [
     "FeII-17418",
     "FeII-18362",
 ]
+
 
 def make_templates(
     sampler,
@@ -2425,14 +2670,16 @@ def read_spectrum(
     valid &= spec["err"] > 0
     valid &= spec["flux"] != 0
 
-    if (valid.sum() > 0) & (err_mask is not None):
+    if (err_mask is not None) & (valid.sum() > 0):
         _min_err = (
             np.nanpercentile(spec["err"][valid], err_mask[0]) * err_mask[1]
         )
         valid &= spec["err"] > _min_err
 
-    if err_median_filter is not None:
-        med = nd.median_filter(spec["err"][valid], err_median_filter[0])
+    if (err_median_filter is not None) & (valid.sum() > 0):
+        med = nd.median_filter(
+            spec["err"][valid].astype(float), err_median_filter[0]
+        )
         medi = np.interp(
             spec["wave"], spec["wave"][valid], med, left=0, right=0
         )
@@ -2643,8 +2890,8 @@ def plot_spectrum(
     eflam[~mask] = np.nan
 
     if bspl is None:
-        if 'continuum_model' in spec.colnames:
-            bspl = spec['continuum_model'][None,:] * spec["to_flam"] * ap_corr
+        if "continuum_model" in spec.colnames:
+            bspl = spec["continuum_model"][None, :] * spec["to_flam"] * ap_corr
             apply_igm = False
         else:
             bspl = sampler.bspline_array(nspline=nspline, get_matrix=True)

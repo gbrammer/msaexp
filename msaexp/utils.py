@@ -2,6 +2,8 @@ import os
 import yaml
 
 import warnings
+import logging
+
 import numpy as np
 import astropy.io.fits as pyfits
 
@@ -9,6 +11,9 @@ import jwst.datamodels
 
 import grizli.utils
 
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 MSAEXP_BADPIX = None
 
@@ -32,6 +37,8 @@ BAD_PIXEL_NAMES = [
 
 BAD_PIXEL_FLAG = 1 | 1024
 
+# Valid NRS pixels ((ymin, ymax), (xmin, xmax))
+DETECTOR_EDGES = ((0, 2048), (0, 2038))
 
 def _set_bad_pixel_flag():
     """
@@ -316,13 +323,13 @@ def slit_trace_center(
 
 
 GRATING_LIMITS = {
-    "prism": [0.58, 5.33, 0.01],
-    "g140m": [0.68, 1.9, 0.00063],
-    "g235m": [1.66, 3.17, 0.00106],
-    "g395m": [2.83, 5.24, 0.00179],
-    "g140h": [0.68, 1.9, 0.000238],
-    "g235h": [1.66, 3.17, 0.000396],
-    "g395h": [2.83, 5.24, 0.000666],
+    "prism": [0.5, 5.6, 0.01],
+    "g140m": [0.6, 3.35, 0.00063],
+    "g235m": [1.5, 5.3, 0.00106],
+    "g395m": [2.6, 5.6, 0.00179],
+    "g140h": [0.6, 1.9, 0.000238],
+    "g235h": [1.6, 3.2, 0.000396],
+    "g395h": [2.8, 5.3, 0.000666],
 }
 
 
@@ -1822,10 +1829,15 @@ def drizzled_hdu_figure(
             lw=2,
         )
         ap.step(
-            ptab["pfit"] / pmax, xpr, color="r", where="pre", alpha=0.5, lw=1
+            ptab["pfit"] / pmax,
+            xpr,
+            color="coral",
+            where="pre",
+            alpha=0.5,
+            lw=1,
         )
         ap.fill_betweenx(
-            xpr + 0.5, xpr * 0.0, ptab["pfit"] / pmax, color="r", alpha=0.2
+            xpr + 0.5, xpr * 0.0, ptab["pfit"] / pmax, color="coral", alpha=0.2
         )
 
         ap.text(
@@ -2614,16 +2626,547 @@ def get_prism_wave_bar_correction(
     return bar, is_wrapped
 
 
-def slit_extended_flux_calibration(
-    slit,
-    sens_file=None,
-    prefix="fix_p330e_s1600a1_sensitivity",
-    file_template="{prefix}_{filter}_{grating}.fits",
-    threshold=0,
+def slit_shutter_scale(slit):
+    """
+    Pixel scale of the ``slit_frame`` coordinate
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    Returns
+    -------
+    pix_scale : float
+        delta ``slit_frame`` / delta pixel.
+
+    """
+    sh = slit.data.shape
+    wcs = slit.meta.wcs
+    d2s = wcs.get_transform("detector", "slit_frame")
+
+    x0 = d2s(sh[1] // 2, sh[0] // 2)
+    x1 = d2s(sh[1] // 2, sh[0] // 2 + 1)
+
+    dx = np.array(x1) - np.array(x0)
+    pix_scale = np.sqrt(dx[0] ** 2 + dx[1] ** 2)
+
+    return pix_scale
+
+
+def get_slit_coordinates(slit, trace_with_ypos=False, **kwargs):
+    """
+    Get wavelength and cross-dispersion coordinate arrays for a 2D slitlet
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    trace_with_ypos : bool
+        Include source y position in trace calculation
+
+    Returns
+    -------
+    wave : array-like
+        Wavelengths, microns
+
+    slit_frame_y : array-like
+        ``slit_frame`` cross dispersion coordinate
+
+    yslit : array-like
+        Pixel offset relative to the trace center
+    """
+    sh = slit.data.shape
+    yp, xp = np.indices(sh)
+
+    _res = slit_trace_center(
+        slit,
+        with_source_xpos=False,
+        with_source_ypos=trace_with_ypos,
+        index_offset=0.0,
+    )
+
+    _xtr, _ytr, _wtr, slit_ra, slit_dec = _res
+
+    xslit = xp
+    yslit = yp - _ytr
+    ypix = yp
+
+    wcs = slit.meta.wcs
+    d2w = wcs.get_transform("detector", "world")
+
+    _ypi, _xpi = np.indices(slit.data.shape)
+    _ras, _des, _wave = d2w(_xpi, _ypi)
+
+    d2s = wcs.get_transform("detector", "slit_frame")
+    _sx, _sy, _slam = np.array(d2s(_xpi, _ypi))
+    slit_frame_y = _sy
+
+    return _wave, slit_frame_y, yslit
+
+
+def get_slit_data(slit, wrap=True, **kwargs):
+    """
+    Parse slit coordinates and attributes
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    wrap : bool
+        Parameter for `msaexp.utils.get_prism_wave_bar_correction`
+
+    Returns
+    -------
+    data : dict
+        Slit data
+
+    """
+    slx = slice(slit.xstart - 1, slit.xstart - 1 + slit.xsize)
+    sly = slice(slit.ystart - 1, slit.ystart - 1 + slit.ysize)
+
+    wave, slit_frame_y, yslit = get_slit_coordinates(slit, **kwargs)
+    sh = wave.shape
+
+    shutter_scale = slit_shutter_scale(slit)
+
+    dy = 0.0
+
+    shutter_y = (slit_frame_y / shutter_scale + dy) / 5.0
+
+    if slit.meta.exposure.type == "NRS_FIXEDSLIT":
+        bar = np.ones_like(wave).reshape(sh)
+        bar_wrapped = False
+    else:
+        bar, bar_wrapped = get_prism_wave_bar_correction(
+            shutter_y.flatten(),
+            wave.flatten(),
+            num_shutters=np.minimum(len(slit.shutter_state), 3),
+            wrap=wrap,
+        )
+        bar = bar.reshape(sh)
+
+    corr = slit.data * 1 / bar
+    msk = ~np.isfinite(corr + wave + bar)
+
+    corr[msk] = 0
+    # wave[msk] = 0
+    bar[msk] = 0
+
+    data = {
+        "wave": wave,
+        "slit_frame_y": slit_frame_y,
+        "shutter_y": shutter_y,
+        "yslit": yslit,
+        "shape": sh,
+        "corr": corr,
+        "bar": bar,
+        "slx": slx,
+        "sly": sly,
+        "shutter_state": slit.shutter_state,
+        "num_shutters": len(slit.shutter_state),
+        "bar_wrapped": bar_wrapped,
+    }
+
+    return data
+
+
+SFLAT_DATA = {}
+SFLAT_STRAIGHTEN = 0
+
+
+def load_sflat_data(flat_file, verbose=True):
+    """
+    Load MSAEXP MSA quadrant/detector S-flat reference data
+
+    Parameters
+    ----------
+    flat_file : str
+        Path to flat coeffs file, e.g., ``sflat_coeffs_prism_q2.fits``
+
+    Returns
+    -------
+    ftab : table
+        Table with added ``shutter_sflat`` column
+
+    """
+    global SFLAT_DATA, SFLAT_STRAIGHTEN
+
+    if flat_file in SFLAT_DATA:
+        return SFLAT_DATA[flat_file]
+
+    ftab = grizli.utils.read_catalog(flat_file)
+
+    xlim = (ftab.meta["XMIN"], ftab.meta["XMAX"])
+    ylim = (ftab.meta["YMIN"], ftab.meta["YMAX"])
+
+    xg = np.linspace(*xlim, xlim[1] - xlim[0])
+    yg = np.linspace(*ylim, ylim[1] - ylim[0])
+    xg, yg = np.meshgrid(xg, yg)
+
+    gxbspl = grizli.utils.bspline_templates(
+        xg.flatten(), df=ftab.meta["DFX"], minmax=xlim, get_matrix=True
+    )
+    gybspl = grizli.utils.bspline_templates(
+        yg.flatten(), df=ftab.meta["DFY"], minmax=ylim, get_matrix=True
+    )
+
+    gbspl = np.vstack([gxbspl.T * row for row in gybspl.T]).T
+
+    shutter_sflat = []
+    for c in ftab["coeffs"]:
+        shutter_sflat.append(gbspl.dot(c).reshape(xg.shape))
+
+    shutter_sflat = np.array(shutter_sflat)
+
+    if SFLAT_STRAIGHTEN > 0:
+        wsub = (ftab["wave"] > 0.8) & (ftab["wave"] < 5.25)
+        med = np.nanmedian(np.nanmedian(shutter_sflat, axis=1), axis=1)
+        wsub &= med > 0
+        c = np.polyfit(ftab["wave"][wsub], med[wsub], SFLAT_STRAIGHTEN - 1)
+        cfit = np.polyval(c, ftab["wave"])
+        shutter_sflat = (shutter_sflat.T / cfit).T
+
+        msg = f"{__name__}: straighten sflat {flat_file} {SFLAT_STRAIGHTEN}"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    if "SM_WAVE" not in ftab.meta:
+        ftab.meta["SM_WAVE"] = 3.1
+        ftab.meta["SM_WIDTH"] = 0.7
+        ftab.meta["SM_SCALE"] = 0.8
+
+    wsm = np.abs(ftab["wave"] - ftab.meta["SM_WAVE"])
+    ysm = 1 - np.exp(-(wsm**2) / 2 / ftab.meta["SM_WIDTH"] ** 2)
+    ysm = ysm * ftab.meta["SM_SCALE"] + (1 - ftab.meta["SM_SCALE"])
+    shutter_sflat = ((shutter_sflat.T - 1) * ysm + 1).T
+    msg = f"   {__name__}.load_sflat_data: smooth middle of sflat {ftab.meta['SM_SCALE']}"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    ftab["shutter_sflat"] = shutter_sflat
+
+    SFLAT_DATA[flat_file] = ftab
+
+    return ftab
+
+
+def shutter_xcen_ycen_from_id(shutter_id):
+    """
+    Get MSA shutter xcen and ycen from the shutter_id
+
+    Parameters
+    ----------
+    shutter_id : int
+        ``shutter_id = xcen + (ycen - 1) * 365``
+
+    Returns
+    -------
+    xcen, ycen : int
+        Shutter coordinates
+    """
+    xcen = shutter_id % 365
+    ycen = (shutter_id - xcen) // 365 + 1
+    return (xcen, ycen)
+
+
+def msa_slit_sflat(
+    slit=None,
+    qxy=None,
+    flat_file=None,
+    slit_wave=None,
+    apply=True,
+    force=False,
     verbose=True,
 ):
     """
-    Get flux calibration for extended extractions
+    Field dependent S-Flat for MSA slitlets derived from empty sky spectra
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    flat_file : str
+        Explicit filename of coefficients file to use
+
+    slit_wave : array-like, None
+        Slit wavelengths.  If not provided, will calculate with
+        `msaexp.utils.get_slit_data`.
+
+    apply : bool
+        Apply to ``slit.data`` attribute
+
+    Returns
+    -------
+    sflat_data : array-like
+        S-flat data evaluated at ``slit_wave``.
+
+    """
+
+    if slit is not None:
+        if slit.meta.exposure.type != "NRS_MSASPEC":
+            return None
+
+        qxy = (slit.quadrant, slit.xcen, slit.ycen)
+    else:
+        if qxy is None:
+            msg = "msa_slit_sflat: either slit or qxy must be provided"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+            return None
+
+        if slit_wave is None:
+            msg = "msa_slit_sflat: slit_wave must be provided along with qxy"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+            return None
+
+        apply = False
+
+    quadrant, xcen, ycen = qxy
+
+    if flat_file is None:
+        flat_file = os.path.join(
+            os.path.dirname(__file__),
+            "data/extended_sensitivity/",
+            "sflat_spl_coeffs_{0}_q{1}.fits".format("prism", quadrant),
+            # "sflat_lamp_spl_coeffs_q{1}.fits".format("prism", quadrant),
+        )
+
+    if not os.path.exists(flat_file):
+        msg = f"   msa_slit_sflat: {flat_file} not found"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        return None
+
+    shutter_label = f"q:{quadrant} x:{xcen} y:{ycen}"
+    msg = f"   msa_slit_sflat: compute s-flat for {shutter_label} with "
+    msg += f"{os.path.basename(flat_file)}"
+
+    ftab = load_sflat_data(flat_file, verbose=verbose)
+
+    if "MTIME" in ftab.meta:
+        msg += f" (mtime: {ftab.meta['MTIME']})"
+
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    flat_ = ftab["shutter_sflat"][:, ycen, xcen] * 1.0
+
+    fok = flat_ > 0
+
+    if slit_wave is None:
+        slit_data = get_slit_data(slit)
+        slit_wave = slit_data["wave"]
+
+    # sflat_data = np.interp(
+    #     slit_wave, ftab["wave"][fok], flat_[fok], left=np.nan, right=np.nan
+    # )
+    cspl = grizli.utils.bspline_templates(
+        np.interp(
+            slit_wave.flatten(), ftab["wave"], np.linspace(0, 1, len(ftab))
+        ),
+        df=len(ftab),
+        minmax=(0, 1),
+        get_matrix=True,
+    )
+    sflat_data = cspl.dot(flat_).reshape(slit_wave.shape)
+
+    sflat_data[sflat_data <= 0] = np.nan
+
+    # Unreliable extrapolation
+    sflat_data[sflat_data > 5] = np.nan
+    sflat_data[slit_wave > 5.60] = np.nan
+    sflat_data[slit_wave < 0.55] = np.nan
+
+    if apply:
+        if (not hasattr(slit, "sflat_data")) | force:
+            if hasattr(slit, "sflat_data"):
+                slit.sflat_data *= sflat_data
+            else:
+                slit.sflat_data = sflat_data
+
+            slit.data /= sflat_data
+            slit.err /= sflat_data
+            slit.var_rnoise /= sflat_data**2
+            slit.var_poisson /= sflat_data**2
+        else:
+            msg = f"msa_slit_sflat: existing sflat_data attribute found"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+
+    return sflat_data
+
+
+def fixed_slit_flat_field(
+    slit,
+    slit_data=None,
+    low_threshold=0.2,
+    apply=True,
+    verbose=True,
+    force=False,
+    erosion=2,
+    **kwargs,
+):
+    """
+    Fixed slit cross-dispersion profile flat field
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    low_threshold : float
+        Minimum valid flat data
+
+    apply : bool
+        Apply to ``slit.data`` attribute
+
+    force : bool
+        Apply even if ``slit.flat_profile`` already found
+
+    Returns
+    -------
+    flat_profile : array-like
+        2D flat-field profile
+
+    """
+    import yaml
+    import scipy.ndimage as nd
+
+    if slit.meta.exposure.type != "NRS_FIXEDSLIT":
+        return None
+
+    profile_file = os.path.join(
+        os.path.dirname(__file__),
+        "data/extended_sensitivity/",
+        "fixed_slit_flat_profile_{0}.yaml".format(slit.name.lower()),
+    )
+
+    if not os.path.exists(profile_file):
+        msg = f"fixed_slit_flat_field: {profile_file} not found"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        return None
+
+    msg = f"fixed_slit_flat_field: {os.path.basename(profile_file)}  (apply={apply})"
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+    with open(profile_file) as fp:
+        fs_data = yaml.load(fp, Loader=yaml.Loader)
+
+    if slit_data is None:
+        slit_data = get_slit_data(slit)
+
+    bspl = grizli.utils.bspline_templates(
+        slit_data["yslit"].flatten(),
+        df=fs_data["ydf"],
+        minmax=fs_data["minmax"],
+        get_matrix=True,
+    )
+
+    # Wavelength-dependent?
+    if fs_data["wdf"] > 0:
+        wspl = grizli.utils.bspline_templates(
+            slit_data["wave"].flatten(),
+            df=fs_data["wdf"],
+            minmax=fs_data["wminmax"],
+            get_matrix=True,
+        )
+
+        A = np.vstack([bspl.T * row for row in wspl.T]).T
+    else:
+        A = bspl
+
+    coeffs = np.array(fs_data["coeffs"])
+    flat_profile = A.dot(coeffs).reshape(slit.data.shape)
+    valid = np.isfinite(flat_profile) & (flat_profile > 0)
+    valid &= flat_profile > low_threshold
+    valid &= flat_profile < 1.5
+
+    if erosion > 0:
+        valid &= nd.binary_erosion(valid, iterations=erosion)
+
+    flat_profile[~valid] = np.nan
+
+    # flat_profile[flat_profile < 0] = 0.0
+    # flat_profile[flat_profile > 1.5] = 0.0
+    # flat_profile[flat_profile < low_threshold] = np.nan
+
+    if apply:
+        if (not hasattr(slit, "flat_profile")) | force:
+            if hasattr(slit, "flat_profile"):
+                slit.flat_profile *= flat_profile
+            else:
+                slit.flat_profile = flat_profile
+
+            slit.data /= flat_profile
+            slit.err /= flat_profile
+            slit.var_rnoise /= flat_profile**2
+            slit.var_poisson /= flat_profile**2
+        else:
+            msg = f"fixed_slit_flat_field: existing flat_profile found"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+
+    return flat_profile
+
+
+def slit_data_from_extended_reference(slit):
+    """
+    Check if ``slit`` produced by `msaexp.pipeline_extended`
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    Returns
+    -------
+    is_extended : bool
+        True if "ext.fits" found in the reference file names
+
+    """
+    is_extended = False
+    refs = slit.meta.ref_file.instance
+
+    if "fflat" in refs:
+        is_extended |= "_ext.fits" in refs["fflat"]["name"]
+
+    if "sflat" in refs:
+        is_extended |= "_ext.fits" in refs["sflat"]["name"]
+
+    if "dflat" in refs:
+        is_extended |= "_ext.fits" in refs["dflat"]["name"]
+
+    return is_extended
+
+
+def slit_extended_flux_calibration(
+    slit,
+    sens_file=None,
+    prefix="msaexp_sensitivity",
+    version="001",
+    file_template="{prefix}_{grating}_{filter}_{version}.fits",
+    threshold=0,
+    fixed_slit_correction=True,
+    quadrant_correction=True,
+    nrs2_scale_gratings=[
+        "PRISM",
+        "G140M",
+        "G140H",
+        "G235M",
+        "G235H",
+        "G395M",
+        "G395H",
+    ],
+    verbose=True,
+    **kwargs,
+):
+    """
+    Get flux calibration for extended-wavelength extractions
 
     Parameters
     ----------
@@ -2640,12 +3183,29 @@ def slit_extended_flux_calibration(
         Template filename of the sensitivity curve to use, generated with
         ``file_template.format(prefix=prefix, filter=filter, grating=grating)``
 
+    fixed_slit_correction : bool, int
+        The sensitivity curves were derived from fixed slit observations and then
+        include a transformation from the FS to MSA.  If this is True and the ``slit``
+        is itself from a fixed slit observation, remove that correction to put the
+        sensitivity curve back in the frame of the fixed slits.  If an int value is
+        provided > 1, then correct to the FS frame even if the ``slit`` comes from the
+        MSA.
+
+    quadrant_correction : bool
+        Apply quadrant-specific correction if ``q[1-4]`` columns found in the
+        sensitivity table
+
+    nrs2_scale_gratings : list
+        List of gratings where the NRS2 / NRS1 correction will be applied if necessary
+
     verbose : bool
         Verbose messaging
 
     threshold : float
         Threshold relative to the maximum of a particular grating sensitivivity curve
-        below which to treat as invalid data.
+        below which to treat as invalid data.  If a **negative** value is provided,
+        just apply the detector-dependent correction rather than the full photometric
+        calibration.
 
     Returns
     -------
@@ -2656,16 +3216,9 @@ def slit_extended_flux_calibration(
               and ``var_poisson`` attributes.
     """
 
-    test = False
-    refs = slit.meta.ref_file.instance
+    is_extended = slit_data_from_extended_reference(slit)
 
-    if "fflat" in refs:
-        test |= "_ext.fits" in refs["fflat"]["name"]
-
-    if "sflat" in refs:
-        test |= "_ext.fits" in refs["sflat"]["name"]
-
-    if not test:
+    if not is_extended:
         return 0
 
     if sens_file is None:
@@ -2673,7 +3226,8 @@ def slit_extended_flux_calibration(
             prefix=prefix,
             filter=slit.meta.instrument.filter,
             grating=slit.meta.instrument.grating,
-        )
+            version=version,
+        ).lower()
 
     # paths to search
     paths = [
@@ -2692,10 +3246,42 @@ def slit_extended_flux_calibration(
         grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
         return 1
 
-    msg = f"slit_extended_flux_calibration: {sens_file} threshold={threshold}"
+    sens = grizli.utils.read_catalog(os.path.join(file_path, sens_file))
+
+    msg = (
+        f"   slit_extended_flux_calibration: {sens_file} threshold={threshold}"
+    )
+    if "MTIME" in sens.meta:
+        msg += f" (mtime: {sens.meta['MTIME']})"
+
     grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
 
-    sens = grizli.utils.read_catalog(os.path.join(file_path, sens_file))
+    needs_det_correction = slit.meta.instrument.detector.upper() == "NRS2"
+    needs_det_correction &= (
+        slit.meta.instrument.grating.upper() in nrs2_scale_gratings
+    )
+
+    slit.detector_correction_type = None
+
+    if needs_det_correction:
+        msg = f"   slit_extended_flux_calibration: scale NRS2 to NRS1"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+
+        det_correction = sens["nrs1_nrs2"]
+        slit.detector_correction_type = "nrs1_nrs2"
+
+        # The correction nrs1_nrs2 is multiplied to the flux column,
+        # so divide from senstivity here
+        if threshold < 0:
+            # For threshold. <0, just provide the detector correction.
+            sens["sensitivity"] = 1.0 / sens["nrs1_nrs2"]
+        else:
+            sens["sensitivity"] /= sens["nrs1_nrs2"]
+    else:
+        det_correction = np.ones_like(sens["wavelength"])
+
+        if threshold < 0:
+            sens["sensitivity"] = 1.0
 
     wcs = slit.meta.wcs
     d2w = wcs.get_transform("detector", "world")
@@ -2703,30 +3289,102 @@ def slit_extended_flux_calibration(
     _ypi, _xpi = np.indices(slit.data.shape)
     _ras, _des, _wave = d2w(_xpi, _ypi)
 
-    corr_data = 1.0 / np.interp(
+    ##########################
+    # Photometry calibration is (1 / sensitivity curve)
+    phot_corr = 1.0 / np.interp(
         _wave,
         sens["wavelength"],
         sens["sensitivity"],
-        left=0.0,
-        right=0.0,
+        left=np.nan,
+        right=np.nan,
     )
 
-    corr_data[~np.isfinite(corr_data)] = 0
-    max_sens = np.nanmax(1.0 / corr_data[corr_data > 0])
-    corr_data[corr_data >= 1.0 / (max_sens * threshold)] = np.nan
+    slit.sensitivity_correction = np.ones_like(phot_corr)
+    slit.sensitivity_correction_type = None
 
-    slit.sens_corr_data = corr_data
-    slit.data *= corr_data
-    slit.err *= corr_data
-    slit.var_rnoise *= corr_data**2
-    slit.var_poisson *= corr_data**2
+    if "nrs1_s200a1" in sens.colnames:
+        if ("_SLIT" in slit.meta.aperture.name.upper()) | (
+            fixed_slit_correction > 1
+        ):
+            msg = (
+                "   slit_extended_flux_calibration: correction for Fixed Slit "
+                + f"{slit.meta.aperture.name.upper()}"
+            )
+
+            try:
+                slit.sensitivity_correction = np.interp(
+                    _wave,
+                    sens["wavelength"],
+                    sens["nrs1_s200a1"],
+                    left=np.nan,
+                    right=np.nan,
+                )
+                slit.sensitivity_correction_type = "nrs1_s200a1"
+            except (ValueError, TypeError):
+                msg += "  FAILED...."
+
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+
+    phot_corr *= slit.sensitivity_correction
+
+    slit.quadrant_correction = np.ones_like(phot_corr)
+    slit.quadrant_correction_type = None
+
+    if (slit.quadrant is not None) & (quadrant_correction):
+        qc = f"q{slit.quadrant}"
+        if (qc in sens.colnames) & (slit.quadrant < 4):
+            msg = f"   slit_extended_flux_calibration: {qc.upper()} quadrant correction"
+            grizli.utils.log_comment(
+                grizli.utils.LOGFILE, msg, verbose=verbose
+            )
+            slit.quadrant_correction = 1.0 / np.interp(
+                _wave,
+                sens["wavelength"],
+                sens[qc],
+                left=np.nan,
+                right=np.nan,
+            )
+            slit.quadrant_correction_type = qc.upper()
+
+    phot_corr *= slit.quadrant_correction
+
+    phot_corr[~np.isfinite(phot_corr)] = 0
+    valid = phot_corr > 0
+
+    if (threshold >= 0) & (valid.sum() > 1):
+        max_sens = np.nanmax(1.0 / phot_corr[phot_corr > 0])
+        phot_corr[phot_corr >= 1.0 / (max_sens * threshold)] = np.nan
+    else:
+        phot_corr[~valid] = np.nan
+
+    slit.detector_correction = np.interp(
+        _wave,
+        sens["wavelength"],
+        det_correction,
+        left=np.nan,
+        right=np.nan,
+    )
+
+    slit.phot_corr = phot_corr
+    # slit.data *= phot_corr
+    # slit.err *= phot_corr
+    # slit.var_rnoise *= phot_corr**2
+    # slit.var_poisson *= phot_corr**2
 
     return 2
 
 
 def cache_badpix_arrays():
     """
-    Load badpixel arrays into global data
+    Load bad pixel arrays into global dictionaries
+
+    Returns
+    -------
+    MSAEXP_BADPIX : dict
+        Bad pixel data with keys "NRS1" and "NRS2" and values ``(dq, flags, path)``.
+        This is also cached as a global variable on `msaexp.utils.MSAEXP_BADPIX`.
     """
     global MSAEXP_BADPIX
 
@@ -2751,10 +3409,15 @@ def cache_badpix_arrays():
             path_to_ref,
         )
 
+    return MSAEXP_BADPIX
+
 
 def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     """
-    Set extra DQ flags, including a big stuck open shutter on NRS1
+    Set extra DQ flags, including a big stuck open shutter on NRS1.
+
+    Includes edge mask from
+    ``msaexp.utils.DETECTOR_EDGES = ((ymin, ymax), (xmin, xmax))``.
 
     Parameters
     ----------
@@ -2775,10 +3438,10 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     """
     import yaml
 
-    global MSAEXP_BADPIX
+    global MSAEXP_BADPIX, BAD_PIXEL_FLAG, DETECTOR_EDGES
 
     if MSAEXP_BADPIX is None:
-        cache_badpix_arrays()
+        MSAEXP_BADPIX = cache_badpix_arrays()
 
     if dq_arr is None:
         dq_arr, flags, path_to_ref = MSAEXP_BADPIX[
@@ -2791,6 +3454,12 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
 
     slx = slice(slit.xstart - 1, slit.xstart - 1 + slit.xsize)
     sly = slice(slit.ystart - 1, slit.ystart - 1 + slit.ysize)
+
+    if DETECTOR_EDGES is not None:
+        yp, xp = np.indices((2048, 2048))
+        outside_edges = (yp < DETECTOR_EDGES[0][0]) | (yp > DETECTOR_EDGES[0][1])
+        outside_edges |= (xp < DETECTOR_EDGES[1][0]) | (xp > DETECTOR_EDGES[1][1])
+        dq_arr[outside_edges] |= BAD_PIXEL_FLAG
 
     dq = dq_arr[sly, slx]  # .reshape(dq_data["shape"])[sly, slx]
 
@@ -3226,15 +3895,20 @@ def available_lookup_psf_files():
 
     """
     import glob
-    path_to_data = os.path.join(os.path.dirname(__file__), "data")
-    psf_files = glob.glob(os.path.join(path_to_data, "*lookup.fits"))
+
+    path_to_data = os.path.join(os.path.dirname(__file__), "data/psf")
+    psf_files = glob.glob(os.path.join(path_to_data, "*lookup*.fits"))
     psf_files = [os.path.basename(f) for f in psf_files]
     psf_files.sort()
     return psf_files
 
 
 class LookupTablePSF:
-    def __init__(self, psf_file="nirspec_merged_s200a1_exp_psf_lookup.fits", **kwargs):
+    def __init__(
+        self,
+        psf_file="nirspec_merged_s200a1_exp_psf_lookup_001.fits",
+        **kwargs,
+    ):
         """
         Fast lookup table PSF derived from point sources in the fixed slit.
 
@@ -3309,28 +3983,76 @@ class LookupTablePSF:
         """
         Read the lookup table data in ``psf_file``
         """
-        path_to_data = os.path.join(os.path.dirname(__file__), "data")
+        path_to_data = os.path.join(os.path.dirname(__file__), "data/psf")
         for _path in ["", path_to_data]:
             psf_file = os.path.join(_path, self.psf_file)
             if os.path.exists(psf_file):
                 self.psf_file_path = _path
                 break
 
+        # try to use file from calibration repository if not found
         if not os.path.exists(psf_file):
-            return None
+            if "001.fits" in self.psf_file:
+                self.psf_file_path = "https://github.com/gbrammer/msaexp-calibration/raw/refs/heads/main/data/"
+                psf_file = os.path.join(_path, self.psf_file)
+
+                msg = f"msaexp.utils.LookupTablePSF: read from {psf_file}"
+                grizli.utils.log_comment(
+                    grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+                )
+
+                try:
+                    with pyfits.open(psf_file) as im:
+                        pass
+                except:
+                    msg = f"msaexp.utils.LookupTablePSF: remote url failed"
+                    grizli.utils.log_comment(
+                        grizli.utils.LOGFILE,
+                        msg,
+                        verbose=True,
+                        show_date=False,
+                    )
+                    return None
+            else:
+                msg = f"msaexp.utils.LookupTablePSF: failed to find {psf_file}"
+                grizli.utils.log_comment(
+                    grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+                )
+                return None
+
+        msg = f"msaexp.utils.LookupTablePSF: {psf_file}"
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE, msg, verbose=True, show_date=False
+        )
 
         with pyfits.open(psf_file) as im:
             self.psf_data = im["PROF"].data * 1
+            valid = np.isfinite(self.psf_data[:, :, 0]).sum(axis=0) > 0
+            self.psf_data = self.psf_data[:, valid, :]
+            self.psf_data[~np.isfinite(self.psf_data)] = 0.0
+
+            self.psf_wave = im["WAVE"].data[valid] * 1
+            self.psf_wavei = np.arange(len(self.psf_wave), dtype=float)
+
             self.psf_y = im["YSLIT"].data * 1
             self.psf_yi = np.arange(len(self.psf_y), dtype=float)
-
-            self.psf_wave = im["WAVE"].data * 1
-            self.psf_wavei = np.arange(len(self.psf_wave), dtype=float)
 
             self.psf_sigma = im["SIGMA"].data * 1
             self.psf_sigmai = np.arange(len(self.psf_sigma), dtype=float)
 
-            self.psf_slit_loss = im["LOSS"].data * 1
+            self.psf_xoffset = im["LOSS_XOFFSET"].data * 1
+            self.psf_xoffseti = np.arange(len(self.psf_xoffset), dtype=float)
+            self.psf_slit_loss = im["LOSS"].data[valid, :, :] * 1
+
+            # Slit loss fraction relative to centered point source
+            self.psf_slit_loss_frac = self.psf_slit_loss * 1.0
+
+            NS = len(self.psf_sigma)
+            Nx = len(self.psf_xoffset)
+            centered_point = self.psf_slit_loss[:, 0, 0] * 1.0
+            for i in range(NS):
+                for j in range(Nx):
+                    self.psf_slit_loss_frac[:, i, j] /= centered_point
 
         return True
 
@@ -3446,6 +4168,70 @@ class LookupTablePSF:
         )
 
         return map_interp.reshape(self.slit_shape)
+
+    def path_loss(self, wave, sigma=0.0, x_offset=0.0, order=1):
+        """
+        Interpolate path loss
+
+        Parameters
+        ----------
+        wave : array-like
+            Wavelengths, microns
+
+        sigma : float
+            Exponential profile width
+
+        x_offset : float, (-0.5, 0.5)
+            Source x position within the shutter
+
+        order : int
+            Interpolation order
+
+        Returns
+        -------
+        path_loss : array-like
+            Estimated path loss
+
+        """
+        from scipy.ndimage import map_coordinates
+
+        slit_sigmai = np.interp(
+            sigma,
+            self.psf_sigma,
+            self.psf_sigmai,
+            left=0,
+            right=self.psf_sigmai[-1],
+        )
+
+        x_offseti = np.interp(
+            np.abs(x_offset),
+            self.psf_xoffset,
+            self.psf_xoffseti,
+            left=0,
+            right=self.psf_xoffseti[-1],
+        )
+
+        slit_wavei = np.interp(
+            wave.flatten(),
+            self.psf_wave,
+            self.psf_wavei,
+            left=np.nan,
+            right=np.nan,
+        )
+
+        coords = np.array(
+            [
+                slit_wavei,
+                np.full_like(slit_wavei, slit_sigmai),
+                np.full_like(slit_wavei, x_offseti),
+            ]
+        )
+
+        map_interp = map_coordinates(
+            self.psf_slit_loss_frac, coords, cval=0.0, order=order
+        )
+
+        return map_interp.reshape(wave.shape)
 
     def __call__(self, **kwargs):
         """

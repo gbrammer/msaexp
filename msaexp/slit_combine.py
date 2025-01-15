@@ -39,8 +39,13 @@ SIGMA_PRIOR = 0.6
 
 HUBER_ALPHA = 7
 
+# Mask parameters
 PRISM_MAX_VALID = 10000
 PRISM_MIN_VALID_SN = -3
+# Mask pixels above this percentile of the RN arrays
+# RNOISE_THRESHOLD = 95 # version <= 3
+RNOISE_THRESHOLD = 99.5
+
 SPLINE_BAR_GRATINGS = [
     "PRISM",
     "G395M",
@@ -120,7 +125,7 @@ def split_visit_groups(
     groups = {}
     for k in np.unique(keys):
         test_field = (un[k].sum() % 6 == 0) & ("jw02561" in files[0])
-        test_field |= (un[k].sum() % 4 == 0) & ("xxjw01810" in files[0])
+        test_field |= (un[k].sum() % 4 == 0) & ("jw01810" in files[0])
         test_field |= (un[k].sum() % 4 == 0) & ("jw01324" in files[0])
         test_field |= (un[k].sum() % 6 == 0) & ("jw01324" in files[0])
         test_field &= split_uncover > 0
@@ -141,13 +146,17 @@ def split_visit_groups(
                 set1 = set1[1::3] + set1[2::3]
                 set2 = set2[1::3] + set2[2::3]
 
-            groups[ksp[0] + "a-" + ksp[1]] = set1
-            groups[ksp[0] + "b-" + ksp[1]] = set2
+            groups[ksp[0] + "a-" + "-".join(ksp[1:])] = set1
+            groups[ksp[0] + "b-" + "-".join(ksp[1:])] = set2
 
         else:
             groups[k] = np.array(all_files)[un[k]].tolist()
 
     return groups
+
+
+LOOKUP_PRF = None
+LOOKUP_PRF_ORDER = 1
 
 
 def slit_prf_fraction(
@@ -210,24 +219,20 @@ def slit_prf_fraction(
     return prf_frac
 
 
-LOOKUP_PRF = None
-LOOKUP_PRF_ORDER = 1
-
-
-def set_lookup_prf(**kwargs):
-    """
-    Initialize global LOOKUP_PRF
-    """
-    global LOOKUP_PRF
-
-    msg = f"Initialize LookupTablePSF({kwargs})"
-    utils.log_comment(utils.LOGFILE, msg, verbose=True)
-
-    prf = msautils.LookupTablePSF(**kwargs)
-
-    LOOKUP_PRF = prf
-
-    return prf
+# def set_lookup_prf(**kwargs):
+#     """
+#     Initialize global LOOKUP_PRF
+#     """
+#     global LOOKUP_PRF
+#
+#     msg = f"Initialize LookupTablePSF({kwargs})"
+#     utils.log_comment(utils.LOGFILE, msg, verbose=True)
+#
+#     prf = msautils.LookupTablePSF(**kwargs)
+#
+#     LOOKUP_PRF = prf
+#
+#     return prf
 
 
 def objfun_prof_trace(
@@ -573,9 +578,11 @@ class SlitGroup:
         bar_corr_mode="wave",
         fix_prism_norm=True,
         extended_calibration_kwargs={"threshold": 0.01},
+        with_sflat_correction=True,
         slit_hotpix_kwargs={},
         sky_arrays=None,
         sky_file="read",
+        set_background_spectra_kwargs={},
         global_sky_df=7,
         estimate_sky_kwargs=None,
         flag_profile_kwargs=None,
@@ -593,6 +600,7 @@ class SlitGroup:
         pad_border=2,
         weight_type="ivm",
         reference_exposure="auto",
+        lookup_prf=None,
         **kwargs,
     ):
         """
@@ -659,6 +667,9 @@ class SlitGroup:
 
         extended_calibration_kwargs : dict
             Keyword arguments to `~msaexp.utils.slit_extended_flux_calibration`
+
+        with_sflat_correction : bool
+            Additional field-dependent s-flat correction
 
         sky_arrays : array-like
             Optional sky data (in progress)
@@ -799,6 +810,8 @@ class SlitGroup:
             msg = "weight_type {0} not recognized".format(weight_type)
             raise ValueError(msg)
 
+        self.lookup_prf = lookup_prf
+
         # kwargs to meta dictionary
         self.meta = {
             "diffs": diffs,
@@ -830,6 +843,7 @@ class SlitGroup:
             "sky_file": "N/A",
             "global_sky_df": global_sky_df,
             "with_fs_offset": with_fs_offset,
+            "with_sflat_correction": with_sflat_correction,
         }
 
         # Comments on meta for header keywords
@@ -862,12 +876,15 @@ class SlitGroup:
             "sky_file": "Filename of a global sky background table",
             "global_sky_df": "Degrees of freedom of fit with global sky",
             "with_fs_offset": "Extra fixed slit offset",
+            "with_sflat_correction": "Field-dependent s-flat correction",
         }
 
         self.shapes = []
         self.flagged_hot_pixels = []
         for i, file in enumerate(files):
             slit = jwst.datamodels.open(file)
+
+            slit.phot_corr = np.ones_like(slit.data)
 
             if extended_calibration_kwargs is not None:
                 status = msautils.slit_extended_flux_calibration(
@@ -889,7 +906,7 @@ class SlitGroup:
 
         self.calculate_slices()
 
-        self.parse_data()
+        self.parse_data(with_sflat_correction=with_sflat_correction)
 
         if sky_file is not None:
             self.get_global_sky(sky_file=sky_file)
@@ -959,6 +976,9 @@ class SlitGroup:
 
         if fit_shutter_offset_kwargs is not None:
             self.fit_shutter_offset(**fit_shutter_offset_kwargs)
+
+        if set_background_spectra_kwargs is not None:
+            self.set_background_spectra(**set_background_spectra_kwargs)
 
         self.fit = None
 
@@ -1310,7 +1330,7 @@ class SlitGroup:
         for s, slit in zip(slices, self.slits):
             slit.slice = s
 
-    def parse_data(self, debug=False):
+    def parse_data(self, debug=False, with_sflat_correction=True):
         """
         Read science, variance and trace data from the ``slits`` SlitModel
         files
@@ -1318,7 +1338,7 @@ class SlitGroup:
         """
         import scipy.ndimage as nd
 
-        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN
+        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN, RNOISE_THRESHOLD
 
         slits = self.slits
 
@@ -1326,6 +1346,18 @@ class SlitGroup:
             self.meta["nod_offset"] = MSA_NOD_ARCSEC / self.slit_pixel_scale
 
         sl = (slice(0, self.sh[0]), slice(0, self.sh[1]))
+
+        ##################
+        # Extra flat field
+        for slit in slits:
+            is_ext = msautils.slit_data_from_extended_reference(slit)
+            if not is_ext:
+                continue
+
+            if slit.meta.exposure.type == "NRS_FIXEDSLIT":
+                flat_profile = msautils.fixed_slit_flat_field(
+                    slit, apply=True, verbose=VERBOSE_LOG
+                )
 
         sci = np.array([slit.data[slit.slice].flatten() * 1 for slit in slits])
         try:
@@ -1336,12 +1368,17 @@ class SlitGroup:
             bar = np.ones_like(sci)
 
         dq = np.array([slit.dq[slit.slice].flatten() * 1 for slit in slits])
+
         var_rnoise = np.array(
             [slit.var_rnoise[slit.slice].flatten() * 1 for slit in slits]
         )
 
         var_poisson = np.array(
             [slit.var_poisson[slit.slice].flatten() * 1 for slit in slits]
+        )
+
+        phot_corr = np.array(
+            [slit.phot_corr[slit.slice].flatten() * 1 for slit in slits]
         )
 
         bad = sci == 0
@@ -1382,6 +1419,9 @@ class SlitGroup:
         for k in attr_keys:
             if k not in self.info.colnames:
                 self.info[k] = 0.0
+
+        # Will be populated if needed
+        sflat_data = None
 
         for j, slit in enumerate(slits):
 
@@ -1427,7 +1467,7 @@ class SlitGroup:
                 )
 
                 # jwst < 1.15 correction was wrong
-                if jwst.__version__ < "1.15":
+                if (jwst.__version__ < "1.15") & (jwst.__version__ > "1.12"):
                     msg = (
                         f"  Flip sign of wavelength correction for"
                         + f" jwst=={jwst.__version__}"
@@ -1447,7 +1487,7 @@ class SlitGroup:
                     _note = ""
 
                 msg = (
-                    "  Apply wavelength correction for "
+                    "   Apply wavelength correction for "
                     f"source_xpos = {slit.source_xpos:.2f}: {_note}"
                     f"dx = {dwave_step[0]:.2f} to {dwave_step[2]:.2f} pixels"
                 )
@@ -1462,6 +1502,28 @@ class SlitGroup:
             wtr.append(_wtr[sl[1]])
             wave.append(_wave[sl].flatten())
             dwave_dx.append(np.gradient(_wave, axis=1)[sl].flatten())
+
+            # SFLAT from shutter names of first exposure
+            needs_sflat = (j == 0) & (slit.meta.exposure.type == "NRS_MSASPEC")
+            needs_sflat &= msautils.slit_data_from_extended_reference(slit)
+            needs_sflat &= with_sflat_correction
+            needs_sflat &= slit.meta.instrument.grating.upper() == "PRISM"
+
+            if needs_sflat:
+                sflat_data = msautils.msa_slit_sflat(
+                    slit,
+                    slit_wave=_wave,
+                    apply=False,
+                    force=False,
+                    verbose=VERBOSE_LOG,
+                )
+                if sflat_data is not None:
+                    sflat_data = sflat_data[sl].flatten()
+
+            if sflat_data is not None:
+                sci[j, :] /= sflat_data
+                var_rnoise[j, :] /= sflat_data**2
+                var_poisson[j, :] /= sflat_data**2
 
             slit_frame_y.append(_sy.flatten())
 
@@ -1516,6 +1578,7 @@ class SlitGroup:
         #         bad[i, :] |= all_bad
 
         bad |= ~np.isfinite(sci) | (sci == 0)
+        bad |= ~np.isfinite(phot_corr)
 
         if self.grating in ["PRISM"]:
             bad |= sci > PRISM_MAX_VALID
@@ -1527,7 +1590,9 @@ class SlitGroup:
                 np.nanmedian((var_rnoise + var_poisson)[~bad])
             )
 
-            bad |= var_rnoise > 10 * np.nanpercentile(var_rnoise[~bad], 95)
+            bad |= var_rnoise > 10 * np.nanpercentile(
+                var_rnoise[~bad], RNOISE_THRESHOLD
+            )
             # print('dq after threshold:', bad.sum())
 
         if self.meta["pad_border"] > 0:
@@ -1544,12 +1609,17 @@ class SlitGroup:
         var_rnoise[~mask] = np.nan
         var_poisson[~mask] = np.nan
 
-        self.sci = sci
+        self.sci = sci * phot_corr
+        self.phot_corr = phot_corr
         self.dq = dq
         self.mask = mask & True
         self.bkg_mask = mask & True
-        self.var_rnoise = var_rnoise
-        self.var_poisson = var_poisson
+        self.var_rnoise = var_rnoise * phot_corr**2
+        self.var_poisson = var_poisson * phot_corr**2
+        self.var_sky = np.zeros_like(sci)
+
+        self.sflat_data = sflat_data
+        self.pathloss_corr = np.ones_like(self.sci)
 
         for j, slit in enumerate(slits):
 
@@ -1571,10 +1641,15 @@ class SlitGroup:
                         utils.log_comment(
                             utils.LOGFILE, msg, verbose=VERBOSE_LOG
                         )
-
-                        phot_scl *= (
+                        path_j_ = (
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
                         )
+
+                        if path_j_.size == 0:
+                            path_j_ = np.ones_like(self.pathloss_corr[j, :])
+
+                        phot_scl *= path_j_
+                        self.pathloss_corr[j, :] *= path_j_
                         self.meta["removed_pathloss"] = pl_ext
                     else:
                         msg = f"   {self.files[j]} source_type={slit.source_type} "
@@ -1595,11 +1670,12 @@ class SlitGroup:
                             sim[pl_ps].data.astype(sci.dtype)[sl].flatten()
                         )
 
+            self.phot_corr[j, :] *= phot_scl
             self.sci[j, :] *= phot_scl
             self.var_rnoise[j, :] *= phot_scl**2
             self.var_poisson[j, :] *= phot_scl**2
 
-        self.var_total = self.var_rnoise + self.var_poisson
+        self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
 
         self.xslit = xslit
         self.yslit = yslit
@@ -1796,6 +1872,71 @@ class SlitGroup:
 
         return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
 
+    def set_background_spectra(self, path="", **kwargs):
+        """
+        Try to read global sky background spectra
+        """
+
+        bkg_files = []
+        for j, slit in enumerate(self.slits):
+            file_root = "_".join(slit.meta.filename.split("_")[:4])
+            bkg_file = os.path.join(path, file_root + "_gbkg.fits")
+            if os.path.exists(bkg_file):
+                bkg_files.append(bkg_file)
+
+        if len(bkg_files) != len(self.slits):
+            return None
+
+        self.sky_data = {"use": True, "sky2d": np.zeros_like(self.sci)}
+
+        for j, slit in enumerate(self.slits):
+            file_root = "_".join(slit.meta.filename.split("_")[:4])
+            bkg_file = file_root + "_gbkg.fits"
+            if os.path.exists(bkg_file):
+                msg = (
+                    f"{__name__} set_background_spectra: read file {bkg_file}"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+                bkg_ = utils.read_catalog(bkg_file)
+
+                sky_ = np.interp(
+                    self.wave[j, :],
+                    bkg_["wave"],
+                    bkg_["p50"],
+                    left=0,
+                    right=0.0,
+                )
+
+                esky_ = np.interp(
+                    self.wave[j, :],
+                    bkg_["wave"],
+                    bkg_["perr"],
+                    left=0,
+                    right=0.0,
+                )
+
+                if "REFPAREA" in bkg_.meta:
+                    ref_pixarea = bkg_.meta["REFPAREA"]
+                else:
+                    ref_pixarea = 4.88e-13
+
+                area_corr = (
+                    slit.meta.photometry.pixelarea_steradians / ref_pixarea
+                )
+                sky_ *= (
+                    self.phot_corr[j, :] / self.pathloss_corr[j, :] / area_corr
+                )
+                esky_ *= (
+                    self.phot_corr[j, :] / self.pathloss_corr[j, :] / area_corr
+                )
+                vsky_ = esky_**2 + (0.03 * sky_) ** 2
+                self.sky_data["sky2d"][j, :] = sky_
+                self.var_sky[j, :] = vsky_
+
+        self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
+        self.mask &= np.isfinite(self.var_total) & (self.var_total > 0)
+
     def estimate_sky(
         self,
         mask_yslit=[[-4.5, 4.5]],
@@ -1807,6 +1948,7 @@ class SlitGroup:
         outlier_threshold=7,
         absolute_threshold=0.2,
         make_plot=False,
+        grating_limits=msautils.GRATING_LIMITS,
         **kwargs,
     ):
         """
@@ -1889,7 +2031,7 @@ class SlitGroup:
             absolute_clip = False
 
         sky_wave = msautils.get_standard_wavelength_grid(
-            self.grating, sample=1.0
+            self.grating, sample=1.0, grating_limits=grating_limits
         )
         nbin = sky_wave.shape[0]
         xbin = np.interp(self.wave, sky_wave, np.arange(nbin) / nbin)
@@ -2477,7 +2619,7 @@ class SlitGroup:
 
         self.mask &= np.isfinite(corr)
 
-        self.var_total = self.var_poisson + self.var_rnoise
+        self.var_total = self.var_poisson + self.var_rnoise + self.var_sky
 
     def apply_spline_bar_correction(self):
         """
@@ -2543,7 +2685,7 @@ class SlitGroup:
         self.sci *= self.bar / bar
         self.var_rnoise *= (self.bar / bar) ** 2
         self.var_poisson *= (self.bar / bar) ** 2
-        self.var_total = self.var_poisson + self.var_rnoise
+        self.var_total = self.var_poisson + self.var_rnoise + self.var_sky
 
         self.orig_bar = self.bar * 1
         self.bar = bar * 1
@@ -3027,31 +3169,42 @@ class SlitGroup:
                     flat_normalization.append(self.normalization[i, :])
 
                 # path loss
-                if with_pathloss & (fit is not None):
+                if (
+                    with_pathloss
+                    & (fit is not None)
+                    & (self.lookup_prf is not None)
+                ):
                     header[f"XPOS{i}"] = (
                         self.slits[i].source_xpos,
                         f"source_xpos of group {exp}",
                     )
 
-                    path_i = slit_prf_fraction(
+                    # path_i = slit_prf_fraction(
+                    #     self.wave[i, :],
+                    #     sigma=fit[exp]["sigma"],
+                    #     x_pos=self.slits[i].source_xpos,
+                    #     slit_width=0.2,
+                    #     pixel_scale=pscale,
+                    #     verbose=False,
+                    # )
+                    #
+                    # # Relative to centered point source
+                    # path_0 = slit_prf_fraction(
+                    #     self.wave[i, :],
+                    #     sigma=0.01,
+                    #     x_pos=0.0,
+                    #     slit_width=0.2,
+                    #     pixel_scale=pscale,
+                    #     verbose=False,
+                    # )
+                    # path_i /= path_0
+
+                    path_i = self.lookup_prf.path_loss(
                         self.wave[i, :],
                         sigma=fit[exp]["sigma"],
-                        x_pos=self.slits[i].source_xpos,
-                        slit_width=0.2,
-                        pixel_scale=pscale,
-                        verbose=False,
+                        x_offset=self.slits[i].source_xpos,
+                        order=LOOKUP_PRF_ORDER,
                     )
-
-                    # Relative to centered point source
-                    path_0 = slit_prf_fraction(
-                        self.wave[i, :],
-                        sigma=0.01,
-                        x_pos=0.0,
-                        slit_width=0.2,
-                        pixel_scale=pscale,
-                        verbose=False,
-                    )
-                    path_i /= path_0
 
                 else:
                     # print('WithOUT PRF pathloss')
@@ -3473,9 +3626,7 @@ class SlitGroup:
 
         fix_sigma = sn_value < sigma_threshold
 
-        msg = (
-            f"fit_params_by_sn: {self.name}"  # {degree_sn[0]} {degree_sn[1]}'
-        )
+        msg = f" fit_params_by_sn{' ':>12}: {self.name}"  # {degree_sn[0]} {degree_sn[1]}'
         msg += f"  SN({sn_percentile:.0f}%) = {sn_value:.1f}  fix_sigma={fix_sigma}"
         msg += f"  degree={interp_degree} "
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
@@ -3918,6 +4069,28 @@ def obj_header(obj, index=0):
 
     # Exposure time
     for i, sl in enumerate(obj.slits):
+        # Shutter quadrant
+        if i == 0:
+            if sl.quadrant is not None:
+                header["SHUTTRQ"] = (
+                    sl.quadrant,
+                    "MSA quadrant of first slitlet",
+                )
+                header["SHUTTRX"] = (
+                    sl.xcen,
+                    "MSA shutter row/xcen of first slitlet",
+                )
+                header["SHUTTRY"] = (
+                    sl.ycen,
+                    "MSA shutter col/ycen of first slitlet",
+                )
+            else:
+                header["SHUTTRQ"] = (5, "Pseudo quadrant for fixed slit")
+                # header['SHUTTRX'] = (0, 'MSA shutter row/xcen')
+                # header['SHUTTRY'] = (0, 'MSA shutter col/ycen')
+
+        header[f"SFILE{i:03d}"] = os.path.basename(sl.meta.filename)
+
         fbase = sl.meta.filename.split("_nrs")[0]
         if fbase in files:
             continue
@@ -4397,6 +4570,7 @@ def extract_from_pixtab(
     dkws=dict(oversample=16, pixfrac=0.8, sample_axes="y"),
     y_range=[-3, 3],
     weight_type="ivm",
+    grating_limits=msautils.GRATING_LIMITS,
     **kwargs,
 ):
     """
@@ -4458,7 +4632,7 @@ def extract_from_pixtab(
     import astropy.table
 
     wave_bin = msautils.get_standard_wavelength_grid(
-        grating, sample=wave_sample
+        grating, sample=wave_sample, grating_limits=grating_limits
     )
 
     xbin = msautils.array_to_bin_edges(wave_bin)
@@ -4667,6 +4841,103 @@ def get_spectrum_path_loss(spec):
     return 1.0 / path_loss
 
 
+def set_lookup_prf(
+    psf_file=None,
+    slit_file=None,
+    grating="PRISM",
+    filter="CLEAR",
+    fixed_slit="S200A1",
+    version="001",
+    lookup_prf_type="merged",
+    force_m_gratings=True,
+    prism_merged=False,
+    **kwargs,
+):
+    """
+    Set lookup table PRF file appropriate for a given grating / filter
+
+    Parameters
+    ----------
+    psf_file : str, None
+        Force filename of the lookup table file
+
+    slit_file : str
+        Filename of a slitlet extraction
+
+    grating : str
+        Grating name
+
+    filter : str
+        Filter name
+
+    fixed_slit : "S200A1", "S1600A1"
+        Slit type.  Will use "S200A1" for MSA observations
+
+    version : str
+        Version string
+
+    lookup_prf_type : str
+        - ``"merged"``: use the grating-merged file
+          ``nirspec_merged_{fixed_slit}_exp_psf_lookup_{version}.fits``
+        - ``"by_grating"``: use the grating-specific files
+          ``nirspec_{grating}_{filter}_{fixed_slit}_exp_psf_lookup_{version}.fits``
+
+    force_m_gratings : bool
+        Use "M" versions of files for "H" gratings
+
+    prism_merged : bool
+        Always use "merged" for PRISM, e.g., with ``lookup_prf_type="by_grating"``.
+
+    Returns
+    -------
+    prf : `msaexp.utils.LookupTablePSF`
+        PSF object, and updates global ``msaexp.slit_combine.LOOKUP_PRF``` object
+    """
+    global LOOKUP_PRF
+
+    if slit_file is not None:
+        with pyfits.open(slit_file) as im:
+            grating = im[0].header["GRATING"]
+            filter = im[0].header["FILTER"]
+            if im[0].header["EXP_TYPE"] == "NRS_FIXEDSLIT":
+                fixed_slit = im[0].header["APERNAME"].split("_")[1].lower()
+            else:
+                fixed_slit = "s200a1"
+
+    if (grating.upper() == "PRISM") & (prism_merged):
+        lookup_prf_type = "merged"
+
+    if lookup_prf_type == "merged":
+        key = "merged"
+    else:
+        key = f"{grating}_{filter}".lower()
+
+    if psf_file is None:
+        psf_file = (
+            f"nirspec_{key}_{fixed_slit}_exp_psf_lookup_{version}.fits".lower()
+        )
+
+        # One H grating doesn't exist so use M
+        # if 'g140h_f070lp' in psf_file:
+        #     msg = f"msaexp.slit_combine.set_lookup_prf: g140h_f070lp > g140m_f070lp"
+        #     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+        #     psf_file = psf_file.replace('g140h_f070lp', 'g140m_f070lp')
+
+        if force_m_gratings:
+            if "h_f" in psf_file:
+                msg = (
+                    f"msaexp.slit_combine.set_lookup_prf: force medium grating"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+                psf_file = psf_file.replace("h_f", "m_f")
+
+    prf = msautils.LookupTablePSF(psf_file=psf_file, **kwargs)
+
+    LOOKUP_PRF = prf
+
+    return prf
+
+
 def extract_spectra(
     target="1208_5110240",
     root="nirspec",
@@ -4688,6 +4959,7 @@ def extract_spectra(
     offset_degree=0,
     degree_kwargs={},
     recenter_all=False,
+    free_trace_offset=False,
     nod_offset=None,
     initial_sigma=7,
     fit_type=1,
@@ -4706,6 +4978,8 @@ def extract_spectra(
     trace_with_ypos="auto",
     get_background=False,
     make_2d_plots=True,
+    lookup_prf_type="merged",
+    lookup_prf_version="001",
     include_full_pixtab=["PRISM"],
     plot_kws={},
     **kwargs,
@@ -4788,6 +5062,9 @@ def extract_spectra(
         Refit for the trace center for all groups.  If False,
         use the center from the first (usually highest S/N prism)
         trace.
+
+    free_trace_offset : bool
+        If True, recenter **all** traces within and across groups.
 
     initial_sigma : float, optional
         Initial sigma value.  This is 10 times the Gaussian sigma
@@ -4922,6 +5199,15 @@ def extract_spectra(
             )
             trace_from_yoffset = True
 
+        if lookup_prf_type is not None:
+            prf = set_lookup_prf(
+                slit_file=groups[g][0],
+                version=lookup_prf_version,
+                lookup_prf_type=lookup_prf_type,
+            )
+        else:
+            prf = None
+
         try:
             obj = SlitGroup(
                 groups[g],
@@ -4938,6 +5224,7 @@ def extract_spectra(
                 nod_offset=nod_offset,
                 reference_exposure=reference_exposure,
                 pad_border=pad_border,
+                lookup_prf=prf,
                 **kwargs,
             )
         except RuntimeError:
@@ -4964,7 +5251,12 @@ def extract_spectra(
                 continue
 
         if obj.mask.sum() < 256:
-            msg = f"\n    skip npix={obj.mask.sum()} shape=({obj.sh}) {obj.grating}\n"
+            msg = f"\n    skip npix={obj.mask.sum()} shape={obj.sh} "
+            msg += (
+                f" ({np.nanmin(obj.wave):.2f}, {np.nanmax(obj.wave):.2f} um)"
+            )
+            msg += f" {obj.grating}\n"
+
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
             continue
 
@@ -5065,7 +5357,7 @@ def extract_spectra(
             obj.mask &= np.isfinite(obj.sci)
 
     if mask_cross_dispersion is not None:
-        msg = f"{'slit_combine':<28}: mask_cross_dispersion {mask_cross_dispersion}"
+        msg = f" {'slit_combine':<28}: mask_cross_dispersion {mask_cross_dispersion}"
         msg += f"  cross_dispersion_mask_type={cross_dispersion_mask_type}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
@@ -5162,11 +5454,23 @@ def extract_spectra(
 
         obj = xobj[k]["obj"]
 
+        if lookup_prf_type is not None:
+            set_lookup_prf(
+                slit_file=obj.files[0],
+                version=lookup_prf_version,
+                lookup_prf_type=lookup_prf_type,
+            )
+
+        if free_trace_offset:
+            ref_exp = None
+        else:
+            ref_exp = obj.calc_reference_exposure
+
         kws = dict(
             niter=trace_niter,
             force_positive=(fit_type == 0),
             degree=offset_degree,
-            ref_exp=obj.calc_reference_exposure,
+            ref_exp=ref_exp,
             sigma_bounds=(3, 12),
             with_bounds=False,
             trace_bounds=(-1.0, 1.0),
