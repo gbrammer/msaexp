@@ -2696,21 +2696,16 @@ def read_spectrum(
     grating = spec.meta["GRATING"].lower()
     _filter = spec.meta["FILTER"].lower()
 
+    # ToDo: use utils function
     if "R" not in spec.colnames:
-        _data_path = os.path.dirname(__file__)
-        disp = utils.read_catalog(
-            f"{_data_path}/data/jwst_nirspec_{grating}_disp.fits"
+        R_fwhm = msautils.get_default_resolution_curve(
+            grating=grating,
+            wave=spec['wave'],
+            # grating_degree=2 default poly fit for gratings
+            **kwargs
         )
-
-        spec.disp = disp
-
-        spec["R"] = np.interp(
-            spec["wave"],
-            disp["WAVELENGTH"],
-            disp["R"],
-            left=disp["R"][0],
-            right=disp["R"][-1],
-        )
+        spec["R"] = R_fwhm
+        spec["R"].description = "Spectral resolution from tabulated curves"
 
     spec.grating = grating
     spec.filter = _filter
