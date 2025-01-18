@@ -221,7 +221,7 @@ def combine_spectra_pipeline(
             elif "background" in key:
                 initial_theta = [5.0, -0.5]
             else:
-                initial_theta = [0, 0, 0]
+                initial_theta = None #[0, 0, 0]
 
         kwargs = dict(
             path_to_files="./",
