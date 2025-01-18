@@ -221,7 +221,7 @@ def combine_spectra_pipeline(
             elif "background" in key:
                 initial_theta = [5.0, -0.5]
             else:
-                initial_theta = None #[0, 0, 0]
+                initial_theta = None  # [0, 0, 0]
 
         kwargs = dict(
             path_to_files="./",
@@ -834,6 +834,7 @@ def handle_spectrum_extraction(event):
         skip_existing=True,
         s3_base="s3://msaexp-nirspec/extractions",
         sync=True,
+        clean=True,
     )
 
     for k in defaults:
@@ -914,11 +915,21 @@ def handle_spectrum_extraction(event):
             print(SQL)
             db.execute(SQL)
 
+    if event["clean"]:
+        files = glob.glob(f"{root}*{key}.*")
+        files += f"jw*{key}.*"
+        for file in files:
+            print(f"rm {file}")
+            os.remove(file)
+
     return xobj, info, status
 
 
 def get_targets(
-    root="snh0pe-v4", s3_base="s3://msaexp-nirspec/extractions", sync=True, status=70
+    root="snh0pe-v4",
+    s3_base="s3://msaexp-nirspec/extractions",
+    sync=True,
+    status=70,
 ):
     """ """
     list_command = f"aws s3 ls {s3_base}/slitlets/{root}/"
@@ -947,16 +958,18 @@ def get_targets(
     un = utils.Unique(keys, verbose=False)
     un.info(sort_counts=True)
 
-    exist = db.SQL(f"""
+    exist = db.SQL(
+        f"""
     SELECT key FROM nirspec_extractions_helper
     where root = '{root}'
-    """)
+    """
+    )
 
     tab = utils.GTable()
     tab["key"] = un.values
     tab["count"] = un.counts
     tab["status"] = status
-    
+
     new = ~np.isin(tab["key"], exist["key"])
     tab = tab[new]
 
