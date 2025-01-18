@@ -215,7 +215,7 @@ def combine_spectra_pipeline(
 
     try:
 
-        if initial_theta is "auto":
+        if initial_theta in ["auto"]:
             if "b" in key:
                 initial_theta = [5.0, -0.5]
             elif "background" in key:
