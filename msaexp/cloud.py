@@ -917,7 +917,7 @@ def handle_spectrum_extraction(event):
 
     if event["clean"]:
         files = glob.glob(f"{root}*{key}.*")
-        files += f"jw*{key}.*"
+        files += glob.glob(f"jw*{key}.*")
         for file in files:
             print(f"rm {file}")
             os.remove(file)
