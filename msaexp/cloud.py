@@ -537,9 +537,9 @@ def combine_spectra_pipeline(
 
             kwargs["include_full_pixtab"] = [
                 "PRISM",
-                "G140M",
-                "G235M",
-                "G395M",
+                # "G140M",
+                # "G235M",
+                # "G395M",
             ]
 
             if force_diffs:
@@ -967,6 +967,7 @@ def get_targets(
 
     tab = utils.GTable()
     tab["key"] = un.values
+    tab["root"] = root
     tab["count"] = un.counts
     tab["status"] = status
 
