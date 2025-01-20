@@ -929,7 +929,7 @@ def handle_spectrum_extraction(**event):
     else:
         xobj = None
 
-    files = glob.glob(f"{root}*{key}.spec.fits")
+    files = glob.glob(f"{outroot}*{key}.spec.fits")
     if len(files) == 0:
         status = 9
         info = None
@@ -959,7 +959,7 @@ def handle_spectrum_extraction(**event):
             # Send files
             send_command = (
                 f'aws s3 sync ./ {s3_base}/{root}/ --exclude "*" '
-                + f'--include "{root}*{key}.*" --acl public-read'
+                + f'--include "{outroot}*{key}.*" --acl public-read'
             )
             print(f"# send to s3: {send_command}")
 
@@ -977,7 +977,7 @@ def handle_spectrum_extraction(**event):
             db.execute(SQL)
 
     if event["clean"]:
-        files = glob.glob(f"{root}*{key}.*")
+        files = glob.glob(f"{outroot}*{key}.*")
         files += glob.glob(f"jw*{key}.*")
         for file in files:
             print(f"rm {file}")
