@@ -662,7 +662,7 @@ def combine_spectra_pipeline(
     return xobj
 
 
-def get_extraction_info(root="snh0pe-v4", key="4446_274"):
+def get_extraction_info(root="snh0pe-v4", outroot=None, key="4446_274"):
     """
     Get columns for nirspec_extractions table
     """
@@ -686,7 +686,10 @@ def get_extraction_info(root="snh0pe-v4", key="4446_274"):
         "VERSION",
     ]
 
-    files = glob.glob(f"{root}*{key}.spec.fits")
+    if outroot in [None]:
+        outroot = root
+
+    files = glob.glob(f"{outroot}*{key}.spec.fits")
     files.sort()
 
     rows = []
@@ -902,7 +905,7 @@ def handle_spectrum_extraction(**event):
     print(yaml.dump(event))
 
     root = event["root"]
-    outroot = event["root"]
+    outroot = event["outroot"]
     key = event["key"]
     skip_existing = event["skip_existing"]
     s3_base = event["s3_base"]
@@ -918,7 +921,7 @@ def handle_spectrum_extraction(**event):
         print(SQL)
         db.execute(SQL)
 
-    files = glob.glob(f"{root}*{key}.spec.fits")
+    files = glob.glob(f"{outroot}*{key}.spec.fits")
     if (len(files) > 0) & (skip_existing):
         do_extraction = False
     else:
@@ -937,7 +940,7 @@ def handle_spectrum_extraction(**event):
     else:
         status = 2
 
-        info = get_extraction_info(root=root, key=key)
+        info = get_extraction_info(root=root, outroot=outroot, key=key)
 
         if sync:
             # Send extraction info
