@@ -4000,7 +4000,7 @@ def pixel_table_to_1d(pixtab, wave_grid, weight=None, y_range=[-3, 3]):
     return tab
 
 
-def obj_header(obj, index=0):
+def obj_header(obj, i0=0, exposure_keys=[]):
     """
     Generate a header from a `msaexp.slit_combine.SlitGroup` object
 
@@ -4009,8 +4009,8 @@ def obj_header(obj, index=0):
     obj : `msaexp.slit_combine.SlitGroup`
         Data group
 
-    index : int
-        Index for merging headers across multiple groups
+    i0 : int
+        Start of exposure counter
 
     Returns
     -------
@@ -4028,7 +4028,6 @@ def obj_header(obj, index=0):
 
                 header[k] = (im[ext].header[k], im[ext].header.comments[k])
 
-    files = []
     header["EXPTIME"] = 0.0
     header["NCOMBINE"] = 0
     header["BUNIT"] = "microJansky"
@@ -4089,15 +4088,19 @@ def obj_header(obj, index=0):
                 # header['SHUTTRX'] = (0, 'MSA shutter row/xcen')
                 # header['SHUTTRY'] = (0, 'MSA shutter col/ycen')
 
-        header[f"SFILE{i:03d}"] = os.path.basename(sl.meta.filename)
+        header[f"SFILE{i+i0:03d}"] = os.path.basename(sl.meta.filename)
+        header["NCOMBINE"] += 1
 
         fbase = sl.meta.filename.split("_nrs")[0]
-        if fbase in files:
+        if fbase in exposure_keys:
+            # print(f"xxx {fbase} in exposure_keys, don't add to exptime")
             continue
+        else:
+            # print(f"xxx {fbase} not in exposure_keys {len(exposure_keys)}")
+            pass
 
-        files.append(fbase)
+        exposure_keys.append(fbase)
         header["EXPTIME"] += sl.meta.exposure.effective_exposure_time
-        header["NCOMBINE"] += 1
 
     # trace fits
     if obj.fit is not None:
@@ -4129,6 +4132,7 @@ def obj_header(obj, index=0):
                     val,
                     f"Trace offset polynomial coefficient for group {exp}",
                 )
+
     return header
 
 
@@ -4430,14 +4434,21 @@ def drizzle_grating_group(
     slit_info = []
     tabs = []
 
+    exposure_keys = []
     for k in grating_keys:
         obj = xobj[k]["obj"]
         if header is None:
-            header = obj_header(obj)
+            header = obj_header(obj, i0=0, exposure_keys=exposure_keys)
         else:
-            hi = obj_header(obj)
+            hi = obj_header(
+                obj, i0=header["NCOMBINE"], exposure_keys=exposure_keys
+            )
             header["NCOMBINE"] += hi["NCOMBINE"]
             header["EXPTIME"] += hi["EXPTIME"]
+            for k in hi:
+                if k not in header:
+                    # print("new keyword: ", k)
+                    header[k] = hi[k]
 
         tab = obj.get_flat_diff_arrays(
             apply_mask=pixtab_with_mask,
@@ -5392,6 +5403,10 @@ def extract_spectra(
         okeys.append(f"{k.split('-')[-1]}-{obj.sh[1]}")
         xkeys.append(k)
 
+    if initial_theta is not None:
+        if len(initial_theta) > 1:
+            fit_params_kwargs["theta"] = initial_theta
+
     if sort_by_sn:
         # Sort in order of decreasing S/N
         sn_keys = []
@@ -5427,13 +5442,14 @@ def extract_spectra(
             # input_fix_sigma = initial_sigma*1
             recenter_all = False
             fix_params = True
-            initial_theta = np.array([initial_sigma, 0])
+            if initial_theta is None:
+                initial_theta = np.array([initial_sigma, 0.0])
 
     if initial_theta is not None:
         CENTER_PRIOR = initial_theta[-1]
         SIGMA_PRIOR = initial_theta[0] / 10.0
     else:
-        CENTER_PRIOR = 0
+        CENTER_PRIOR = 0.0
         SIGMA_PRIOR = 0.6
 
     # fix_sigma = None
@@ -5499,6 +5515,7 @@ def extract_spectra(
                         fix_sigma = kws["fix_sigma"]
                     else:
                         fix_sigma = tfit[obj.unp.values[0]]["sigma"] * 10
+
                 elif fix_sigma_across_groups:
                     theta = theta[1:]
                     fix_sigma = tfit[obj.unp.values[0]]["sigma"] * 10
