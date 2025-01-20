@@ -37,6 +37,7 @@ def fetch_files(
     key="4446_274",
     s3_base="s3://msaexp-nirspec/extractions",
     get_bkg=True,
+    fix_srcname=True,
     **kwargs,
 ):
     """
@@ -55,8 +56,18 @@ def fetch_files(
         fetch_command, shell=True, capture_output=True
     )
 
-    files = glob.glob(f"*.{key}.fits")
+    files = glob.glob(f"jw*.{key}.fits")
     files.sort()
+
+    if fix_srcname:
+        for file in files:
+            with pyfits.open(file, mode="update") as im:
+                file_src = im[1].header["SRCNAME"]
+                if file_src != key:
+                    msg = f"fetch_files.fix_srcname: {file_src} => {key}"
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                    im[1].header["SRCNAME"] = key
+                    im.flush()
 
     return files, sync_result
 
@@ -163,11 +174,12 @@ def get_join_indices(root):
 
 def combine_spectra_pipeline(
     root="snh0pe-v4",
+    outroot=None,
     key="4446_274",
     files=[],
     output_type="from_root",
     join=None,
-    recenter_type=1,
+    recenter_type=0,
     gratings=GRATINGS,
     bad_pixel_names=BAD_PIXEL_NAMES,
     turn_off_flagging=False,
@@ -189,6 +201,9 @@ def combine_spectra_pipeline(
     combine spectra
     """
 
+    if outroot in [None]:
+        outroot = root
+
     if len(files) == 0:
         files, sync_result = fetch_files(root=root, key=key, **kws)
 
@@ -206,7 +221,7 @@ def combine_spectra_pipeline(
 
     plt.rcParams["scatter.marker"] = "."
 
-    utils.LOGFILE = f"{root}_{key}.extract.log"
+    utils.LOGFILE = f"{outroot}_{key}.extract.log"
     utils.log_comment(utils.LOGFILE, "Start", verbose=True, show_date=True)
 
     utils.log_comment(utils.LOGFILE, f"{len(files)} files", verbose=True)
@@ -247,18 +262,25 @@ def combine_spectra_pipeline(
             lookup_prf_type="merged",  # by grating
             weight_type="ivm",
             files=files,
-            root=root,
+            root=outroot,
             do_gratings=gratings,
             diffs=True,
             join=join,
-            recenter_all=(recenter_type > 0),
-            free_trace_offset=(recenter_type > 1),
+            recenter_all=((recenter_type & 1) > 0),
+            free_trace_offset=((recenter_type & 2) > 0),
             initial_theta=initial_theta,
             flag_percentile_kwargs=flag_percentile_kwargs,
             fit_params_kwargs=fit_params_kwargs,
             drizzle_kws=drizzle_kws,
             plot_kws=plot_kws,
         )
+
+        for k in kws:
+            if k in kwargs:
+                msg = f"set keyword arg: {k} = {kws[k]}"
+                utils.log_comment(utils.LOGFILE, "Done", verbose=True)
+
+                kwargs[k] = kws[k]
 
         kwargs["fix_prism_norm"] = False
 
@@ -624,8 +646,6 @@ def combine_spectra_pipeline(
 
             kwargs["grating_diffs"] = sky_diffs >= 0
 
-        print("x", files, kwargs["files"])
-
         hdul, xobj = extract_spectra(target=key, **kwargs)
 
     except:
@@ -821,10 +841,32 @@ def get_extraction_info(root="snh0pe-v4", key="4446_274"):
 
     info["ctime"] = [os.path.getmtime(f) for f in info["file"]]
 
+    # Fill missing coordinates
+    miss = (info["ra"] == 0) & (info["dec"] == 0)
+    if miss.sum() > 0:
+
+        msg = f"Fill shutter coordinates for {miss.sum()} rows"
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+        SLIT_QUERY = """
+        SELECT avg(ra) as ra, avg(dec) as dec,
+               array_agg(distinct(srcra, srcdec)) as source_coords,
+               count(*)
+        FROM nirspec_slits
+        WHERE slitlet_id = {slitid} AND msametfl = '{msamet}' AND msametid = {msaid}
+        """
+
+        for i in np.where(miss)[0]:
+            row_ = info[i]
+            slit_rows = db.SQL(SLIT_QUERY.format(**row_))
+            if len(slit_rows) == 1:
+                info["ra"][i] = slit_rows["ra"][0]
+                info["dec"][i] = slit_rows["dec"][0]
+
     return info
 
 
-def handle_spectrum_extraction(event):
+def handle_spectrum_extraction(**event):
     """
     Handler
     """
@@ -835,27 +877,43 @@ def handle_spectrum_extraction(event):
         s3_base="s3://msaexp-nirspec/extractions",
         sync=True,
         clean=True,
+        outroot=None,
+        rowid=None,
     )
+
+    # Parse yaml args
+    if "yaml_kwargs" in event:
+        ykws = yaml.load(event["yaml_kwargs"], Loader=yaml.Loader)
+        if isinstance(ykws, dict):
+            for k in ykws:
+                event[k] = ykws[k]
+
+        k_ = event.pop("yaml_kwargs")
 
     for k in defaults:
         if k not in event:
             print(f"set default {k} = {defaults[k]}")
             event[k] = defaults[k]
 
+    if event["outroot"] in [None, "null"]:
+        event["outroot"] = event["root"]
+
     print(f"Event data:")
     print(yaml.dump(event))
 
     root = event["root"]
+    outroot = event["root"]
     key = event["key"]
     skip_existing = event["skip_existing"]
     s3_base = event["s3_base"]
-    sync = event["sync"] in [1, True, "True"]
+    sync = event["sync"] not in [0, False, "False"]
+    sync &= event["rowid"] is not None
 
     if sync:
         SQL = f"""
     UPDATE nirspec_extractions_helper
     SET status = 1, ctime = {time.time()}
-    WHERE root = '{root}' AND key = '{key}'
+    WHERE rowid = {event["rowid"]} AND key = '{key}'
         """
         print(SQL)
         db.execute(SQL)
@@ -883,13 +941,16 @@ def handle_spectrum_extraction(event):
 
         if sync:
             # Send extraction info
-            db.execute(
-                f"""
+            file_list = ",".join([f"'{file_}'" for file_ in info["file"]])
+
+            SQL_DELETE_FROM_EXTRACTIONS = f"""
     DELETE FROM nirspec_extractions
     WHERE root = '{root}'
-    AND file like '{root}%%{key}.spec.fits'
+    AND file in ({file_list})
             """
-            )
+            print(SQL_DELETE_FROM_EXTRACTIONS)
+
+            db.execute(SQL_DELETE_FROM_EXTRACTIONS)
 
             db.send_to_database(
                 "nirspec_extractions", info, if_exists="append"
@@ -910,7 +971,7 @@ def handle_spectrum_extraction(event):
             SQL = f"""
     UPDATE nirspec_extractions_helper
     SET status = {status}, ctime = {time.time()}
-    WHERE root = '{root}' AND key = '{key}'
+    WHERE rowid = {event["rowid"]} AND key = '{key}'
             """
             print(SQL)
             db.execute(SQL)
@@ -970,6 +1031,7 @@ def get_targets(
     tab["root"] = root
     tab["count"] = un.counts
     tab["status"] = status
+    tab["outroot"] = root
 
     new = ~np.isin(tab["key"], exist["key"])
     tab = tab[new]
