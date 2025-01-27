@@ -38,16 +38,20 @@ def fetch_files(
     s3_base="s3://msaexp-nirspec/extractions",
     get_bkg=True,
     fix_srcname=True,
+    shutter=None,
     **kwargs,
 ):
     """
     Fetch slitlet files and combine spectrum
     """
 
-    if key.startswith('s'):
+    if key.startswith("s"):
         slit_files = f"jw*_{key}.fits"
     else:
-        slit_files = f"jw*.{key}.fits"
+        if shutter is None:
+            slit_files = f"jw*.{key}.fits"
+        else:
+            slit_files = f"jw*.{shutter}.*fits"
 
     fetch_command = (
         f'aws s3 sync {s3_base}/slitlets/{root}/ ./ --exclude "*" '
@@ -74,13 +78,13 @@ def fetch_files(
                 group_key = key
 
                 if "SLIT" in im[0].header["APERNAME"]:
-                    slit_name = im[1].header['SLTNAME'].upper()
-                    im[0].header['FXD_SLIT'] = slit_name
-                    im[0].header['APERNAME'] = f"NRS_{slit_name}_SLIT"
+                    slit_name = im[1].header["SLTNAME"].upper()
+                    im[0].header["FXD_SLIT"] = slit_name
+                    im[0].header["APERNAME"] = f"NRS_{slit_name}_SLIT"
 
                     # Include MSAMETFL index in srcname
-                    if 'MSAMETFL' in im[0].header:
-                        msaspl = im[0].header['MSAMETFL'].split('_')[1]
+                    if "MSAMETFL" in im[0].header:
+                        msaspl = im[0].header["MSAMETFL"].split("_")[1]
                         slit_key = f"{msaspl}_{slit_name}".lower()
                     else:
                         slit_key = f"{slit_name}".lower()
@@ -94,7 +98,9 @@ def fetch_files(
                     group_key = slit_key
 
                 elif file_src != key:
-                    msg = f"fetch_files.fix_srcname: {file_src} => {key}"
+                    msg = (
+                        f"fetch_files.fix_srcname: {file} {file_src} => {key}"
+                    )
                     utils.log_comment(utils.LOGFILE, msg, verbose=True)
                     im[1].header["SRCNAME"] = key
                     im.flush()
@@ -243,7 +249,9 @@ def combine_spectra_pipeline(
         outroot = root
 
     if len(files) == 0:
-        files, file_groups, sync_result = fetch_files(root=root, key=key, **kws)
+        files, file_groups, sync_result = fetch_files(
+            root=root, key=key, **kws
+        )
     else:
         file_groups = {key: files}
 
@@ -320,7 +328,7 @@ def combine_spectra_pipeline(
         for k in kws:
             if k in kwargs:
                 msg = f"set keyword arg: {k} = {kws[k]}"
-                utils.log_comment(utils.LOGFILE, "Done", verbose=True)
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
                 kwargs[k] = kws[k]
 
@@ -636,8 +644,8 @@ def combine_spectra_pipeline(
             kwargs["stuck_threshold"] = 0.1
             kwargs["bad_shutter_names"] = [-3, -2, 3]
 
-        if "kriek" in root:
-            kwargs["recenter_all"] = True
+        # if "kriek" in root:
+        #     kwargs["recenter_all"] = True
 
         if "5224_978020" in key:
             kwargs["initial_theta"] = [3, -3.5]
@@ -689,7 +697,7 @@ def combine_spectra_pipeline(
             kwargs["grating_diffs"] = sky_diffs >= 0
 
         for grp in file_groups:
-            kwargs['files'] = file_groups[grp]
+            kwargs["files"] = file_groups[grp]
             hdul, xobj = extract_spectra(target=grp, **kwargs)
 
     except:
