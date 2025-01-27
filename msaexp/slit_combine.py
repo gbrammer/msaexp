@@ -1360,12 +1360,15 @@ class SlitGroup:
                 )
 
         sci = np.array([slit.data[slit.slice].flatten() * 1 for slit in slits])
-        try:
-            bar = np.array(
-                [slit.barshadow[slit.slice].flatten() * 1 for slit in slits]
-            )
-        except:
+        if self.IS_FIXED_SLIT:
             bar = np.ones_like(sci)
+        else:
+            try:
+                bar = np.array(
+                    [slit.barshadow[slit.slice].flatten() * 1 for slit in slits]
+                )
+            except:
+                bar = np.ones_like(sci)
 
         dq = np.array([slit.dq[slit.slice].flatten() * 1 for slit in slits])
 
@@ -4920,6 +4923,8 @@ def set_lookup_prf(
 
     if lookup_prf_type == "merged":
         key = "merged"
+        if fixed_slit in ["s200a2", "s200b1"]:
+            fixed_slit = "s200a1"
     else:
         key = f"{grating}_{filter}".lower()
 

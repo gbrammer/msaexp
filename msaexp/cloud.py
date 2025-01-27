@@ -44,9 +44,14 @@ def fetch_files(
     Fetch slitlet files and combine spectrum
     """
 
+    if key.startswith('s'):
+        slit_files = f"jw*_{key}.fits"
+    else:
+        slit_files = f"jw*.{key}.fits"
+
     fetch_command = (
         f'aws s3 sync {s3_base}/slitlets/{root}/ ./ --exclude "*" '
-        + f'--include "*.{key}.fits"'
+        + f'--include "{slit_files}"'
     )
 
     if get_bkg:
@@ -56,20 +61,52 @@ def fetch_files(
         fetch_command, shell=True, capture_output=True
     )
 
-    files = glob.glob(f"jw*.{key}.fits")
+    files = glob.glob(slit_files)
     files.sort()
 
     if fix_srcname:
+        file_groups = {}
+
         for file in files:
             with pyfits.open(file, mode="update") as im:
                 file_src = im[1].header["SRCNAME"]
-                if file_src != key:
+
+                group_key = key
+
+                if "SLIT" in im[0].header["APERNAME"]:
+                    slit_name = im[1].header['SLTNAME'].upper()
+                    im[0].header['FXD_SLIT'] = slit_name
+                    im[0].header['APERNAME'] = f"NRS_{slit_name}_SLIT"
+
+                    # Include MSAMETFL index in srcname
+                    if 'MSAMETFL' in im[0].header:
+                        msaspl = im[0].header['MSAMETFL'].split('_')[1]
+                        slit_key = f"{msaspl}_{slit_name}".lower()
+                    else:
+                        slit_key = f"{slit_name}".lower()
+
+                    im[1].header["SRCNAME"] = slit_key
+
+                    msg = f"fetch_files.fix_srcname: {file} => {slit_key}"
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                    im.flush()
+
+                    group_key = slit_key
+
+                elif file_src != key:
                     msg = f"fetch_files.fix_srcname: {file_src} => {key}"
                     utils.log_comment(utils.LOGFILE, msg, verbose=True)
                     im[1].header["SRCNAME"] = key
                     im.flush()
 
-    return files, sync_result
+                if group_key not in file_groups:
+                    file_groups[group_key] = []
+
+                file_groups[group_key].append(file)
+    else:
+        file_groups = {key: files}
+
+    return files, file_groups, sync_result
 
 
 GRATING_LIMITS = {
@@ -195,6 +232,7 @@ def combine_spectra_pipeline(
     extended_calibration_kwargs=EXTENDED_CALIBRATION_KWARGS,
     drizzle_kws=DRIZZLE_KWS,
     plot_kws={},
+    flag_trace_kwargs={},
     **kws,
 ):
     """
@@ -205,7 +243,9 @@ def combine_spectra_pipeline(
         outroot = root
 
     if len(files) == 0:
-        files, sync_result = fetch_files(root=root, key=key, **kws)
+        files, file_groups, sync_result = fetch_files(root=root, key=key, **kws)
+    else:
+        file_groups = {key: files}
 
     if len(files) == 0:
         return None
@@ -258,7 +298,7 @@ def combine_spectra_pipeline(
             make_2d_plots=2,
             hot_cold_kwargs=None,
             flag_profile_kwargs=None,
-            flag_trace_kwargs={},
+            flag_trace_kwargs=flag_trace_kwargs,
             lookup_prf_type="merged",  # by grating
             weight_type="ivm",
             files=files,
@@ -266,6 +306,7 @@ def combine_spectra_pipeline(
             do_gratings=gratings,
             diffs=True,
             join=join,
+            trace_with_xpos=trace_with_xpos,
             recenter_all=((recenter_type & 1) > 0),
             free_trace_offset=((recenter_type & 2) > 0),
             initial_theta=initial_theta,
@@ -273,6 +314,7 @@ def combine_spectra_pipeline(
             fit_params_kwargs=fit_params_kwargs,
             drizzle_kws=drizzle_kws,
             plot_kws=plot_kws,
+            with_fs_offset=False,
         )
 
         for k in kws:
@@ -549,7 +591,7 @@ def combine_spectra_pipeline(
             kwargs["trace_with_xpos"] = True
 
         if "-v4" in root:
-            kwargs["trace_with_xpos"] = True
+            # kwargs["trace_with_xpos"] = True
             kwargs["fix_prism_norm"] = False
             # kwargs["diffs"] = len(glob.glob("*sky.csv")) == 0
             kwargs["diffs"] = len(glob.glob("*gbkg.fits")) == 0
@@ -646,7 +688,9 @@ def combine_spectra_pipeline(
 
             kwargs["grating_diffs"] = sky_diffs >= 0
 
-        hdul, xobj = extract_spectra(target=key, **kwargs)
+        for grp in file_groups:
+            kwargs['files'] = file_groups[grp]
+            hdul, xobj = extract_spectra(target=grp, **kwargs)
 
     except:
         print("Failed: ", key)
