@@ -1248,31 +1248,38 @@ class SlitGroup:
         rows = []
         for i, slit in enumerate(self.slits):
             _nbp = self.flagged_hot_pixels[i][1]
+
             msg = f"{i:>2} {slit.meta.filename} {slit.data.shape}"
             msg += f" {_nbp:>2} flagged hot pixels"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
+            row = {
+                "filename": slit.meta.filename,
+                "visit": slit.meta.filename.split("_")[0],
+                "xstart": slit.xstart,
+                "ystart": slit.ystart,
+                "shape": slit.data.shape
+            }
+
             md = slit.meta.dither.instance
+            for k in md:
+                row[k] = md[k]
+
             mi = slit.meta.instrument.instance
-            rows.append(
-                [
-                    slit.meta.filename,
-                    slit.meta.filename.split("_")[0],
-                    slit.xstart,
-                    slit.ystart,
-                    slit.data.shape,
-                ]
-                + [md[k] for k in md]
-                + [mi[k] for k in mi]
-            )
+            for k in mi:
+                row[k] = mi[k]
 
-        names = (
-            ["filename", "visit", "xstart", "ystart", "shape"]
-            + [k for k in md]
-            + [k for k in mi]
-        )
+            rows.append(row)
 
-        info = utils.GTable(names=names, rows=rows)
+        info = utils.GTable(rows=rows)
+
+        # Print message if columns have mask from occasional keywords missing
+        # in slit metadata?
+        for k in info.colnames:
+            if hasattr(info[k], 'mask'):
+                msg = f'info table: column \'{k}\' has {info[k].mask.sum()} masked rows'
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
         info["x_position"] = np.round(info["x_offset"] * 10) / 10.0
         info["y_position"] = np.round(info["y_offset"] * 10) / 10.0
         info["y_index"] = (
