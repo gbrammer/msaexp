@@ -1258,7 +1258,7 @@ class SlitGroup:
                 "visit": slit.meta.filename.split("_")[0],
                 "xstart": slit.xstart,
                 "ystart": slit.ystart,
-                "shape": slit.data.shape
+                "shape": slit.data.shape,
             }
 
             md = slit.meta.dither.instance
@@ -1276,8 +1276,8 @@ class SlitGroup:
         # Print message if columns have mask from occasional keywords missing
         # in slit metadata?
         for k in info.colnames:
-            if hasattr(info[k], 'mask'):
-                msg = f'info table: column \'{k}\' has {info[k].mask.sum()} masked rows'
+            if hasattr(info[k], "mask"):
+                msg = f"info table: column '{k}' has {info[k].mask.sum()} masked rows"
                 utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         info["x_position"] = np.round(info["x_offset"] * 10) / 10.0
@@ -1372,7 +1372,10 @@ class SlitGroup:
         else:
             try:
                 bar = np.array(
-                    [slit.barshadow[slit.slice].flatten() * 1 for slit in slits]
+                    [
+                        slit.barshadow[slit.slice].flatten() * 1
+                        for slit in slits
+                    ]
                 )
             except:
                 bar = np.ones_like(sci)
