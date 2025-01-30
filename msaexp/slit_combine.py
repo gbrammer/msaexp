@@ -5611,9 +5611,10 @@ def extract_spectra(
         _head = hdul[g][1].header
 
         specfile = f"{root}_{_head['GRATING']}-{_head['FILTER']}".lower()
-        specfile += f"_{_head['SRCNAME']}.spec.fits".lower().replace(
-            "background_", "b"
-        )
+        specfile += f"_{_head['SRCNAME']}.spec.fits".lower()
+
+        if True:
+            specfile = specfile.replace("background_", "b")
 
         utils.log_comment(utils.LOGFILE, specfile, verbose=VERBOSE_LOG)
         if "PIXTAB" in hdul[g]:

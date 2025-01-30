@@ -98,6 +98,12 @@ def fetch_files(
                     group_key = slit_key
 
                 elif file_src != key:
+                    if key.startswith("background"):
+                        prog = int(im[0].header["PROGRAM"])
+                        key = f"{prog}_b{key.split('_')[1]}"
+                        # group_key = "-".join([im[0].header["MSAMETFL"], key])
+                        group_key = key
+
                     msg = (
                         f"fetch_files.fix_srcname: {file} {file_src} => {key}"
                     )
@@ -742,6 +748,10 @@ def get_extraction_info(root="snh0pe-v4", outroot=None, key="4446_274"):
         outroot = root
 
     files = glob.glob(f"{outroot}*{key}.spec.fits")
+    if key.startswith("background"):
+        bkey = f"_b" + key.split("_")[1]
+        files += glob.glob(f"{outroot}*{bkey}.spec.fits")
+
     files.sort()
 
     rows = []
@@ -974,6 +984,10 @@ def handle_spectrum_extraction(**event):
         db.execute(SQL)
 
     files = glob.glob(f"{outroot}*{key}.spec.fits")
+    if key.startswith("background"):
+        bkey = f"_b" + key.split("_")[1]
+        files += glob.glob(f"{outroot}*{bkey}.spec.fits")
+
     if (len(files) > 0) & (skip_existing):
         do_extraction = False
     else:
@@ -985,6 +999,10 @@ def handle_spectrum_extraction(**event):
         xobj = None
 
     files = glob.glob(f"{outroot}*{key}.spec.fits")
+    if key.startswith("background"):
+        bkey = f"_b" + key.split("_")[1]
+        files += glob.glob(f"{outroot}*{bkey}.spec.fits")
+
     if len(files) == 0:
         status = 9
         info = None
@@ -1016,6 +1034,10 @@ def handle_spectrum_extraction(**event):
                 f'aws s3 sync ./ {s3_base}/{root}/ --exclude "*" '
                 + f'--include "{outroot}*{key}.*" --acl public-read'
             )
+            if key.startswith("background"):
+                bkey = f"_b" + key.split("_")[1]
+                send_command += f' --include "{outroot}*{bkey}.*"'
+
             print(f"# send to s3: {send_command}")
 
             sync_result = subprocess.run(
@@ -1033,6 +1055,10 @@ def handle_spectrum_extraction(**event):
 
     if event["clean"]:
         files = glob.glob(f"{outroot}*{key}.*")
+        if key.startswith("background"):
+            bkey = f"_b" + key.split("_")[1]
+            files += glob.glob(f"{outroot}*{bkey}.spec.fits")
+
         files += glob.glob(f"jw*{key}.*")
         for file in files:
             print(f"rm {file}")
