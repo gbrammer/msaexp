@@ -1057,7 +1057,7 @@ def handle_spectrum_extraction(**event):
         files = glob.glob(f"{outroot}*{key}.*")
         if key.startswith("background"):
             bkey = f"_b" + key.split("_")[1]
-            files += glob.glob(f"{outroot}*{bkey}.spec.fits")
+            files += glob.glob(f"{outroot}*{bkey}.*")
 
         files += glob.glob(f"jw*{key}.*")
         for file in files:
