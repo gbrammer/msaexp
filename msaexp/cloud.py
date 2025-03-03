@@ -328,6 +328,10 @@ def combine_spectra_pipeline(
             fit_params_kwargs=fit_params_kwargs,
             drizzle_kws=drizzle_kws,
             plot_kws=plot_kws,
+            mask_cross_dispersion=None,
+            cross_dispersion_mask_type="trace",
+            bad_shutter_names=None,
+            stuck_threshold=0.3,
             with_fs_offset=False,
         )
 
@@ -522,9 +526,9 @@ def combine_spectra_pipeline(
             kwargs["mask_cross_dispersion"] = [-1, 1000]
             kwargs["cross_dispersion_mask_type"] = "fixed"
 
-        else:
-            kwargs["mask_cross_dispersion"] = None
-            kwargs["cross_dispersion_mask_type"] = "trace"
+        # else:
+        #     kwargs["mask_cross_dispersion"] = None
+        #     kwargs["cross_dispersion_mask_type"] = "trace"
 
         if key in ["4233_131457"]:
             kwargs["mask_cross_dispersion"] = [3, 1000]
