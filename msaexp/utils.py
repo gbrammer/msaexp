@@ -40,6 +40,7 @@ BAD_PIXEL_FLAG = 1 | 1024
 # Valid NRS pixels ((ymin, ymax), (xmin, xmax))
 DETECTOR_EDGES = ((0, 2048), (0, 2038))
 
+
 def _set_bad_pixel_flag():
     """
     Set the global ``BAD_PIXEL_FLAG`` variable"""
@@ -393,7 +394,39 @@ def get_standard_wavelength_grid(
     return target_waves
 
 
-def get_default_resolution_curve(grating="PRISM", wave=None, grating_degree=2, **kwargs):
+def get_nircam_wfss_disp(wave=None, range=[2.4, 5.3], nstep=512, rstep=20e-4):
+    """
+    Generate placeholder resolution curve for NIRCam WFSS
+
+    Parameters
+    ----------
+    wave : array-like
+        Wavelength grid
+
+    range, nstep : (float, float), int
+        Wavelength range parameters, if ``wave`` not specified.  Range provided in
+        microns.
+
+    rstep : float
+        Linear pixel step to define the dispersion ``R = wave / rstep``
+
+    Returns
+    -------
+    disp : Table
+        Dispersion table
+    """
+    if wave is None:
+        wave = np.linspace(*range, nstep)
+
+    disp = grizli.utils.GTable()
+    disp["WAVELENGTH"] = wave
+    disp["R"] = wave / rstep
+    return disp
+
+
+def get_default_resolution_curve(
+    grating="PRISM", wave=None, grating_degree=2, **kwargs
+):
     """
     Parameters
     ----------
@@ -407,7 +440,7 @@ def get_default_resolution_curve(grating="PRISM", wave=None, grating_degree=2, *
         If specified, fit a polynomial with this order to the tabulated resolution.
         The polynomial coefficients are fit to ``lambda / R``, which is nearly linear
         for the NIRSpec gratings [(Jakobsen et al. 2022)](https://ui.adsabs.harvard.edu/abs/2022A%26A...661A..80J).
-        
+
     Returns
     -------
     R_fwhm : array-like
@@ -415,21 +448,23 @@ def get_default_resolution_curve(grating="PRISM", wave=None, grating_degree=2, *
 
     """
     _data_path = os.path.dirname(__file__)
-    disp = grizli.utils.read_catalog(
-        f"{_data_path}/data/jwst_nirspec_{grating.lower()}_disp.fits"
-    )
+    if "GRISM" in grating.upper():
+        # NIRCAM WFSS, assume 20 pix
+        disp = get_nircam_wfss_disp()
+    else:
+        disp = grizli.utils.read_catalog(
+            f"{_data_path}/data/jwst_nirspec_{grating.lower()}_disp.fits"
+        )
 
     if wave is None:
         wave = get_standard_wavelength_grid(grating, **kwargs)
 
-    if (grating.upper() != 'PRISM') & (grating_degree is not None):
+    if (grating.upper() != "PRISM") & (grating_degree is not None):
         # Fit polynomial to dlam = lam / R
         coeffs = np.polyfit(
-            disp["WAVELENGTH"],
-            disp["WAVELENGTH"] / disp['R'],
-            grating_degree
+            disp["WAVELENGTH"], disp["WAVELENGTH"] / disp["R"], grating_degree
         )
-        
+
         R_fwhm = wave / np.polyval(coeffs, wave)
 
     else:
@@ -3473,8 +3508,12 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
 
     if DETECTOR_EDGES is not None:
         yp, xp = np.indices((2048, 2048))
-        outside_edges = (yp < DETECTOR_EDGES[0][0]) | (yp > DETECTOR_EDGES[0][1])
-        outside_edges |= (xp < DETECTOR_EDGES[1][0]) | (xp > DETECTOR_EDGES[1][1])
+        outside_edges = (yp < DETECTOR_EDGES[0][0]) | (
+            yp > DETECTOR_EDGES[0][1]
+        )
+        outside_edges |= (xp < DETECTOR_EDGES[1][0]) | (
+            xp > DETECTOR_EDGES[1][1]
+        )
         dq_arr[outside_edges] |= BAD_PIXEL_FLAG
 
     dq = dq_arr[sly, slx]  # .reshape(dq_data["shape"])[sly, slx]
