@@ -263,6 +263,7 @@ def sample_gaussian_line_numba(
     spec_wobs,
     spec_R_fwhm,
     line_um,
+    dx=None,
     line_flux=1.0,
     velocity_sigma=100,
 ):
@@ -301,7 +302,7 @@ def sample_gaussian_line_numba(
     )
 
     resamp = pixel_integrated_gaussian_numba(
-        spec_wobs, line_um, dw, normalization=line_flux
+        spec_wobs, line_um, dw, dx=dx, normalization=line_flux
     )
 
     return resamp

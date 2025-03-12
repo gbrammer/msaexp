@@ -64,6 +64,13 @@ def test_resolution_curves():
             assert np.allclose(R[sl], Rg[sl], rtol=1.e-3)
             assert np.allclose(R[sl], Ri[sl], rtol=1.e-3)
     
+    # LRS prism
+    _LRS_R = utils.get_default_resolution_curve(
+        grating="LRS",
+        wave=None,
+        grating_degree=2
+    )
+
     # Test extrapolation from fit
     grating = 'G235M'
     wgrid = np.array([

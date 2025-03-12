@@ -93,7 +93,7 @@ def resample_template(
 
 
 def sample_gaussian_line(
-    spec_wobs, spec_R_fwhm, line_um, line_flux=1.0, velocity_sigma=100
+    spec_wobs, spec_R_fwhm, line_um, dx=None, line_flux=1.0, velocity_sigma=100
 ):
     """
     Sample a Gaussian emission line on the spectrum wavelength grid accounting

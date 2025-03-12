@@ -50,7 +50,7 @@ def float_representer(dumper, value):
 yaml.add_representer(float, float_representer)
 
 try:
-    import eazy
+    import eazy.templates
 
     wave = np.exp(np.arange(np.log(2.4), np.log(4.5), 1.0 / 4000)) * 1.0e4
     _temp = utils.pah33(wave)
@@ -206,6 +206,7 @@ class SpectrumSampler(object):
     spec_wobs = None
     spec_R_fwhm = None
     valid = None
+    wave_step = None
 
     def __init__(
         self,
@@ -319,6 +320,9 @@ class SpectrumSampler(object):
 
         self.spec_wobs = self.spec["wave"].astype(np.float32)
         self.spec_R_fwhm = self.spec["R"].astype(np.float32)
+
+        if "wave_step" in self.spec.colnames:
+            self.wave_step = self.spec["wave_step"].astype(np.float32)
 
         self.valid = np.isfinite(self.spec["flux"] / self.spec["full_err"])
         if "valid" in self.spec.colnames:
@@ -543,6 +547,7 @@ class SpectrumSampler(object):
                 self.spec_wobs,
                 self.spec_R_fwhm * scale_disp * order,
                 line_um * order,
+                dx=self.wave_step,
                 line_flux=line_flux,
                 velocity_sigma=velocity_sigma,
             )

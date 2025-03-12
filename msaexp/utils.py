@@ -426,6 +426,48 @@ def get_nircam_wfss_disp(wave=None, range=[2.4, 5.3], nstep=512, rstep=20e-4):
     return disp
 
 
+def get_miri_lrs_disp(wave=None, range=[4, 14], nstep=512, pix_to_fwhm=2.35, **kwargs):
+    """
+    Generate a placeholder resolution curve for MIRI LRS fit from the reference file
+    jwst_miri_specwcs_0010.fits
+
+    Parameters
+    ----------
+    wave : array-like
+        Wavelength grid, microns
+
+    pix_to_fwhm : float
+        Scale factor to convert dlam/dpix to resolution FWHM
+
+    Returns
+    -------
+    disp : Table
+        Dispersion table
+    """
+
+    # Polynomial fit of wavelength(pixel) from jwst_miri_specwcs_0010.fits
+    coeffs = np.array([
+        6.337590e-04,
+        -3.32824e-02,
+        6.056444e-01,
+        -7.75718e+00,
+        3.214324e+01,
+        3.543661e+02
+    ])
+
+    if wave is None:
+        wave = np.linspace(*range, nstep)
+
+    disp = grizli.utils.GTable()
+    disp["WAVELENGTH"] = wave
+
+    # Factor of -1 because dwave / pixel < 0 for the LRS spectra
+    disp["Rpix"] = -1 * wave * np.polyval(np.polyder(coeffs, m=1), wave)
+    disp["R"] = disp["Rpix"] / pix_to_fwhm
+
+    return disp
+
+
 def get_default_resolution_curve(
     grating="PRISM", wave=None, grating_degree=2, **kwargs
 ):
@@ -452,7 +494,11 @@ def get_default_resolution_curve(
     _data_path = os.path.dirname(__file__)
     if "GRISM" in grating.upper():
         # NIRCAM WFSS, assume 20 pix
-        disp = get_nircam_wfss_disp()
+        disp = get_nircam_wfss_disp(wave=wave)
+    elif "LRS" in grating.upper():
+        disp = get_miri_lrs_disp(wave=wave)
+        if wave is None:
+            wave = disp["WAVELENGTH"]
     else:
         disp = grizli.utils.read_catalog(
             f"{_data_path}/data/jwst_nirspec_{grating.lower()}_disp.fits"
@@ -461,7 +507,10 @@ def get_default_resolution_curve(
     if wave is None:
         wave = get_standard_wavelength_grid(grating, **kwargs)
 
-    if (grating.upper() != "PRISM") & (grating_degree is not None):
+    if grating.upper() == "LRS":
+        R_fwhm = disp["R"]
+
+    elif (grating.upper() != "PRISM") & (grating_degree is not None):
         # Fit polynomial to dlam = lam / R
         coeffs = np.polyfit(
             disp["WAVELENGTH"], disp["WAVELENGTH"] / disp["R"], grating_degree
