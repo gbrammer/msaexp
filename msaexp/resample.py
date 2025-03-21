@@ -72,8 +72,8 @@ def resample_template(
     )
 
     ix = np.arange(templ_wobs.shape[0])
-    ilo = np.cast[int](np.interp(spec_wobs - nsig * dw, templ_wobs, ix))
-    ihi = np.cast[int](np.interp(spec_wobs + nsig * dw, templ_wobs, ix)) + 1
+    ilo = np.array(np.interp(spec_wobs - nsig * dw, templ_wobs, ix)).astype(int)
+    ihi = np.array(np.interp(spec_wobs + nsig * dw, templ_wobs, ix)).astype(int) + 1
 
     N = len(spec_wobs)
     fres = np.ones(N) * fill_value

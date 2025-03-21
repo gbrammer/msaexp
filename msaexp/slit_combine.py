@@ -2742,7 +2742,7 @@ class SlitGroup:
             return None
 
         un = utils.Unique(
-            np.cast[int](np.round(shutter_y[bar_mask])), verbose=False
+            np.round(shutter_y[bar_mask]).astype(int), verbose=False
         )
         sn_shutters = np.zeros(un.N, dtype=float)
         for i, v in enumerate(un.values):

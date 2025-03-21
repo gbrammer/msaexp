@@ -1116,10 +1116,9 @@ def make_optimal_extraction(
             else:
                 # Wavelengths interpolated on pixel grid
                 xpix = np.arange(sh[1])
-                xsl = np.cast[int](
-                    np.round(np.interp(profile_slice, waves, xpix))
-                )
+                xsl = np.round(np.interp(profile_slice, waves, xpix)).astype(int)
                 xsl = np.clip(xsl, 0, sh[1])
+
                 print(f"Wavelength slice: {profile_slice} > {xsl} pix")
                 profile_slice = slice(*xsl)
 
