@@ -1503,9 +1503,8 @@ def combine_2d_with_rejection(
 
                 _wcs = drizzled_slits[0].meta.wcs
                 _, _, wave0 = _wcs.forward_transform(xpix, ypix)
-                xsl = np.cast[int](
-                    np.round(np.interp(profile_slice, wave0, xpix))
-                )
+                xsl = np.round(np.interp(profile_slice, wave0, xpix)).astype(int)
+
                 xsl = np.clip(xsl, 0, sh[1])
                 print(f"Wavelength slice: {profile_slice} > {xsl} pix")
                 profile_slice = slice(*xsl)
