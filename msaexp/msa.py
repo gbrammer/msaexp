@@ -2413,3 +2413,68 @@ def msa_shutter_catalog(ra, dec, pointing=None, ap=None, inv=None):
     tab["dj"] = tab["col_j"] - np.floor(tab["col_j"]) - 0.5
 
     return tab
+
+
+# Offsets for MSA shutter quadrants
+DXCEN = 450
+DYCEN = 231.7
+
+
+def set_msa_axis_ticks(ax=None, which="xy", dxcen=450, dycen=231.7):
+    """
+    Draw axis ticks for a plot of the MSA shutters
+    """
+    global DXCEN, DYCEN
+
+    if ax is None:
+        ax = plt.gca()
+
+    xlim = (377 + DXCEN + 20, -20)
+    ylim = (171 + DYCEN + 10, -10)
+
+    if "x" in which:
+        xt = [1, 90, 180, 270, 377]
+        xtv = xt + [xi + DXCEN for xi in xt]
+        ax.set_xticks(xtv)
+        ax.set_xticklabels(xt * 2)
+        ax.set_xlabel("xcen")
+        ax.set_xlim(*xlim)
+
+    if "y" in which:
+        xt = [1, 60, 120, 171]
+        xtv = xt + [xi + DYCEN for xi in xt]
+        ax.set_yticks(xtv)
+        ax.set_yticklabels(xt * 2)
+        ax.set_ylabel("ycen")
+        ax.set_ylim(*ylim)
+
+    return ax
+
+
+def plot_msa_shutters(xcen, ycen, quadrant, c=None, ax=None, **kwargs):
+    """
+    Make a plot of a list of MSA shutters
+    """
+    global DXCEN, DYCEN
+
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+        newplot = True
+    else:
+        newplot = False
+
+    if c is None:
+        c = quadrant
+
+    ax.scatter(
+        xcen + np.isin(quadrant, [3, 4]) * DXCEN,
+        ycen + np.isin(quadrant, [2, 4]) * DYCEN,
+        c=c,
+        **kwargs,
+    )
+
+    if newplot:
+        set_msa_axis_ticks(ax, "xy")
+        return fig, ax
+    else:
+        return None, ax
