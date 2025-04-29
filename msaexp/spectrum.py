@@ -504,6 +504,7 @@ class SpectrumSampler(object):
         scale_disp=1.0,
         velocity_sigma=100.0,
         orders=[1, 2, 3, 4],
+        lorentz=False,
         verbose=False,
     ):
         """
@@ -528,6 +529,9 @@ class SpectrumSampler(object):
             List of spectral orders to include if the sensitivity curves have been
             read along with the spectrum.
 
+        lorentz : bool
+            Generate a Lorentzian function instead of a Gaussian
+
         Returns
         -------
         res : array-like
@@ -550,6 +554,7 @@ class SpectrumSampler(object):
                 dx=self.wave_step,
                 line_flux=line_flux,
                 velocity_sigma=velocity_sigma,
+                lorentz=lorentz,
             )
 
             if order != 1:

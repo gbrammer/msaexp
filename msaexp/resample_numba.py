@@ -1,6 +1,6 @@
 import numpy as np
 from numba import jit
-from math import erf, pow as _pow
+from math import erf, atan, pow as _pow, pi as math_pi
 
 __all__ = [
     "simpson",
@@ -266,6 +266,7 @@ def sample_gaussian_line_numba(
     dx=None,
     line_flux=1.0,
     velocity_sigma=100,
+    lorentz=False,
 ):
     """
     Sample a Gaussian emission line on the spectrum wavelength grid accounting
@@ -301,9 +302,14 @@ def sample_gaussian_line_numba(
         * line_um
     )
 
-    resamp = pixel_integrated_gaussian_numba(
-        spec_wobs, line_um, dw, dx=dx, normalization=line_flux
-    )
+    if lorentz:
+        resamp = pixel_integrated_lorentzian_numba(
+            spec_wobs, line_um, dw, dx=dx, normalization=line_flux
+        )
+    else:
+        resamp = pixel_integrated_gaussian_numba(
+            spec_wobs, line_um, dw, dx=dx, normalization=line_flux
+        )
 
     return resamp
 
@@ -360,11 +366,80 @@ def pixel_integrated_gaussian_numba(x, mu, sigma, dx=None, normalization=1.0):
     right = erf((x0 + xdx[i] / 2) / s2dw[i])
     samp[i] = (right - left) / 2 / xdx[i] * normalization
 
+    left = right
+
     for i in range(1, N):
         x0 = x[i] - mux[i]
-        left = erf((x0 - xdx[i] / 2) / s2dw[i])
+        xleft = (x0 - xdx[i] / 2) / s2dw[i]
+        left = erf(xleft)
         right = erf((x0 + xdx[i] / 2) / s2dw[i])
         samp[i] = (right - left) / 2 / xdx[i] * normalization
+        # left = right
+
+    return samp
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def pixel_integrated_lorentzian_numba(
+    x, mu, sigma, dx=None, normalization=1.0
+):
+    """
+    Low level function for a pixel-integrated Lorentzian / Cauchy function
+
+    Parameters
+    ----------
+    x : array-like
+        Sample centers
+
+    mu : float, array-like
+        Lorentzian center
+
+    sigma : float, array-like
+        Lorentzian half-width
+
+    dx : float, array-like
+        Difference to override ``x[i+1] - x[i]`` if not provided as zero
+
+    normalization : float
+        Scaling
+
+    Returns
+    -------
+    samp : array-like
+        Pixel-integrated Gaussian
+
+    """
+    N = len(x)
+    samp = np.zeros_like(x)
+
+    s2dw = sigma * np.ones_like(x)
+    mux = mu * np.ones_like(x)
+
+    if dx is None:
+        # Like np.gradient
+        # https://github.com/numba/numba/issues/6302
+        xdx = np.ones_like(x)
+        xdx[1:-1] = (x[2:] - x[:-2]) / 2.0
+        xdx[0] = x[1] - x[0]
+        xdx[-1] = x[-1] - x[-2]
+    else:
+        xdx = dx * np.ones_like(x)
+
+    i = 0
+    x0 = x[i] - mux[i]
+
+    left = atan((x0 - xdx[i] / 2) / s2dw[i])
+    right = atan((x0 + xdx[i] / 2) / s2dw[i])
+    samp[i] = (right - left) / xdx[i] * normalization / math_pi
+    left = right
+
+    for i in range(1, N):
+        x0 = x[i] - mux[i]
+        xleft = (x0 - xdx[i] / 2) / s2dw[i]
+        left = atan(xleft)
+        right = atan((x0 + xdx[i] / 2) / s2dw[i])
+        samp[i] = (right - left) / xdx[i] * normalization / math_pi
+        # left = right
 
     return samp
 
