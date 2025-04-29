@@ -5364,13 +5364,13 @@ def extract_spectra(
                 )
                 continue
 
-            elif os.path.basename(obj.files[0]).startswith("jw02561002001"):
-                utils.log_comment(
-                    utils.LOGFILE,
-                    f"\n    uncover {obj.files[0]}\n",
-                    verbose=VERBOSE_LOG,
-                )
-                continue
+            # elif os.path.basename(obj.files[0]).startswith("jw02561002001"):
+            #     utils.log_comment(
+            #         utils.LOGFILE,
+            #         f"\n    uncover {obj.files[0]}\n",
+            #         verbose=VERBOSE_LOG,
+            #     )
+            #     continue
 
             elif valid_frac < valid_frac_threshold:
                 utils.log_comment(
