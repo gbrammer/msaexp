@@ -333,6 +333,8 @@ def combine_spectra_pipeline(
             bad_shutter_names=None,
             stuck_threshold=0.3,
             with_fs_offset=False,
+            fit_shutter_offset_kwargs=None,
+            shutter_offset=0.0,
         )
 
         for k in kws:
