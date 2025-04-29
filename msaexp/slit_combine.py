@@ -128,11 +128,12 @@ def split_visit_groups(
         test_field |= (un[k].sum() % 4 == 0) & ("jw01810" in files[0])
         test_field |= (un[k].sum() % 4 == 0) & ("jw01324" in files[0])
         test_field |= (un[k].sum() % 6 == 0) & ("jw01324" in files[0])
+        test_field |= (un[k].sum() % 6 == 0) & ("jw06368" in files[0])
         test_field &= split_uncover > 0
         test_field |= split_uncover == 16
 
         if test_field:
-            msg = "split_visit_groups: split sub groups (uncover, glass, bluejay) "
+            msg = "split_visit_groups: split sub groups (uncover, glass, bluejay, capers) "
             msg += f"{k} N={un[k].sum()}"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
@@ -145,9 +146,20 @@ def split_visit_groups(
                 # outer nods for spatial information
                 set1 = set1[1::3] + set1[2::3]
                 set2 = set2[1::3] + set2[2::3]
+            elif ("jw06368" in files[0]):
+                fk = all_files[un[k]].tolist()
+                set1 = []
+                set2 = []
+                for f in fk:
+                    if f.split('_')[1] in ['03101','07101','11101']:
+                        set1.append(f)
+                    else:
+                        set2.append(f)
 
-            groups[ksp[0] + "a-" + "-".join(ksp[1:])] = set1
-            groups[ksp[0] + "b-" + "-".join(ksp[1:])] = set2
+            if len(set1) > 0:
+                groups[ksp[0] + "a-" + "-".join(ksp[1:])] = set1
+            if len(set2) > 0:
+                groups[ksp[0] + "b-" + "-".join(ksp[1:])] = set2
 
         else:
             groups[k] = np.array(all_files)[un[k]].tolist()
@@ -974,11 +986,11 @@ class SlitGroup:
             for i in range(self.N):
                 self.mask[i, :] &= ~all_bad
 
-        if fit_shutter_offset_kwargs is not None:
-            self.fit_shutter_offset(**fit_shutter_offset_kwargs)
-
         if set_background_spectra_kwargs is not None:
             self.set_background_spectra(**set_background_spectra_kwargs)
+
+        if fit_shutter_offset_kwargs is not None:
+            self.fit_shutter_offset(**fit_shutter_offset_kwargs)
 
         self.fit = None
 
@@ -1940,12 +1952,45 @@ class SlitGroup:
                 sky_ *= (
                     self.phot_corr[j, :] / self.pathloss_corr[j, :] / area_corr
                 )
+
                 esky_ *= (
                     self.phot_corr[j, :] / self.pathloss_corr[j, :] / area_corr
                 )
                 vsky_ = esky_**2 + (0.03 * sky_) ** 2
                 self.sky_data["sky2d"][j, :] = sky_
                 self.var_sky[j, :] = vsky_
+
+        # ## comps
+        # if 0:
+        #     print('xxx sky pca')
+        #     pca = utils.read_catalog("/tmp/prism_bkg_pca.fits")
+        #     Asky = np.array([
+        #         np.interp(
+        #             self.wave.flatten(),
+        #             pca['wave'],
+        #             c,
+        #             left=np.nan, right=np.nan
+        #         )
+        #         for c in pca['bkg_pca'].T
+        #     ])
+        #
+        #     Asky *= (self.phot_corr / self.pathloss_corr).flatten()
+        #
+        #     sivar = np.sqrt(self.var_rnoise + self.var_poisson).flatten()
+        #     ok = np.isfinite(Asky.sum(axis=0)) & self.mask.flatten()
+        #     ok &= sivar > 0
+        #     ok &= np.abs(self.slit_frame_y.flatten()) > 0.3
+        #
+        #     print(f'yyy {Asky.shape} {ok.shape} {sivar.shape} {ok.sum()} {self.slit_frame_y[self.mask].min()}')
+        #
+        #     pca_coeffs = np.linalg.lstsq(
+        #         (Asky[:,ok] / sivar[ok]).T,
+        #         self.sci.flatten()[ok] / sivar[ok],
+        #         rcond=None
+        #     )
+        #     sky_ = Asky.T.dot(pca_coeffs[0]).reshape(self.wave.shape)
+        #     print(f'yyy {sky_.shape}')
+        #     self.sky_data["sky2d"] = sky_
 
         self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
         self.mask &= np.isfinite(self.var_total) & (self.var_total > 0)
@@ -2247,12 +2292,17 @@ class SlitGroup:
                 utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
                 return None
         except:
+            msg = f" {'fit_shutter_offset':<28}: error"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
             return None
 
         # Exclude the outer edge
         mask = np.abs(self.slit_frame_y / self.slit_shutter_scale / 5.0) < 1.4
         mask &= self.mask
-        mask &= self.sky_data["mask"]
+        if "mask" in self.sky_data:
+            mask &= self.sky_data["mask"]
+
         var_total = self.var_poisson + self.var_rnoise
 
         dy_array = []
@@ -2286,12 +2336,13 @@ class SlitGroup:
             chi2 = np.nansum(resid**2)
             chi2 += (dy - prior[0]) ** 2 / prior[1] ** 2
 
+            # print(f"xxx shutter offset {dy:.04f}  {chi2:10.2f}")
             dy_array.append(dy)
             chi2_array.append(chi2)
 
             return chi2
 
-        x0 = self.meta["shutter_offset"]
+        x0 = self.meta["shutter_offset"] * 100
 
         res = minimize(_objfun_shutter, x0=x0, **minimizer_kwargs)
 
@@ -5188,8 +5239,8 @@ def extract_spectra(
         if ig == -100:
             continue
 
-        if "jw02561002001" in g:
-            continue
+        # if "jw02561002001" in g:
+        #     continue
 
         msg = f"\n* Group {g}   "
         msg += f"N={len(groups[g])}\n"
