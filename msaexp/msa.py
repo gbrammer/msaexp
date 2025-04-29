@@ -2424,6 +2424,8 @@ def set_msa_axis_ticks(ax=None, which="xy", dxcen=450, dycen=231.7):
     """
     Draw axis ticks for a plot of the MSA shutters
     """
+    import matplotlib.pyplot as plt
+
     global DXCEN, DYCEN
 
     if ax is None:
@@ -2455,6 +2457,8 @@ def plot_msa_shutters(xcen, ycen, quadrant, c=None, ax=None, **kwargs):
     """
     Make a plot of a list of MSA shutters
     """
+    import matplotlib.pyplot as plt
+
     global DXCEN, DYCEN
 
     if ax is None:
