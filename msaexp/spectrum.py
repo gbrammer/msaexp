@@ -692,6 +692,7 @@ class SpectrumSampler(object):
         template,
         z=0.0,
         spl=None,
+        spline_type='multiply',
         lsq=np.linalg.lstsq,
         lsq_kwargs=dict(rcond=None),
         loss=None,
@@ -736,7 +737,10 @@ class SpectrumSampler(object):
         res = self.resample_eazy_template(template, z=z, **kwargs)
 
         if spl is not None:
-            res = res * spl
+            if spline_type == 'multiply':
+                res = res * spl
+            else:
+                res = np.vstack([res, spl])
         else:
             res = res[None, :]
 
