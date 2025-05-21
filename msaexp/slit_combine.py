@@ -591,6 +591,7 @@ class SlitGroup:
         fix_prism_norm=True,
         extended_calibration_kwargs={"threshold": 0.01},
         with_sflat_correction=True,
+        with_extra_dq=True,
         slit_hotpix_kwargs={},
         sky_arrays=None,
         sky_file="read",
@@ -682,6 +683,9 @@ class SlitGroup:
 
         with_sflat_correction : bool
             Additional field-dependent s-flat correction
+
+        with_extra_dq : bool
+            With extra DQ mask from `~msaexp.utils.extra_slit_dq_flags`
 
         sky_arrays : array-like
             Optional sky data (in progress)
@@ -856,6 +860,7 @@ class SlitGroup:
             "global_sky_df": global_sky_df,
             "with_fs_offset": with_fs_offset,
             "with_sflat_correction": with_sflat_correction,
+            "with_extra_dq": with_extra_dq,
         }
 
         # Comments on meta for header keywords
@@ -889,6 +894,7 @@ class SlitGroup:
             "global_sky_df": "Degrees of freedom of fit with global sky",
             "with_fs_offset": "Extra fixed slit offset",
             "with_sflat_correction": "Field-dependent s-flat correction",
+            "with_extra_dq": "Extra DQ pixel mask",
         }
 
         self.shapes = []
@@ -918,7 +924,9 @@ class SlitGroup:
 
         self.calculate_slices()
 
-        self.parse_data(with_sflat_correction=with_sflat_correction)
+        self.parse_data(
+            with_sflat_correction=with_sflat_correction, with_extra_dq=with_extra_dq
+        )
 
         if sky_file is not None:
             self.get_global_sky(sky_file=sky_file)
@@ -1349,7 +1357,7 @@ class SlitGroup:
         for s, slit in zip(slices, self.slits):
             slit.slice = s
 
-    def parse_data(self, debug=False, with_sflat_correction=True):
+    def parse_data(self, debug=False, with_sflat_correction=True, with_extra_dq=True, **kwargs):
         """
         Read science, variance and trace data from the ``slits`` SlitModel
         files
@@ -1568,20 +1576,32 @@ class SlitGroup:
 
         if msautils.BAD_PIXEL_FLAG > 0:
             bad = (dq & msautils.BAD_PIXEL_FLAG) > 0
+            if (VERBOSE_LOG & 4):
+                msg = f'DEBUG mask: valid N={(~bad).sum():<6} BAD_PIXEL_FLAG'
+                utils.log_comment(
+                    utils.LOGFILE, msg, verbose=True
+                )
 
         if debug:
             print("msautils.BAD_PIXEL_FLAG ; bad = ", bad.sum(), dq.sum())
 
         # Extra bad pix
-        for i, slit in enumerate(slits):
-            sl = slit.slice
-            dqi, dqf = msautils.extra_slit_dq_flags(
-                slit, verbose=(VERBOSE_LOG > 1)
-            )
-            bad[i, :] |= dqi[slit.slice].flatten() > 0
+        if with_extra_dq:
+            for i, slit in enumerate(slits):
+                sl = slit.slice
+                dqi, dqf = msautils.extra_slit_dq_flags(
+                    slit, verbose=False, # (VERBOSE_LOG > 1)
+                )
+                bad[i, :] |= dqi[slit.slice].flatten() > 0
 
-        if debug:
-            print("msautils.extra_slit_dq_flags ; bad = ", bad.sum())
+            if (VERBOSE_LOG & 4):
+                msg = f'DEBUG mask: valid N={(~bad).sum():<6} extra_slit_dq_flags'
+                utils.log_comment(
+                    utils.LOGFILE, msg, verbose=True
+                )
+
+            if debug:
+                print("msautils.extra_slit_dq_flags ; bad = ", bad.sum())
 
         # Dilate stuck open pixels
         if ("MSA_FAILED_OPEN" in msautils.BAD_PIXEL_NAMES) & self.meta[
@@ -1594,6 +1614,12 @@ class SlitGroup:
                     iterations=self.meta["dilate_failed_open"] * 1,
                 )
                 bad[i] |= grow_open.flatten()
+
+            if (VERBOSE_LOG & 4):
+                msg = f'DEBUG mask: valid N={(~bad).sum():<6} dilate_failed_open'
+                utils.log_comment(
+                    utils.LOGFILE, msg, verbose=True
+                )
 
         # Bad pixels in 2 or more positions should be bad in all
         # if self.N > 2:
@@ -1609,6 +1635,15 @@ class SlitGroup:
             bad |= sci > PRISM_MAX_VALID
             bad |= sci < PRISM_MIN_VALID_SN * np.sqrt(var_rnoise + var_poisson)
 
+            if (VERBOSE_LOG & 4):
+                msg = (
+                    f'DEBUG mask: valid N={(~bad).sum():<6} ' +
+                    f'prism max {PRISM_MAX_VALID} min {PRISM_MIN_VALID_SN}: '
+                )
+                utils.log_comment(
+                    utils.LOGFILE, msg, verbose=True
+                )
+
         if (~bad).sum() > 0:
             # print('dq before threshold:', bad.sum())
             bad |= sci < -5 * np.sqrt(
@@ -1620,6 +1655,12 @@ class SlitGroup:
             )
             # print('dq after threshold:', bad.sum())
 
+            if (VERBOSE_LOG & 4):
+                msg = f'DEBUG mask: valid N={(~bad).sum():<6} rnoise {RNOISE_THRESHOLD}'
+                utils.log_comment(
+                    utils.LOGFILE, msg, verbose=True
+                )
+
         if self.meta["pad_border"] > 0:
             # grow mask around edges
             for i in range(len(slits)):
@@ -1628,6 +1669,15 @@ class SlitGroup:
                     ~np.isfinite(ysl_i), iterations=self.meta["pad_border"]
                 )
                 bad[i, :] |= (msk).flatten()
+
+        if (VERBOSE_LOG & 4):
+            msg = (
+                f'DEBUG mask: valid N={(~bad).sum():<6} pad_border '
+                + f'{self.meta["pad_border"]}'
+            )
+            utils.log_comment(
+                utils.LOGFILE, msg, verbose=True
+            )
 
         sci[bad] = np.nan
         mask = np.isfinite(sci)
@@ -1663,9 +1713,6 @@ class SlitGroup:
                     if pl_ext in sim:
                         msg = f"   {self.files[j]} source_type={slit.source_type} "
                         msg += f" undo {pl_ext}"
-                        utils.log_comment(
-                            utils.LOGFILE, msg, verbose=VERBOSE_LOG
-                        )
                         path_j_ = (
                             sim[pl_ext].data.astype(sci.dtype)[sl].flatten()
                         )
