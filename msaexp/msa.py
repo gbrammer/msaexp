@@ -301,6 +301,9 @@ def regions_from_fits(file, **kwargs):
 
 
 class MSAMetafile:
+
+    query_product_level = ["2b"]
+
     def __init__(self, filename):
         """
         Helper for parsing MSAMETFL metadata files
@@ -564,7 +567,7 @@ class MSAMetafile:
 
         return None
 
-    def query_mast_exposures(self, force=False):
+    def query_mast_exposures(self, force=False, **kwargs):
         """
         Query MAST database for exposures for this MSA file
 
@@ -601,7 +604,7 @@ class MSAMetafile:
             ],
         )
         filters += make_query_filter("effexptm", range=[30, 5.0e5])
-        filters += make_query_filter("productLevel", values=["2b"])
+        filters += make_query_filter("productLevel", values=self.query_product_level)
         filters += make_query_filter(
             "apername",
             values=[
@@ -1435,7 +1438,7 @@ class MSAMetafile:
 
         return transforms
 
-    def get_exposure_info(self, msa_metadata_id=1, dither_point_index=1):
+    def get_exposure_info(self, msa_metadata_id=1, dither_point_index=1, **kwargs):
         """
         Get MAST keywords for a particular exposure
 
@@ -1450,7 +1453,7 @@ class MSAMetafile:
             Row of the ``mast`` info table for a particular exposure
 
         """
-        mast = self.query_mast_exposures()
+        mast = self.query_mast_exposures(**kwargs)
 
         ix = mast["msametfl"] == os.path.basename(self.filename)
         ix &= mast["msametid"] == msa_metadata_id
@@ -1536,6 +1539,7 @@ class MSAMetafile:
         row = self.get_exposure_info(
             msa_metadata_id=msa_metadata_id,
             dither_point_index=dither_point_index,
+            **kwargs,
         )
 
         if ("roll_ref" in row.colnames) & use_ref_columns:
@@ -1577,7 +1581,7 @@ class MSAMetafile:
         ap.set_attitude_matrix(att)
         return *offset_rd, roll, ap
 
-    def fit_mast_pointing_offset(self, iterations=3, verbose=True, apply=True):
+    def fit_mast_pointing_offset(self, iterations=3, verbose=True, apply=True, **kwargs):
         """
         Fit for offsets to the pointing attitude derived from the MAST metadata
 
@@ -1625,6 +1629,7 @@ class MSAMetafile:
                 dither_point_index=dither_point_index,
                 pa_offset=0.0,
                 use_ref_columns=False,
+                **kwargs,
             )
             _ra, _dec, _roll, ap = _
 
@@ -1706,6 +1711,7 @@ class MSAMetafile:
                         ra_ref=_ra + tf.translation[0] / cosd[0][0],
                         dec_ref=_dec + tf.translation[1],
                         roll_ref=_roll - tf.rotation / np.pi * 180,
+                        **kwargs,
                     )
                     _ra, _dec, _roll, ap = _
 
@@ -1756,6 +1762,7 @@ class MSAMetafile:
                     dither_point_index=dith,
                     pa_offset=0.0,
                     use_ref_columns=False,
+                    **kwargs,
                 )
 
                 _ra, _dec, _roll, ap = _
@@ -1835,6 +1842,7 @@ class MSAMetafile:
         meta = self.get_exposure_info(
             msa_metadata_id=msa_metadata_id,
             dither_point_index=dither_point_index,
+            **kwargs,
         )
 
         if verbose:
@@ -2482,3 +2490,70 @@ def plot_msa_shutters(xcen, ycen, quadrant, c=None, ax=None, **kwargs):
         return fig, ax
     else:
         return None, ax
+
+
+def diffraction_spikes_on_msa(ra, dec, attitude_matrix, aper=None, buffer_arcsec=None):
+    """
+    Generate estimated regions of diffraction spikes for a bright star
+
+    Parameters
+    ----------
+    ra, dec: float
+        Coordinates of the source creating the spikes in decimal degrees
+
+    aper : `pysiaf.Aperture`, None
+        SIAF aperture in which to compute the transformations.  If None, then use
+        NIRSpec NRS_FULL_MSA.
+
+    attitude_matrix : array
+        Spacecraft attitude matrix from `pysiaf.rotations.attitude`
+
+    buffer_arcsec : float, None
+        Optional buffer to add to the spike regions
+
+    Returns
+    -------
+    spike_regions : list
+        List of `~grizli.utils.SRegion` objects for the spike polygons
+    """
+    import pysiaf
+    import grizli.utils
+    
+    # Rough polygons of the diffraction spikes in relative "tel" coordinates
+    regions_v23 = """
+    ((0.69,-1.27),(-0.69,-1.25),(-0.33,-38.09),(0.72,-38.68))
+    ((0.75,1.24),(1.43,0.04),(40.86,22.74),(39.10,23.29),(3.88,3.07))
+    ((4.30,3.31),(4.30,3.31),(4.30,3.31),(4.30,3.31))
+    ((-0.58,-1.15),(-1.26,0.05),(-34.79,-19.34),(-33.77,-20.18))
+    ((-0.76,1.08),(0.61,1.07),(0.10,36.74),(-0.58,36.97))
+    ((1.30,0.00),(0.61,-1.20),(41.75,-24.18),(42.99,-23.48))
+    ((-1.45,-0.07),(-0.74,1.11),(-34.94,21.31),(-35.74,20.20))
+    ((-1.64,-0.23),(-1.64,0.29),(-11.00,0.14),(-11.02,-0.18),(-4.41,-0.14))
+    ((1.36,0.31),(1.35,-0.21),(10.71,-0.11),(10.73,0.21))
+    """.strip().split()
+
+    if aper is None:
+        nrs = pysiaf.Siaf('NIRSPEC')
+        aper = nrs['NRS_FULL_MSA']
+
+    aper.set_attitude_matrix(attitude_matrix)
+
+    # ra_src, dec_src = 150.0670825, 2.2730196
+    v23_src = aper.sky_to_tel(ra, dec)
+
+    spike_regions = []
+
+    for region in regions_v23:
+        sr0 = grizli.utils.SRegion(region, wrap=False)
+
+        reg_v23 = np.array(sr0.xy[0]) + np.array(v23_src)
+        reg_sky = np.array(aper.tel_to_sky(*(reg_v23.T)))
+
+        sr = grizli.utils.SRegion(reg_sky)
+        if buffer_arcsec is not None:
+            sr = grizli.utils.SRegion(sr.shapely[0].buffer(buffer_arcsec / 3600.))
+
+        spike_regions.append(sr)
+
+    return spike_regions
+
