@@ -686,6 +686,18 @@ def extend_barshadow(
 def assign_wcs_with_extended(dm, file=None, ranges=EXTENDED_RANGES):
     """
     """
+    import jwst.assign_wcs.nirspec
+    import jwst.assign_wcs.assign_wcs_step
+
+    # Fork of load_wcs to ignore limits on IFU detectors
+    from .fork.assign_wcs.assign_wcs import load_wcs as load_wcs_fork
+    jwst.assign_wcs.load_wcs = load_wcs_fork
+    jwst.assign_wcs.assign_wcs_step.load_wcs = load_wcs_fork
+
+    from jwst.assign_wcs import AssignWcsStep
+    
+    ORIG_LOGFILE = utils.LOGFILE
+    
     wstep = AssignWcsStep()
 
     ##############
