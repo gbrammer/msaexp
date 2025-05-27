@@ -401,7 +401,7 @@ def zeroth_order_mask(
 # Overwrite ifu processing to include all detectors
 #
 
-def ifu(input_model, reference_files, slit_y_range=[-.55, .55], limit_detectors=True):
+def ifu(input_model, reference_files, slit_y_range=[-.55, .55], limit_detectors=False):
     """
     The Nirspec IFU WCS pipeline.
 

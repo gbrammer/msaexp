@@ -54,6 +54,8 @@ def load_wcs(input_model, reference_files={}, nrs_slit_y_range=None):
 
     if instrument.lower() == 'nirspec':
         mod.ifu = ifu_fork
+        mod.exp_type2transform["nrs_ifu"] = ifu_fork
+        
         pipeline = mod.create_pipeline(input_model, reference_files, slit_y_range=nrs_slit_y_range)
     else:
         pipeline = mod.create_pipeline(input_model, reference_files)

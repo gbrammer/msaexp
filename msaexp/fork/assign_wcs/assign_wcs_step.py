@@ -97,6 +97,7 @@ class AssignWcsStep(Step):
                     log.error(message)
                     raise MSAFileError(message)
             slit_y_range = [self.slit_y_low, self.slit_y_high]
+
             result = load_wcs(input_model, reference_file_names, slit_y_range)
 
         if not (result.meta.exposure.type.lower() in (IMAGING_TYPES.union(WFSS_TYPES)) and self.sip_approx):
