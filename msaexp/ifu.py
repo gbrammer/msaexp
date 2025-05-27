@@ -502,8 +502,9 @@ def meta_lowercase(meta):
 def pixel_table_background(
     ptab,
     BAD_PIXEL_FLAG=msautils.BAD_PIXEL_FLAG,
-    sky_x0=(0, 0),
+    sky_center=(0, 0),
     sky_annulus=(0.5, 1.0),
+    make_plot=True,
     **kwargs,
 ):
     """
@@ -569,8 +570,9 @@ def pixel_table_background(
     if grating.endswith("H"):
         test &= ptab["data"] < 20 * np.sqrt(ptab["var_rnoise"])
 
-    fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
-    ax = axes[0]
+    if make_plot:
+        fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
+        ax = axes[0]
 
     ok = np.isfinite(ptab["lam"][test])
 
@@ -579,7 +581,8 @@ def pixel_table_background(
         so = np.argsort(ptab["lam"][test][ok])
         xsky = ptab["lam"][test][ok][so]
         sky_med = nd.median_filter(ptab["data"][test][ok][so], 64)
-        ax.plot(ptab["lam"][test][ok][so], sky_med, alpha=0.5)
+        if make_plot:
+            ax.plot(ptab["lam"][test][ok][so], sky_med, alpha=0.5)
 
         sky_interp = np.interp(ptab["lam"][test], xsky, sky_med)
         ok = np.abs(ptab["data"][test] - sky_interp) < 5 * np.sqrt(
@@ -604,15 +607,17 @@ def pixel_table_background(
     yx = sky_med
     coeffs = np.linalg.lstsq(Ax.T, yx, rcond=None)
     splm = sky_med = xbspl.dot(coeffs[0])
-    axes[0].plot(xsky, splm, color="yellow", alpha=0.5)
 
-    ax.scatter(
-        ptab["lam"][test][ok][::skip],
-        ptab["data"][test][ok][::skip],
-        alpha=0.1,
-        zorder=-10,
-    )
-    ax.set_ylim(-1, 5)
+    if make_plot:
+        axes[0].plot(xsky, splm, color="yellow", alpha=0.5)
+
+        ax.scatter(
+            ptab["lam"][test][ok][::skip],
+            ptab["data"][test][ok][::skip],
+            alpha=0.1,
+            zorder=-10,
+        )
+        ax.set_ylim(-1, 5)
 
     resid_num = ptab["data"][test][ok] - np.interp(
         ptab["lam"][test][ok], xsky, sky_med
@@ -621,14 +626,15 @@ def pixel_table_background(
     resid_poisson = ptab["var_poisson"][test][ok]
     resid = resid_num / np.sqrt(resid_rnoise + resid_poisson)
 
-    ax = axes[1]
-    ax.scatter(
-        ptab["lam"][test][ok][::skip],
-        resid[::skip],
-        c=ptab["dy"][test][ok][::skip],
-        alpha=0.1,
-        marker=".",
-    )
+    if make_plot:
+        ax = axes[1]
+        ax.scatter(
+            ptab["lam"][test][ok][::skip],
+            resid[::skip],
+            c=ptab["dy"][test][ok][::skip],
+            alpha=0.1,
+            marker=".",
+        )
 
     args = (resid_num, resid_rnoise, resid_poisson)
     res = minimize(
@@ -650,7 +656,6 @@ def pixel_table_background(
     ptab["var_rnoise"] *= scale_rnoise
     ptab["var_total"] = ptab["var_rnoise"] + ptab["var_poisson"]
 
-    ax.set_ylim(-5, 5)
     xspl_int = np.interp(ptab["lam"], wave_grid, xspl)
 
     xbspl = utils.bspline_templates(
@@ -661,7 +666,10 @@ def pixel_table_background(
     yx = ptab["data"][test][ok] / np.sqrt(ptab["var_rnoise"][test][ok])
     coeffs = np.linalg.lstsq(Ax.T, yx, rcond=None)
     splm = bspl.dot(coeffs[0])
-    axes[0].plot(wave_grid, splm, color="magenta", alpha=0.5, zorder=1000)
+
+    if make_plot:
+        ax.set_ylim(-5, 5)
+        axes[0].plot(wave_grid, splm, color="magenta", alpha=0.5, zorder=1000)
 
     sky = np.interp(ptab["lam"], wave_grid, splm)  #
     # sky = xbspl.dot(coeffs[0])
@@ -1065,7 +1073,7 @@ def ifu_pipeline(
             grating = im[0].header["GRATING"]
 
     msg = f"ifu_pipeline: file={files[0]}  {obsid} {grating}"
-    utils.LOGFILE = f"cube-{obsid}-{grating}.log.txt"
+    utils.LOGFILE = f"cube-{obsid}-{grating}.log.txt".lower()
     utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
     # Initialize
