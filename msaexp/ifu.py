@@ -52,7 +52,9 @@ class ExposureCube:
         if not os.path.exists(self.file.replace("_rate", "_cal")):
             self.preprocess(**kwargs)
 
-        print(self.file.replace("_rate", "_cal"))
+        msg = f'cal file: {self.file.replace("_rate", "_cal")}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
         self.input = jwst.datamodels.open(self.file.replace("_rate", "_cal"))
 
         if dilate_failed_open:
@@ -84,10 +86,13 @@ class ExposureCube:
         Generate cal files with Spec1 steps
         """
         import astropy.io.fits as pyfits
+        from astropy.utils.data import download_file
 
-        print(
-            f"xxx Preprocess do_flatfield: {do_flatfield} do_photom {do_photom}"
+        msg = (
+            f"Preprocess do_flatfield={do_flatfield} do_photom={do_photom} "
+            + f" local_sflat={local_sflat} extend_wavelengths={extend_wavelengths}"
         )
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
         from jwst.assign_wcs import AssignWcsStep
         from jwst.msaflagopen import MSAFlagOpenStep
@@ -127,7 +132,17 @@ class ExposureCube:
             sflat_file = "sflat_{grating}-{filter}_{detector}.fits".format(
                 **inst_
             ).lower()
-            print("xxx ", sflat_file)
+            # print("xxx ", sflat_file)
+
+            if not os.path.exists(sflat_file):
+                URL_ = (
+                    "https://s3.amazonaws.com/msaexp-nirspec/ifu-sflat/"
+                    + sflat_file
+                )
+                msg = f"Download SFLAT file from {URL_}"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+                sflat_file = download_file(URL_, cache=True)
 
             if os.path.exists(sflat_file):
 
@@ -137,9 +152,9 @@ class ExposureCube:
                         input.dq & 1 == 0
                     )
                     med_outside = np.nanmedian(input.data[outside_sflat])
-                    print(
-                        f"{self.file} SFLAT: {sflat_file} med={med_outside:.3f}"
-                    )
+                    msg = f"{self.file} SFLAT: {sflat_file} med={med_outside:.3f}"
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
                     input.data -= med_outside
 
                     input.data /= sflat_[0].data
@@ -174,7 +189,8 @@ class ExposureCube:
     ):
         import scipy.ndimage as nd
 
-        print("dilate failed open mask")
+        msg = "dilate failed open mask"
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
         _flag = jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"]
         open_mask = self.input.dq & _flag > 0
@@ -293,9 +309,9 @@ class ExposureCube:
             #     & (jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"] | 1)
             # ) == 0
             valid_dq = (cube["dq"] & BAD_PIXEL_FLAG) == 0
-            print(
-                f"{self.file} keep {valid_dq.sum()} ({valid_dq.sum()/len(valid_dq)*100:.1f}%) pixels for BAD = {BAD_PIXEL_FLAG}"
-            )
+            msg = f"{self.file} keep {valid_dq.sum()} ({valid_dq.sum()/len(valid_dq)*100:.1f}%) pixels for bad DQ = {BAD_PIXEL_FLAG}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
             cube = cube[valid_dq]
 
         for i in range(len(shapes)):
@@ -311,7 +327,6 @@ class ExposureCube:
         ptab_file = self.file.replace("_rate", "_cal").replace(
             "_cal.fits", "_ptab.fits"
         )
-        # print(ptab_file)
         if os.path.exists(ptab_file) & load_existing:
             msg = f"process_pixel_table: load {ptab_file}"
             utils.log_comment(utils.LOGFILE, msg, verbose=True)
@@ -356,7 +371,8 @@ def saturated_mask(files, ptab):
         sat_mask[j, :, :] |= (
             flag_dq | bpix[file.split("_")[3].upper()][0]
         ) > 0
-        print(f"{file}  flagged {sat_mask[j,:,:].sum()}")
+        msg = f"{file}  flagged {sat_mask[j,:,:].sum()}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
     import skimage.morphology
 
@@ -591,7 +607,8 @@ def pixel_table_background(
         ok &= ptab["var_total"][test] < 8 * np.median(
             ptab["var_total"][test][ok]
         )
-        print(_iter, ok.sum())
+        msg = f"iter {_iter} {ok.sum()}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
     ix_bad = np.where(test)[0][~ok]
     # ptab['valid'][ix_bad] = False
@@ -646,9 +663,9 @@ def pixel_table_background(
     )
     scale_rnoise = res.x[0]
 
-    print(
-        f"  uncertainty nmad={utils.nmad(resid):.3f} std={np.std(resid):.3f}  scale_rnoise={np.sqrt(scale_rnoise):.3f}"
-    )
+    msg = f"  uncertainty nmad={utils.nmad(resid):.3f} std={np.std(resid):.3f}  scale_rnoise={np.sqrt(scale_rnoise):.3f}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
     ptab.meta["rnoise_nmad"] = utils.nmad(resid)
     ptab.meta["rnoise_std"] = np.std(resid)
     ptab.meta["scale_rnoise"] = scale_rnoise
