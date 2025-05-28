@@ -215,7 +215,6 @@ class ExposureCube:
         self,
         ref_coord=None,
         mask_params=(2, 6),
-        BAD_PIXEL_FLAG=msautils.BAD_PIXEL_FLAG,
         image_attrs=["data", "dq", "var_poisson", "var_rnoise", "err"],
         **kwargs,
     ):
@@ -303,17 +302,11 @@ class ExposureCube:
             for k in meta:
                 cube.meta[k] = meta[k]
 
-        if BAD_PIXEL_FLAG is not None:
-            # valid_dq = (
-            #     cube["dq"]
-            #     & (jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"] | 1)
-            # ) == 0
-            valid_dq = (cube["dq"] & BAD_PIXEL_FLAG) == 0
-            msg = f"{self.file} keep {valid_dq.sum()} ({valid_dq.sum()/len(valid_dq)*100:.1f}%) pixels for bad DQ = {BAD_PIXEL_FLAG}"
-            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        # Trim NaN, e.g., from S-Flats
+        valid_data = np.isfinite(cube["data"] + cube["err"] + cube["lam"])
+        cube = cube[valid_data]
 
-            cube = cube[valid_dq]
-
+        # Slice info
         for i in range(len(shapes)):
             cube.meta[f"XSTRT{i}"] = x_slice[i][0]
             cube.meta[f"XSIZE{i}"] = shapes[i][1]
@@ -517,7 +510,7 @@ def meta_lowercase(meta):
 
 def pixel_table_background(
     ptab,
-    BAD_PIXEL_FLAG=msautils.BAD_PIXEL_FLAG,
+    bad_pixel_flag=BAD_PIXEL_FLAG,
     sky_center=(0, 0),
     sky_annulus=(0.5, 1.0),
     make_plot=True,
@@ -544,7 +537,8 @@ def pixel_table_background(
         xspl, df=nspl, minmax=(0, 1), get_matrix=True
     )
 
-    valid_dq = (ptab["dq"] & BAD_PIXEL_FLAG) == 0
+    valid_dq = (ptab["dq"] & bad_pixel_flag) == 0
+    ptab["valid"] = valid_dq
 
     for c in ptab.colnames:
         valid_dq &= np.isfinite(ptab[c])
@@ -562,23 +556,23 @@ def pixel_table_background(
     valid_dq &= np.isfinite(ptab["lam"])
     valid_dq &= ptab["lam"] > 0.65
 
-    ptab["valid"] = valid_dq & True
+    # ptab["valid"] = valid_dq & True
 
     ###
     if sky_annulus is None:
-        coord_test = ptab["valid"] & True
+        coord_test = valid_dq & True
     else:
         dr = np.sqrt(
             (ptab["dx"] - sky_center[0]) ** 2
             + (ptab["dy"] - sky_center[1]) ** 2
         )
-        coord_test = ptab["valid"] & (dr > sky_annulus[0])
-        coord_test &= ptab["valid"] & (dr < sky_annulus[1])
+        coord_test = valid_dq & (dr > sky_annulus[0])
+        coord_test &= valid_dq & (dr < sky_annulus[1])
 
     if coord_test.sum() > 0:
         test = coord_test
     else:
-        test = ptab["valid"] & True
+        test = valid_dq & True
 
     test &= ptab["data"] > -6 * np.sqrt(ptab["var_rnoise"])
     test &= ptab["data"] < 10
@@ -693,12 +687,12 @@ def pixel_table_background(
 
     # ptab['sky'] = sky #np.interp(ptab['lam'], xsky, sky_med)
     ptab["sky"] = np.interp(ptab["lam"], xsky, sky_med)
-    ptab["valid"] &= (ptab["data"] - ptab["sky"]) > -9 * np.sqrt(
-        ptab["var_total"]
-    )
+    # ptab["valid"] &= (ptab["data"] - ptab["sky"]) > -9 * np.sqrt(
+    #     ptab["var_total"]
+    # )
 
-    ptab["valid"] &= ptab["lam"] > np.nanpercentile(ptab["lam"], 2)
-    ptab["valid"] &= ptab["lam"] < np.nanpercentile(ptab["lam"], 98)
+    # ptab["valid"] &= ptab["lam"] > np.nanpercentile(ptab["lam"], 2)
+    # ptab["valid"] &= ptab["lam"] < np.nanpercentile(ptab["lam"], 98)
 
 
 def slice_corners(
@@ -877,7 +871,13 @@ def query_ifu_exposures(
 
 
 def drizzle_cube_data(
-    ptab, wave_sample=1.05, pixel_size=0.1, pixfrac=0.75, side=2.2, **kwargs
+    ptab,
+    wave_sample=1.05,
+    pixel_size=0.1,
+    pixfrac=0.75,
+    side=2.2,
+    bad_pixel_flag=BAD_PIXEL_FLAG,
+    **kwargs,
 ):
     """
     Drizzle resample cube
@@ -901,7 +901,8 @@ def drizzle_cube_data(
     den = np.zeros((len(wave_grid), ny, nx))
     vnum = np.zeros((len(wave_grid), ny, nx))
 
-    no_dq = (ptab["dq"] - (ptab["dq"] & 4)) == 0
+    # no_dq = (ptab["dq"] - (ptab["dq"] & 4)) == 0
+    no_dq = (ptab["dq"] & bad_pixel_flag) == 0
 
     for k in tqdm(range(len(wave_grid))):
 
@@ -1099,9 +1100,6 @@ def ifu_pipeline(
         cube = ExposureCube(file, **kwargs)
         cubes.append(cube)
 
-    # Process pixel tables
-    for cube in cubes:
-        # Process pixel table
         if cube.ptab is None:
             # Shorten for FITS header
             try:
@@ -1116,7 +1114,9 @@ def ifu_pipeline(
             cube.process_pixel_table(**kwargs)
             plt.close("all")
 
-    #### TBD: saturated mask
+    #### TBD: saturated mask when running on cal files
+
+    # Set exposure index for full table
     for i, cube in enumerate(cubes):
         cube.ptab["exposure"] = i
 
@@ -1146,6 +1146,8 @@ def ifu_pipeline(
 
     # Full ptab cube
     ptab = astropy.table.vstack(ptabs)
+    if "valid" not in ptab.colnames:
+        ptab["valid"] = True
 
     if make_drizzled:
         num, den, vnum = drizzle_cube_data(ptab, **kwargs)
