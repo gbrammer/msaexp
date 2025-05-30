@@ -604,7 +604,9 @@ class MSAMetafile:
             ],
         )
         filters += make_query_filter("effexptm", range=[30, 5.0e5])
-        filters += make_query_filter("productLevel", values=self.query_product_level)
+        filters += make_query_filter(
+            "productLevel", values=self.query_product_level
+        )
         filters += make_query_filter(
             "apername",
             values=[
@@ -1438,7 +1440,9 @@ class MSAMetafile:
 
         return transforms
 
-    def get_exposure_info(self, msa_metadata_id=1, dither_point_index=1, **kwargs):
+    def get_exposure_info(
+        self, msa_metadata_id=1, dither_point_index=1, **kwargs
+    ):
         """
         Get MAST keywords for a particular exposure
 
@@ -1581,7 +1585,15 @@ class MSAMetafile:
         ap.set_attitude_matrix(att)
         return *offset_rd, roll, ap
 
-    def fit_mast_pointing_offset(self, iterations=3, verbose=True, apply=True, **kwargs):
+    def fit_mast_pointing_offset(
+        self,
+        iterations=3,
+        with_ransac=True,
+        verbose=True,
+        apply=True,
+        init_ref_columns=False,
+        **kwargs,
+    ):
         """
         Fit for offsets to the pointing attitude derived from the MAST metadata
 
@@ -1590,11 +1602,17 @@ class MSAMetafile:
         iterations : int
             Number of fitting iterations
 
+        with_ransac : bool
+            Refine transformation with `skimage.measure` inliers
+
         verbose : bool
             Print messages
 
         apply : bool
             Add updated pointing parameters to `ref` columns in `mast` metadata
+
+        init_ref_columns : bool
+            Initialize using "ref" columns in the MAST table
 
         Returns
         -------
@@ -1628,7 +1646,7 @@ class MSAMetafile:
                 msa_metadata_id=msa_metadata_id,
                 dither_point_index=dither_point_index,
                 pa_offset=0.0,
-                use_ref_columns=False,
+                use_ref_columns=init_ref_columns,
                 **kwargs,
             )
             _ra, _dec, _roll, ap = _
@@ -1653,7 +1671,7 @@ class MSAMetafile:
             if Nsrc < 4:
                 xrow += [Nsrc, np.nan, np.nan, np.nan]
                 rows.append(xrow)
-                if verbose > 1:
+                if (verbose & 4) > 0:
                     print(msg.format(*xrow))
 
                 continue
@@ -1666,57 +1684,75 @@ class MSAMetafile:
             col = se["shutter_column"] + (
                 se["estimated_source_in_shutter_y"] - 0.5
             )
+
             ra, dec = se["ra"], se["dec"]
 
+            # Shutter to V2,V3
+            v2 = []
+            v3 = []
+            ind = []
+
+            for i in range(len(se)):
+                if se["shutter_quadrant"][i] not in coeffs:
+                    v2.append(0)
+                    v3.append(0)
+                    continue
+
+                ij_to_v2, ij_to_v3 = coeffs[se["shutter_quadrant"][i]]
+                v2.append(ij_to_v2(row[i], col[i]))
+                v3.append(ij_to_v3(row[i], col[i]))
+                ind.append(i)
+
+            #########
+            # Fit for the transform
+
+            # APT target coordinates
+            input = np.array([[ra[i], dec[i]] for i in ind])
+            x0 = np.mean(input, axis=0)
+            cosd = np.array(
+                [[np.cos(inp[1] / 180 * np.pi), 1] for inp in input]
+            )
+
+            init_output = np.array([ap.tel_to_sky(v2[i], v3[i]) for i in ind])
+
             for _iter in range(iterations):
-
-                input = []
-                output = []
-                for i in range(len(se)):
-
-                    if se["shutter_quadrant"][i] not in coeffs:
-                        continue
-
-                    ij_to_v2, ij_to_v3 = coeffs[se["shutter_quadrant"][i]]
-                    v2 = ij_to_v2(row[i], col[i])
-                    v3 = ij_to_v3(row[i], col[i])
-
-                    sra, sdec = ap.tel_to_sky(v2, v3)
-                    output.append([sra, sdec])
-                    input.append([ra[i], dec[i]])
-
-                input = np.array(input)
-                output = np.array(output)
-
-                x0 = np.mean(input, axis=0)
-                cosd = np.array(
-                    [[np.cos(inp[1] / 180 * np.pi), 1] for inp in input]
-                )
+                output = np.array([ap.tel_to_sky(v2[i], v3[i]) for i in ind])
 
                 tf = transform()
                 tf.estimate((output - x0) * cosd, (input - x0) * cosd)
 
-                tf, inliers = ransac(
-                    [(output - x0) * cosd, (input - x0) * cosd],
-                    transform,
-                    min_samples=3,
-                    residual_threshold=3,
-                    max_trials=100,
+                if with_ransac:
+                    # Fit with inliers / outliers
+                    tf, inliers = ransac(
+                        [(output - x0) * cosd, (input - x0) * cosd],
+                        transform,
+                        min_samples=3,
+                        residual_threshold=3,
+                        max_trials=100,
+                    )
+
+                _ = self.get_siaf_aperture(
+                    msa_metadata_id=msa_metadata_id,
+                    dither_point_index=dither_point_index,
+                    ra_ref=_ra + tf.translation[0] / cosd[0][0],
+                    dec_ref=_dec + tf.translation[1],
+                    roll_ref=_roll - tf.rotation / np.pi * 180,
+                    **kwargs,
+                )
+                _ra, _dec, _roll, ap = _
+
+            if (verbose & 2) > 0:
+                resid_in = (init_output - x0) * cosd - (input - x0) * cosd
+                resid_out = (output - x0) * cosd - (input - x0) * cosd
+                print(
+                    "rms: in ({0:.2f} {1:.2f}) out ({2:.2f}, {3:.2f}) mas".format(
+                        *np.std(resid_in, axis=0) * 3600.0 * 1000,
+                        *np.std(resid_out, axis=0) * 3600 * 1000.0,
+                    )
                 )
 
-                if 1:
-                    _ = self.get_siaf_aperture(
-                        msa_metadata_id=msa_metadata_id,
-                        dither_point_index=dither_point_index,
-                        ra_ref=_ra + tf.translation[0] / cosd[0][0],
-                        dec_ref=_dec + tf.translation[1],
-                        roll_ref=_roll - tf.rotation / np.pi * 180,
-                        **kwargs,
-                    )
-                    _ra, _dec, _roll, ap = _
-
             xrow += [Nsrc, _ra * 1, _dec * 1, _roll * 1]
-            if verbose > 1:
+            if (verbose & 4) > 0:
                 print(msg.format(*xrow))
 
             rows.append(xrow)
@@ -1750,9 +1786,10 @@ class MSAMetafile:
             res["dec_ref"] = res["dec0"] + dde
             res["roll_ref"] = res["roll0"] + dro
 
-            self.mast["ra_ref"] = 0.0
-            self.mast["dec_ref"] = 0.0
-            self.mast["roll_ref"] = 0.0
+            if not init_ref_columns:
+                self.mast["ra_ref"] = 0.0
+                self.mast["dec_ref"] = 0.0
+                self.mast["roll_ref"] = 0.0
 
             for i, (id, dith) in enumerate(
                 zip(self.mast["msametid"], self.mast["patt_num"])
@@ -1761,7 +1798,7 @@ class MSAMetafile:
                     msa_metadata_id=id,
                     dither_point_index=dith,
                     pa_offset=0.0,
-                    use_ref_columns=False,
+                    use_ref_columns=init_ref_columns,
                     **kwargs,
                 )
 
@@ -1782,8 +1819,8 @@ class MSAMetafile:
 
             if verbose:
                 print(
-                    f"Apply offset to metadata: {dra*3600:.2f}"
-                    + f"  {dde*3600:.2f}  {dro:>.2f}"
+                    f"Apply offset to metadata: translation= {dra*3600:6.3f}"
+                    + f"  {dde*3600:6.3f}  rotation= {dro:>.4f}"
                 )
 
         return res
@@ -1794,6 +1831,7 @@ class MSAMetafile:
         with_bars=True,
         msa_metadata_id=1,
         dither_point_index=1,
+        shutter_table=None,
         meta_keys=[
             "program",
             "pi_name",
@@ -1806,6 +1844,8 @@ class MSAMetafile:
             "nod_type",
             "final_0x0_EOSA",
         ],
+        source_color="cyan",
+        other_color="lightblue",
         verbose=False,
         **kwargs,
     ):
@@ -1874,7 +1914,10 @@ class MSAMetafile:
         has_offset &= np.isfinite(_shut["estimated_source_in_shutter_y"])
 
         # Regions for a particular exposure
-        se = _shut[exp]
+        if shutter_table is None:
+            se = _shut[exp]
+        else:
+            se = shutter_table
 
         sx = (np.array([-0.5, 0.5, 0.5, -0.5])) * (
             1 - 0.07 / 0.27 * with_bars / 2
@@ -1916,16 +1959,20 @@ class MSAMetafile:
                 "estimated_source_in_shutter_x",
                 "estimated_source_in_shutter_y",
             ]:
-                sr.meta[k] = se[k][i]
+                if k in se.colnames:
+                    sr.meta[k] = se[k][i]
 
-            sr.meta["is_source"] = np.isfinite(
-                se["estimated_source_in_shutter_x"][i]
-            )
+            if "estimated_source_in_shutter_x" in sr.meta:
+                sr.meta["is_source"] = np.isfinite(
+                    sr.meta["estimated_source_in_shutter_x"]
+                )
+            else:
+                sr.meta["is_source"] = False
 
             if sr.meta["is_source"]:
-                sr.ds9_properties = "color=cyan"
+                sr.ds9_properties = "color=" + source_color
             else:
-                sr.ds9_properties = "color=lightblue"
+                sr.ds9_properties = "color=" + other_color
 
             regions.append(sr)
 
@@ -2492,7 +2539,9 @@ def plot_msa_shutters(xcen, ycen, quadrant, c=None, ax=None, **kwargs):
         return None, ax
 
 
-def diffraction_spikes_on_msa(ra, dec, attitude_matrix, aper=None, buffer_arcsec=None):
+def diffraction_spikes_on_msa(
+    ra, dec, attitude_matrix, aper=None, buffer_arcsec=None
+):
     """
     Generate estimated regions of diffraction spikes for a bright star
 
@@ -2518,7 +2567,7 @@ def diffraction_spikes_on_msa(ra, dec, attitude_matrix, aper=None, buffer_arcsec
     """
     import pysiaf
     import grizli.utils
-    
+
     # Rough polygons of the diffraction spikes in relative "tel" coordinates
     regions_v23 = """
     ((0.69,-1.27),(-0.69,-1.25),(-0.33,-38.09),(0.72,-38.68))
@@ -2533,8 +2582,8 @@ def diffraction_spikes_on_msa(ra, dec, attitude_matrix, aper=None, buffer_arcsec
     """.strip().split()
 
     if aper is None:
-        nrs = pysiaf.Siaf('NIRSPEC')
-        aper = nrs['NRS_FULL_MSA']
+        nrs = pysiaf.Siaf("NIRSPEC")
+        aper = nrs["NRS_FULL_MSA"]
 
     aper.set_attitude_matrix(attitude_matrix)
 
@@ -2551,9 +2600,57 @@ def diffraction_spikes_on_msa(ra, dec, attitude_matrix, aper=None, buffer_arcsec
 
         sr = grizli.utils.SRegion(reg_sky)
         if buffer_arcsec is not None:
-            sr = grizli.utils.SRegion(sr.shapely[0].buffer(buffer_arcsec / 3600.))
+            sr = grizli.utils.SRegion(
+                sr.shapely[0].buffer(buffer_arcsec / 3600.0)
+            )
 
         spike_regions.append(sr)
 
     return spike_regions
 
+
+def read_apt_shutter_csv(file):
+    """
+    Read an APT MSA shutter CSV file into a table
+
+    Parameters
+    ----------
+    file : str
+        Filename of the shutter CSV file exported from APT
+
+    Returns
+    -------
+    tab, otab : `~grizli.utils.GTable`
+        Tables for closed and open shutters
+
+    """
+    import grizli.utils
+
+    with open(file) as fp:
+        lines = fp.readlines()[1:]
+
+    data = np.array([np.cast[int](line.strip().split(",")) for line in lines])
+
+    q = data * 0
+    q[:365, :171] = 1
+    q[365:, :171] = 3
+    q[:365, 171:] = 2
+    q[365:, 171:] = 4
+
+    row, col = np.indices(data.shape)
+    row = (row % 365) + 1
+    col = (col % 171) + 1
+
+    closed = data == 1
+
+    tab = grizli.utils.GTable()
+    tab["shutter_quadrant"] = q[closed]
+    tab["shutter_row"] = row[closed]
+    tab["shutter_column"] = col[closed]
+
+    otab = grizli.utils.GTable()
+    otab["shutter_quadrant"] = q[~closed]
+    otab["shutter_row"] = row[~closed]
+    otab["shutter_column"] = col[~closed]
+
+    return tab, otab
