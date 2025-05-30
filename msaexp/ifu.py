@@ -23,6 +23,8 @@ from . import utils as msautils
 from .utils import BAD_PIXEL_FLAG
 from .slit_combine import pseudo_drizzle
 
+IFU_BAD_PIXEL_FLAG = BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
+
 
 class ExposureCube:
     input = None
@@ -510,7 +512,7 @@ def meta_lowercase(meta):
 
 def pixel_table_background(
     ptab,
-    bad_pixel_flag=BAD_PIXEL_FLAG,
+    bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     sky_center=(0, 0),
     sky_annulus=(0.5, 1.0),
     make_plot=True,
@@ -876,7 +878,7 @@ def drizzle_cube_data(
     pixel_size=0.1,
     pixfrac=0.75,
     side=2.2,
-    bad_pixel_flag=BAD_PIXEL_FLAG,
+    bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     **kwargs,
 ):
     """
@@ -1038,6 +1040,8 @@ def ifu_pipeline(
     use_first_center=True,
     files=None,
     make_drizzled=True,
+    perform_saturation=False,
+    low_threshold=-4,
     **kwargs,
 ):
     """
@@ -1120,6 +1124,31 @@ def ifu_pipeline(
     for i, cube in enumerate(cubes):
         cube.ptab["exposure"] = i
 
+    # Saturated mask
+    sat_files, sat_data = [], []
+    for file in files:
+        sat_file, sat_i = msautils.exposure_ramp_saturation(
+            file, perform=perform_saturation, **kwargs
+        )
+        if sat_i is None:
+            sat_i = np.zeros((2048, 2048), dtype=bool)
+
+        sat_files.append(sat_file)
+        sat_data.append(sat_i)
+
+    sat_det = {}
+    for i, cube in enumerate(cubes):
+        this_sat = sat_data[i]
+        det = cube.ptab.meta["detector"]
+        if det in sat_det:
+            sat_mask = this_sat | sat_det[det]
+        else:
+            sat_mask = this_sat
+
+        ptab_sat = sat_mask[cube.ptab["ypix"], cube.ptab["xpix"]]
+        cube.ptab["dq"] |= (ptab_sat * 4096).astype(cube.ptab["dq"].dtype)
+        sat_det[det] = this_sat
+
     ptabs = [cube.ptab for cube in cubes]
 
     try:
@@ -1149,6 +1178,22 @@ def ifu_pipeline(
     if "valid" not in ptab.colnames:
         ptab["valid"] = True
 
+    if "bad_pixel_flag" in kwargs:
+        msg = 'Update "valid" with bad_pixel_flag = {bad_pixel_flag}'.format(
+            **kwargs
+        )
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+        ptab["valid"] = (ptab["dq"] & kwargs["bad_pixel_flag"]) == 0
+
+    if low_threshold is not None:
+        bad_low = ptab["data"] < low_threshold * np.sqrt(ptab["var_total"])
+        msg = (
+            f"Pixels below {low_threshold} x sqrt(var_total): {bad_low.sum()}"
+        )
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        ptab["valid"] &= ~bad_low
+
     if make_drizzled:
         num, den, vnum = drizzle_cube_data(ptab, **kwargs)
         hdul = make_drizzle_hdul(ptab, num, den, vnum, **kwargs)
@@ -1170,3 +1215,86 @@ def ifu_pipeline(
         hdul = None
 
     return outroot, cubes, ptab, hdul
+
+
+def pixel_table_to_fits(
+    ptab,
+    columns=[
+        "data",
+        "dq",
+        "var_poisson",
+        "var_rnoise",
+        "sky",
+        "slice",
+        "dx",
+        "dy",
+        "dra",
+        "dde",
+        "lam",
+    ],
+    **kwargs,
+):
+    """
+    Make full HDUList
+    """
+    hdul = [pyfits.PrimaryHDU()]
+    hdul += [
+        pixel_table_to_detector(ptab, column=c, as_hdu=True, **kwargs)
+        for c in columns
+    ]
+    hdul = pyfits.HDUList(hdul)
+    if "lam" in columns:
+        hdul["LAM"].header["EXTNAME"] = "WAVE"
+
+    return hdul
+
+
+def pixel_table_to_detector(
+    ptab, column="data", split_exposures=True, as_hdu=False, **kwargs
+):
+    """
+    Map pixel table back to detector frame
+
+    Parameters
+    ----------
+    ptab : `~astropy.table.Table`
+        Pixel table
+
+    column : str
+        Data column to use
+
+    as_hdu : bool
+        Output as fits HDU or simple array
+
+    Returns
+    -------
+    hdu, detector_array : `~astropy.io.fits.ImageHDU`, `np.array`
+        2048 x 2048 array data
+
+    """
+
+    if split_exposures & ("exposure" in ptab.colnames):
+        uexp = utils.Unique(ptab["exposure"], verbose=False)
+        nexp = np.max(uexp.values) + 1
+    else:
+        nexp = 1
+
+    detector_array = np.zeros((nexp, 2048, 2048), dtype=ptab[column].dtype)
+    if nexp > 1:
+        for exp_index in uexp.values:
+            mask = uexp[exp_index]
+            detector_array[
+                exp_index, ptab["ypix"][mask], ptab["xpix"][mask]
+            ] = ptab[column][mask]
+    else:
+        detector_array[0, ptab["ypix"], ptab["xpix"]] = ptab[column]
+        detector_array = detector_array[0, :, :]
+
+    if as_hdu:
+        hdu = pyfits.ImageHDU(
+            data=detector_array, header=pyfits.Header(ptab.meta)
+        )
+        hdu.header["EXTNAME"] = column.upper()
+        return hdu
+    else:
+        return detector_array
