@@ -878,6 +878,7 @@ def drizzle_cube_data(
     pixel_size=0.1,
     pixfrac=0.75,
     side=2.2,
+    column=None,
     bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     **kwargs,
 ):
@@ -921,7 +922,11 @@ def drizzle_cube_data(
             ysl = ptab["dde"][sub] * 1
             xsl = -1 * ptab["dra"][sub]
 
-        data = (ptab["data"] - ptab["sky"])[sub] * 1
+        if column is None:
+            data = (ptab["data"] - ptab["sky"])[sub] * 1
+        else:
+            data = ptab[column][sub] * 1
+
         var = (ptab["var_total"])[sub] * 1
         wht = 1.0 / ptab["var_rnoise"][sub] * 1
 
@@ -1175,6 +1180,8 @@ def ifu_pipeline(
 
     # Full ptab cube
     ptab = astropy.table.vstack(ptabs)
+    ptab.meta['srcname'] = SOURCE
+
     if "valid" not in ptab.colnames:
         ptab["valid"] = True
 
