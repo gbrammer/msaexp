@@ -865,7 +865,7 @@ def query_ifu_exposures(
     utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
     if download:
-        mast = mastquery.utils.download_from_mast(res)
+        mast = mastquery.utils.download_from_mast(res, **kwargs)
     else:
         mast = None
 
@@ -878,6 +878,7 @@ def drizzle_cube_data(
     pixel_size=0.1,
     pixfrac=0.75,
     side=2.2,
+    center=(0., 0.),
     column=None,
     bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     **kwargs,
@@ -890,6 +891,7 @@ def drizzle_cube_data(
     Nside = int(np.ceil(side / pixel_size))
     xbin = np.arange(-Nside, Nside + 1) * pixel_size - pixel_size / 2
     ybin = xbin * 1
+
 
     wave_grid = msautils.get_standard_wavelength_grid(
         ptab.meta["grating"], sample=wave_sample
@@ -916,8 +918,8 @@ def drizzle_cube_data(
             continue
 
         if 1:
-            ysl = ptab["dy"][sub] * 1
-            xsl = ptab["dx"][sub] * 1
+            ysl = ptab["dy"][sub] * 1 - center[1]
+            xsl = ptab["dx"][sub] * 1 - center[0]
         else:
             ysl = ptab["dde"][sub] * 1
             xsl = -1 * ptab["dra"][sub]
@@ -956,6 +958,7 @@ def make_drizzle_hdul(
     wave_sample=1.05,
     pixel_size=0.1,
     pixfrac=0.75,
+    center=(0., 0.),
     side=2.2,
     **kwargs,
 ):
