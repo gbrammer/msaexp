@@ -341,6 +341,10 @@ def extend_sflat(
     utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
     sf.dq -= sf.dq & 2**18
+    if sf.meta.exposure.type == "NRS_IFU":
+        msg = f"{log_prefix} {fbase} Unset 1 from IFU SFlat DQ"
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        sf.dq -= sf.dq & 1
 
     # Reset all
     msg = f"{log_prefix} {fbase} Set unity SFlat SCI"
@@ -679,6 +683,55 @@ def extend_barshadow(
     return hdu
 
 
+def assign_wcs_with_extended(dm, file=None, ranges=EXTENDED_RANGES):
+    """
+    """
+    import jwst.assign_wcs.nirspec
+    import jwst.assign_wcs.assign_wcs_step
+
+    # Fork of load_wcs to ignore limits on IFU detectors
+    from .fork.assign_wcs.assign_wcs import load_wcs as load_wcs_fork
+    jwst.assign_wcs.load_wcs = load_wcs_fork
+    jwst.assign_wcs.assign_wcs_step.load_wcs = load_wcs_fork
+
+    from jwst.assign_wcs import AssignWcsStep
+    
+    ORIG_LOGFILE = utils.LOGFILE
+    
+    wstep = AssignWcsStep()
+
+    ##############
+    # AssignWCS with extended wavelength range
+    wcs_reference_files = step_reference_files(wstep, dm)
+    new_waverange = os.path.basename(
+        wcs_reference_files["wavelengthrange"]
+    )
+    new_waverange = new_waverange.replace(".asdf", "_ext.asdf")
+
+    print(f"extend_wavelengthrange: {new_waverange}")
+    if not os.path.exists(new_waverange):
+        extend_wavelengthrange(
+            ref_file=os.path.basename(
+                wcs_reference_files["wavelengthrange"]
+            ),
+            ranges=ranges,
+        )
+
+    # Use new reference
+    wcs_reference_files["wavelengthrange"] = new_waverange
+    # slit_y_range = [wstep.slit_y_low, wstep.slit_y_high]
+    try:
+        # with_wcs = load_wcs(dm, wcs_reference_files, slit_y_range)
+        with_wcs = wstep.call(dm, override_wavelengthrange=new_waverange)
+    except NoDataOnDetectorError:
+        msg = f"{file} No open slits found to work on"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        utils.LOGFILE = ORIG_LOGFILE
+        return None
+
+    return with_wcs
+
+
 def run_pipeline(
     file,
     slit_index=0,
@@ -772,6 +825,16 @@ def run_pipeline(
         # 1/f, bias & rnoise
         status = pipeline.exposure_detector_effects(file, **preprocess_kwargs)
 
+    with jwst.datamodels.open(file) as dm:
+        EXPOSURE_TYPE = dm.meta.exposure.type
+
+    if EXPOSURE_TYPE == "NRS_IFU":
+        make_trace_figures = False
+        run_pathloss = False
+        run_barshadow=False
+        mask_zeroth_kwargs = None
+        # write_output = False
+
     # Mask zeroth orders
     if mask_zeroth_kwargs is not None:
         with pyfits.open(file, mode='update') as hdul:
@@ -821,7 +884,7 @@ def run_pipeline(
             utils.LOGFILE = ORIG_LOGFILE
             return None
 
-    if with_wcs.meta.exposure.type == "NRS_MSASPEC":
+    if EXPOSURE_TYPE in ["NRS_MSASPEC", "NRS_IFU"]:
         ############
         # MSAFlagOpen
         msg = f"{file} MSAFlagOpen"
@@ -832,29 +895,35 @@ def run_pipeline(
 
     ############
     # Extract2D
-    msg = f"{file} Extract2D"
-    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-
-    step2d = Extract2dStep()
-    ext2d = step2d.call(flag_open)
-
-    _slit_index = None
-    if ext2d.meta.exposure.type == "NRS_FIXEDSLIT":
-        for ind, slit in enumerate(ext2d.slits):
-            if f"NRS_{slit.name}_SLIT".upper() == ext2d.meta.aperture.name:
-                _slit_index = ind
-                break
-
-    if _slit_index is not None:
-        msg = f"{file} use slit_index = {_slit_index} for {slit.name}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-        slit_index = _slit_index
+    if EXPOSURE_TYPE == "NRS_IFU":
+        _slit = ext2d = flag_open
+        _slit.name = "ifu"
         all_slits = False
+    else:
+        msg = f"{file} Extract2D"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    _slit = ext2d[slit_index]
+        step2d = Extract2dStep()
+        ext2d = step2d.call(flag_open)
+
+        _slit_index = None
+        if EXPOSURE_TYPE == "NRS_FIXEDSLIT":
+            for ind, slit in enumerate(ext2d.slits):
+                if f"NRS_{slit.name}_SLIT".upper() == ext2d.meta.aperture.name:
+                    _slit_index = ind
+                    break
+
+        if _slit_index is not None:
+            msg = f"{file} use slit_index = {_slit_index} for {slit.name}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+            slit_index = _slit_index
+            all_slits = False
+
+        _slit = ext2d[slit_index]
 
     if _slit.meta.target.catalog_name is not None:
         targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
+        targ_ = targ_.replace('(','').replace(')','').replace('/','')
     else:
         targ_ = 'cat'
 
@@ -862,7 +931,7 @@ def run_pipeline(
         f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"
     )
 
-    if _slit.meta.exposure.type == "NRS_FIXEDSLIT":
+    if EXPOSURE_TYPE in ["NRS_FIXEDSLIT", "NRS_IFU"]:
         slit_prefix_ = (
             f"{file.split('_rate')[0]}_{targ_}_{inst_key}_{_slit.name}".lower()
         )
@@ -920,7 +989,7 @@ def run_pipeline(
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         if not os.path.exists(new_fflat_filename):
-            if ext2d.meta.exposure.type == "NRS_MSASPEC":
+            if EXPOSURE_TYPE == "NRS_MSASPEC":
                 ff = extend_quad_fflat(
                     flat_reference_files["fflat"],
                     full_range=full_range,
@@ -983,7 +1052,7 @@ def run_pipeline(
 
     #########################
     # Metadata for fixed slit
-    if ext2d.meta.exposure.type == "NRS_FIXEDSLIT":
+    if EXPOSURE_TYPE == "NRS_FIXEDSLIT":
         for _slit in ext2d.slits:
             msautils.update_slit_metadata(_slit)
 
@@ -1026,7 +1095,7 @@ def run_pipeline(
 
     last_result = path_result
 
-    if ext2d.meta.exposure.type == "NRS_MSASPEC":
+    if EXPOSURE_TYPE == "NRS_MSASPEC":
 
         if run_barshadow:
             ###########
@@ -1110,7 +1179,13 @@ def run_pipeline(
 
     ########
     # Write calibrated slitlet files
-    if write_output:
+    if write_output & (EXPOSURE_TYPE == "NRS_IFU"):
+        cal_file = file.replace("_rate.fits", "_cal.fits")
+        msg = f"{file} write calibrated IFU exposure cal_file"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        result.write(cal_file, overwrite=True)
+
+    elif write_output:
         if all_slits:
             slit_list = result.slits
         else:

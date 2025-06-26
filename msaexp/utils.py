@@ -1,5 +1,6 @@
 import os
 import yaml
+import glob
 
 import warnings
 import logging
@@ -331,8 +332,8 @@ GRATING_LIMITS = {
     "g140h": [0.6, 1.9, 0.000238],
     "g235h": [1.6, 3.2, 0.000396],
     "g395h": [2.8, 5.3, 0.000666],
-    "grismr": [2.5, 5.1, 20./1.e4],
-    "grismc": [2.5, 5.1, 20./1.e4],
+    "grismr": [2.5, 5.1, 20.0 / 1.0e4],
+    "grismc": [2.5, 5.1, 20.0 / 1.0e4],
 }
 
 
@@ -426,7 +427,9 @@ def get_nircam_wfss_disp(wave=None, range=[2.4, 5.3], nstep=512, rstep=20e-4):
     return disp
 
 
-def get_miri_lrs_disp(wave=None, range=[4, 14], nstep=512, pix_to_fwhm=2.35, **kwargs):
+def get_miri_lrs_disp(
+    wave=None, range=[4, 14], nstep=512, pix_to_fwhm=2.35, **kwargs
+):
     """
     Generate a placeholder resolution curve for MIRI LRS fit from the reference file
     jwst_miri_specwcs_0010.fits
@@ -446,14 +449,16 @@ def get_miri_lrs_disp(wave=None, range=[4, 14], nstep=512, pix_to_fwhm=2.35, **k
     """
 
     # Polynomial fit of wavelength(pixel) from jwst_miri_specwcs_0010.fits
-    coeffs = np.array([
-        6.337590e-04,
-        -3.32824e-02,
-        6.056444e-01,
-        -7.75718e+00,
-        3.214324e+01,
-        3.543661e+02
-    ])
+    coeffs = np.array(
+        [
+            6.337590e-04,
+            -3.32824e-02,
+            6.056444e-01,
+            -7.75718e00,
+            3.214324e01,
+            3.543661e02,
+        ]
+    )
 
     if wave is None:
         wave = np.linspace(*range, nstep)
@@ -1503,7 +1508,9 @@ def combine_2d_with_rejection(
 
                 _wcs = drizzled_slits[0].meta.wcs
                 _, _, wave0 = _wcs.forward_transform(xpix, ypix)
-                xsl = np.round(np.interp(profile_slice, wave0, xpix)).astype(int)
+                xsl = np.round(np.interp(profile_slice, wave0, xpix)).astype(
+                    int
+                )
 
                 xsl = np.clip(xsl, 0, sh[1])
                 print(f"Wavelength slice: {profile_slice} > {xsl} pix")
@@ -4343,3 +4350,101 @@ class LookupTablePSF:
         Run ``execute``
         """
         return self.execute(**kwargs)
+
+
+def exposure_ramp_saturation(
+    file="jw02701001001_03101_00003_nrs1_uncal.fits",
+    saturation_level=2**16 - 2048,
+    cleanup=True,
+    force=False,
+    verbose=True,
+    perform=True,
+    **kwargs,
+):
+    """
+    Get maximum of an uncal ramp for flagging saturation
+
+    Parameters
+    ----------
+    file : str
+        Filename of an ``uncal`` dataset
+
+    saturation_level : float
+        Level above which to define pixel values as saturated
+
+    Returns
+    -------
+    is_saturated : array-like
+        Flag array of saturated pixels.  Also writes a file ``{dataset}_satflag.fits``.
+    """
+    from jwst.group_scale import GroupScaleStep
+    import jwst.datamodels
+    import mastquery.utils
+
+    uncal_file = file.replace("_rate.fits", "_uncal.fits")
+    uncal_file = uncal_file.replace("_cal.fits", "_uncal.fits")
+
+    output_file = uncal_file.replace("_uncal.fits", "_satflag.fits")
+
+    find_file = glob.glob(output_file + "*")
+    if (len(find_file) > 0) & (not force):
+        output_file = find_file[0]
+        with pyfits.open(output_file) as im:
+            is_saturated = im[0].data > 0
+
+        msg = f"exposure_ramp_saturation: found {output_file} N={is_saturated.sum()}"
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+        )
+
+        return output_file, is_saturated
+
+    if not perform:
+        return output_file, None
+
+    if not os.path.exists(uncal_file):
+        resp = mastquery.utils.download_from_mast([uncal_file])
+        if not os.path.exists(uncal_file):
+            return output_file, None
+
+    dm = jwst.datamodels.open(uncal_file)
+
+    result = GroupScaleStep().process(dm)
+
+    exp = result.meta.exposure
+
+    if result.data.shape[2] == 3200:
+        # Reshape uncal images with rows of reference pixels
+        isub = np.arange(3200, dtype=int)[640:]
+        ix = 0
+        for i in range(20):
+            if i in [8, 9, 10, 11]:
+                isub[i::20] = -1
+    else:
+        isub = np.arange(result.data.shape[2], dtype=int)
+
+    reform = result.data[:, -1, :, :][:, isub[isub >= 0], :]
+    maxval = np.nanmax(reform, axis=0)  # [:, -1, isub[isub >= 0], :], axis=0)
+    is_saturated = maxval > saturation_level
+
+    with pyfits.open(uncal_file) as im:
+        header = im[0].header
+
+    pyfits.writeto(
+        output_file, header=header, data=is_saturated * 1, overwrite=True
+    )
+
+    msg = f"exposure_ramp_saturation: {output_file} N={is_saturated.sum()}"
+    grizli.utils.log_comment(
+        grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+    )
+
+    if cleanup:
+        msg = f"exposure_ramp_saturation: cleanup remove {uncal_file}"
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+        )
+
+        os.remove(uncal_file)
+
+    return output_file, is_saturated

@@ -57,7 +57,8 @@ from jwst.lib.exposure_types import is_nrs_ifu_lamp
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
-from jwst.assign_wcs.nirspec import *
+# from jwst.assign_wcs.nirspec import *
+import jwst.assign_wcs.nirspec
 from jwst.assign_wcs.nirspec import (
     get_msa_metadata,
     get_open_msa_slits,
@@ -68,7 +69,15 @@ from jwst.assign_wcs.nirspec import (
     collimator_to_gwa,
     slit_to_msa,
     compute_bounding_box,
-    get_open_fixed_slits
+    get_open_fixed_slits,
+    create_frames,
+    get_spectral_order_wrange,
+    get_disperser,
+    gwa_to_ifuslit,
+    ifuslit_to_slicer,
+    slicer_to_msa,
+    oteip_to_v23,
+    ifu_msa_to_oteip
 )
 
 
@@ -378,12 +387,142 @@ def zeroth_order_mask(
     return dq, slits_, bounding_boxes
 
 
-if 0:
-    dq, slits_, bounding_boxes = zeroth_order_mask(
-        input_model,
-        reference_files=None,
-        slit_y_range=[-0.55, 0.55],
-        xsize=5,
-        min_ysize=2,
-        dq_flag="MSA_FAILED_OPEN",
-    )
+# if 0:
+#     dq, slits_, bounding_boxes = zeroth_order_mask(
+#         input_model,
+#         reference_files=None,
+#         slit_y_range=[-0.55, 0.55],
+#         xsize=5,
+#         min_ysize=2,
+#         dq_flag="MSA_FAILED_OPEN",
+#     )
+
+#
+# Overwrite ifu processing to include all detectors
+#
+
+def ifu(input_model, reference_files, slit_y_range=[-.55, .55], limit_detectors=False):
+    """
+    The Nirspec IFU WCS pipeline.
+
+    The coordinate frames are:
+    "detector" : the science frame
+    "sca" : frame associated with the SCA
+    "gwa" " just before the GWA going from detector to sky
+    "slit_frame" : frame associated with the virtual slit
+    "slicer' : frame associated with the slicer
+    "msa_frame" : at the MSA
+    "oteip" : after the FWA
+    "v2v3" and "world"
+
+    Parameters
+    ----------
+    input_model : `~jwst.datamodels.JwstDataModel`
+        The input data model.
+    reference_files : dict
+        The reference files used for this mode.
+    slit_y_range : list
+        The slit dimensions relative to the center of the slit.
+    """
+    detector = input_model.meta.instrument.detector
+    grating = input_model.meta.instrument.grating
+    filter = input_model.meta.instrument.filter
+    # Check for ifu reference files
+    if reference_files['ifufore'] is None and \
+       reference_files['ifuslicer'] is None and \
+       reference_files['ifupost'] is None:
+        # No ifu reference files, won't be able to create pipeline
+        log_message = 'No ifufore, ifuslicer or ifupost reference files'
+        log.critical(log_message)
+        raise RuntimeError(log_message)
+    # Check for data actually being present on NRS2
+    log_message = "No IFU slices fall on detector {0}".format(detector)
+
+    if limit_detectors:
+        if detector == "NRS2" and grating.endswith('M'):
+            # Mid-resolution gratings do not project on NRS2.
+            log.critical(log_message)
+            raise NoDataOnDetectorError(log_message)
+        if detector == "NRS2" and grating == "G140H" and filter == "F070LP":
+            # This combination of grating and filter does not project on NRS2.
+            log.critical(log_message)
+            raise NoDataOnDetectorError(log_message)
+
+    slits = np.arange(30)
+    # Get the corrected disperser model
+    disperser = get_disperser(input_model, reference_files['disperser'])
+
+    # Get the default spectral order and wavelength range and record them in the model.
+    sporder, wrange = get_spectral_order_wrange(input_model, reference_files['wavelengthrange'])
+    input_model.meta.wcsinfo.waverange_start = wrange[0]
+    input_model.meta.wcsinfo.waverange_end = wrange[1]
+    input_model.meta.wcsinfo.spectral_order = sporder
+
+    # DMS to SCA transform
+    dms2detector = dms_to_sca(input_model)
+    # DETECTOR to GWA transform
+    det2gwa = Identity(2) & detector_to_gwa(reference_files,
+                                            input_model.meta.instrument.detector,
+                                            disperser)
+
+    # GWA to SLIT
+    gwa2slit = gwa_to_ifuslit(slits, input_model, disperser, reference_files, slit_y_range)
+
+    # SLIT to MSA transform
+    slit2slicer = ifuslit_to_slicer(slits, reference_files, input_model)
+
+    # SLICER to MSA Entrance
+    slicer2msa = slicer_to_msa(reference_files)
+
+    det, sca, gwa, slit_frame, msa_frame, oteip, v2v3, v2v3vacorr, world = create_frames()
+
+    exp_type = input_model.meta.exposure.type.upper()
+
+    is_lamp_exposure = exp_type in ['NRS_LAMP', 'NRS_AUTOWAVE', 'NRS_AUTOFLAT']
+
+    if input_model.meta.instrument.filter == 'OPAQUE' or is_lamp_exposure:
+        # If filter is "OPAQUE" or if internal lamp exposure the NIRSPEC WCS pipeline stops at the MSA.
+        pipeline = [(det, dms2detector),
+                    (sca, det2gwa.rename('detector2gwa')),
+                    (gwa, gwa2slit.rename('gwa2slit')),
+                    (slit_frame, slit2slicer),
+                    ('slicer', slicer2msa),
+                    (msa_frame, None)]
+    else:
+        # MSA to OTEIP transform
+        msa2oteip = ifu_msa_to_oteip(reference_files)
+        # OTEIP to V2,V3 transform
+        # This includes a wavelength unit conversion from meters to microns.
+        oteip2v23 = oteip_to_v23(reference_files, input_model)
+
+        # Compute differential velocity aberration (DVA) correction:
+        va_corr = pointing.dva_corr_model(
+            va_scale=input_model.meta.velocity_aberration.scale_factor,
+            v2_ref=input_model.meta.wcsinfo.v2_ref,
+            v3_ref=input_model.meta.wcsinfo.v3_ref
+        ) & Identity(1)
+
+        # V2, V3 to sky
+        tel2sky = pointing.v23tosky(input_model) & Identity(1)
+
+        # Create coordinate frames in the NIRSPEC WCS pipeline"
+        #
+        # The oteip2v2v3 transform converts the wavelength from meters (which is assumed
+        # in the whole pipeline) to microns (which is the expected output)
+        #
+        # "detector", "gwa", "slit_frame", "msa_frame", "oteip", "v2v3", "world"
+
+        pipeline = [(det, dms2detector),
+                    (sca, det2gwa.rename('detector2gwa')),
+                    (gwa, gwa2slit.rename('gwa2slit')),
+                    (slit_frame, slit2slicer),
+                    ('slicer', slicer2msa),
+                    (msa_frame, msa2oteip.rename('msa2oteip')),
+                    (oteip, oteip2v23.rename('oteip2v23')),
+                    (v2v3, va_corr),
+                    (v2v3vacorr, tel2sky),
+                    (world, None)]
+
+    return pipeline
+    
+jwst.assign_wcs.nirspec.ifu = ifu
