@@ -321,6 +321,7 @@ def combine_spectra_pipeline(
             diffs=True,
             join=join,
             trace_with_xpos=trace_with_xpos,
+            trace_with_ypos="auto",
             recenter_all=((recenter_type & 1) > 0),
             free_trace_offset=((recenter_type & 2) > 0),
             initial_theta=initial_theta,
