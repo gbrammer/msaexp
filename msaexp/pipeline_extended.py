@@ -683,37 +683,35 @@ def extend_barshadow(
     return hdu
 
 
-def assign_wcs_with_extended(dm, file=None, ranges=EXTENDED_RANGES):
-    """
-    """
+def assign_wcs_with_extended(dm, file=None, ranges=EXTENDED_RANGES, **kwargs):
+    """ """
     import jwst.assign_wcs.nirspec
     import jwst.assign_wcs.assign_wcs_step
 
     # Fork of load_wcs to ignore limits on IFU detectors
     from .fork.assign_wcs.assign_wcs import load_wcs as load_wcs_fork
+
     jwst.assign_wcs.load_wcs = load_wcs_fork
     jwst.assign_wcs.assign_wcs_step.load_wcs = load_wcs_fork
 
     from jwst.assign_wcs import AssignWcsStep
-    
+
     ORIG_LOGFILE = utils.LOGFILE
-    
+
     wstep = AssignWcsStep()
 
     ##############
     # AssignWCS with extended wavelength range
     wcs_reference_files = step_reference_files(wstep, dm)
-    new_waverange = os.path.basename(
-        wcs_reference_files["wavelengthrange"]
-    )
+    new_waverange = os.path.basename(wcs_reference_files["wavelengthrange"])
     new_waverange = new_waverange.replace(".asdf", "_ext.asdf")
 
-    print(f"extend_wavelengthrange: {new_waverange}")
+    msg = f"msaexp.pipeline_extended.assign_wcs_with_extended {new_waverange}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
     if not os.path.exists(new_waverange):
         extend_wavelengthrange(
-            ref_file=os.path.basename(
-                wcs_reference_files["wavelengthrange"]
-            ),
+            ref_file=os.path.basename(wcs_reference_files["wavelengthrange"]),
             ranges=ranges,
         )
 
@@ -831,22 +829,33 @@ def run_pipeline(
     if EXPOSURE_TYPE == "NRS_IFU":
         make_trace_figures = False
         run_pathloss = False
-        run_barshadow=False
+        run_barshadow = False
         mask_zeroth_kwargs = None
         # write_output = False
 
     # Mask zeroth orders
     if mask_zeroth_kwargs is not None:
-        with pyfits.open(file, mode='update') as hdul:
+        with pyfits.open(file, mode="update") as hdul:
             with jwst.datamodels.open(hdul) as input_model:
                 dq, slits_, bounding_boxes = zeroth_order_mask(
-                    input_model,
-                    **mask_zeroth_kwargs
+                    input_model, **mask_zeroth_kwargs
                 )
-                hdul['DQ'].data |= dq
-            
+                if dq.max() > 0:
+                    if dq.size != hdul["DQ"].data.size:
+                        hdul["DQ"].data |= dq
+                    else:
+                        subarray_ = input_model.meta.subarray
+                        slx_ = slice(
+                            subarray_.xstart - 1,
+                            subarray_.xstart - 1 + subarray_.xsize,
+                        )
+                        sly_ = slice(
+                            subarray_.ystart - 1,
+                            subarray_.ystart - 1 + subarray_.ysize,
+                        )
+                        hdul["DQ"].data |= dq[sly_, slx_]
+
             hdul.flush()
-            
 
     wstep = AssignWcsStep()
 
@@ -922,10 +931,12 @@ def run_pipeline(
         _slit = ext2d[slit_index]
 
     if _slit.meta.target.catalog_name is not None:
-        targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace("_", "-")
-        targ_ = targ_.replace('(','').replace(')','').replace('/','')
+        targ_ = _slit.meta.target.catalog_name.replace(" ", "-").replace(
+            "_", "-"
+        )
+        targ_ = targ_.replace("(", "").replace(")", "").replace("/", "")
     else:
-        targ_ = 'cat'
+        targ_ = "cat"
 
     inst_key = (
         f"{_slit.meta.instrument.filter}_{_slit.meta.instrument.grating}"

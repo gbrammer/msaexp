@@ -25,6 +25,8 @@ from .slit_combine import pseudo_drizzle
 
 IFU_BAD_PIXEL_FLAG = BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
 
+VERBOSITY = True
+
 
 class ExposureCube:
     input = None
@@ -38,7 +40,7 @@ class ExposureCube:
         """
         self.file = file
 
-        self.process_pixel_table()
+        self.process_pixel_table(**kwargs)
 
         if self.ptab is None:
             self.load_data(**kwargs)
@@ -55,7 +57,7 @@ class ExposureCube:
             self.preprocess(**kwargs)
 
         msg = f'cal file: {self.file.replace("_rate", "_cal")}'
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         self.input = jwst.datamodels.open(self.file.replace("_rate", "_cal"))
 
@@ -82,6 +84,8 @@ class ExposureCube:
         do_photom=True,
         extend_wavelengths=True,
         local_sflat=True,
+        run_oneoverf=True,
+        prism_oneoverf_rows=True,
         **kwargs,
     ):
         """
@@ -94,7 +98,7 @@ class ExposureCube:
             f"Preprocess do_flatfield={do_flatfield} do_photom={do_photom} "
             + f" local_sflat={local_sflat} extend_wavelengths={extend_wavelengths}"
         )
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         from jwst.assign_wcs import AssignWcsStep
         from jwst.msaflagopen import MSAFlagOpenStep
@@ -105,20 +109,51 @@ class ExposureCube:
         from .pipeline_extended import assign_wcs_with_extended
         from . import utils as msautils
 
-        do_corr = True
+        do_corr = run_oneoverf
         with pyfits.open(self.file) as im:
             if "ONEFEXP" in im[0].header:
                 if im[0].header["ONEFEXP"]:
                     do_corr = False
+            grating = im[0].header["GRATING"]
+            filter = im[0].header["FILTER"]
+            detector = im[0].header["DETECTOR"]
+            rate_sci = im["SCI"].data * 1
+            rate_err = im["ERR"].data * 1
+            rate_dq = im["DQ"].data * 1
+
+        sflat, sflat_mask = load_ifu_sflat(
+            grating="prism",
+            filter="clear",
+            detector="nrs1",
+        )
 
         if do_corr:
+            rate_empty = (
+                (~sflat_mask) & (np.isfinite(rate_sci)) & (rate_dq & 1 == 0)
+            )
+            rate_empty &= rate_sci > -10 * rate_err
+
             jwst_utils.exposure_oneoverf_correction(
                 self.file,
                 erode_mask=False,
                 in_place=True,
                 axis=0,
+                force_oneoverf=True,
+                manual_mask=rate_empty,
                 deg_pix=2048,
             )
+
+            if (grating == "PRISM") & (prism_oneoverf_rows):
+                jwst_utils.exposure_oneoverf_correction(
+                    self.file,
+                    erode_mask=False,
+                    in_place=True,
+                    axis=1,
+                    nirspec_prism_mask=False,
+                    manual_mask=rate_empty,
+                    force_oneoverf=True,
+                    deg_pix=2048,
+                )
 
         # jwst_utils.exposure_oneoverf_correction(
         #     self.file, erode_mask=False, in_place=True, axis=1, deg_pix=2048
@@ -126,15 +161,14 @@ class ExposureCube:
 
         input = jwst.datamodels.open(self.file)
         _ = msautils.slit_hot_pixels(
-            input, verbose=True, max_allowed_flagged=4096 * 8
+            input, verbose=VERBOSITY, max_allowed_flagged=4096 * 8
         )
 
-        if local_sflat:
+        if local_sflat & extend_wavelengths:
             inst_ = input.meta.instrument.instance
             sflat_file = "sflat_{grating}-{filter}_{detector}.fits".format(
                 **inst_
             ).lower()
-            # print("xxx ", sflat_file)
 
             if not os.path.exists(sflat_file):
                 URL_ = (
@@ -142,7 +176,7 @@ class ExposureCube:
                     + sflat_file
                 )
                 msg = f"Download SFLAT file from {URL_}"
-                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
                 sflat_file = download_file(URL_, cache=True)
 
@@ -155,19 +189,20 @@ class ExposureCube:
                     )
                     med_outside = np.nanmedian(input.data[outside_sflat])
                     msg = f"{self.file} SFLAT: {sflat_file} med={med_outside:.3f}"
-                    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
                     input.data -= med_outside
 
                     input.data /= sflat_[0].data
                     input.err /= sflat_[0].data
+                    input.var_rnoise /= sflat_[0].data ** 2
                     input.var_poisson /= sflat_[0].data ** 2
                     input.dq |= ((~np.isfinite(input.data)) * 1).astype(
                         input.dq.dtype
                     )
 
         if extend_wavelengths:
-            input_wcs = assign_wcs_with_extended(input)
+            input_wcs = assign_wcs_with_extended(input, **kwargs)
         else:
             input_wcs = AssignWcsStep().call(input)
 
@@ -192,7 +227,7 @@ class ExposureCube:
         import scipy.ndimage as nd
 
         msg = "dilate failed open mask"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         _flag = jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"]
         open_mask = self.input.dq & _flag > 0
@@ -294,15 +329,28 @@ class ExposureCube:
         cube.meta["NSLICE"] = len(shapes)
         cube.meta["FILE"] = self.file
 
+        # Save to YAML
+        meta_to_yaml(self.input.meta)
+
         for meta in [
+            self.input.meta.observation.instance,
+            self.input.meta.target.instance,
             self.input.meta.instrument.instance,
             self.input.meta.exposure.instance,
-            self.input.meta.pointing.instance,
             self.input.meta.aperture.instance,
-            self.input.meta.target.instance,
+            self.input.meta.pointing.instance,
+            self.input.meta.wcsinfo.instance,
+            self.input.meta.dither.instance,
+            self.input.meta.cal_step.instance,
         ]:
             for k in meta:
-                cube.meta[k] = meta[k]
+                if k not in cube.meta:
+                    if k in ["observation_folder"]:
+                        continue
+                    cube.meta[k] = meta[k]
+
+        cube.meta["bunit_data"] = self.input.meta.bunit_data
+        cube.meta["calver"] = self.input.meta.calibration_software_version
 
         # Trim NaN, e.g., from S-Flats
         valid_data = np.isfinite(cube["data"] + cube["err"] + cube["lam"])
@@ -324,7 +372,7 @@ class ExposureCube:
         )
         if os.path.exists(ptab_file) & load_existing:
             msg = f"process_pixel_table: load {ptab_file}"
-            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
             self.ptab = utils.read_catalog(ptab_file)
             self.ptab.meta = meta_lowercase(self.ptab.meta)
@@ -338,7 +386,7 @@ class ExposureCube:
                 pixel_table_background(self.ptab, **kwargs)
             except:
                 msg = f"pixel_table_background failed!"
-                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
                 self.ptab["sky"] = 0
 
             self.ptab.write(ptab_file, overwrite=True)
@@ -367,7 +415,7 @@ def saturated_mask(files, ptab):
             flag_dq | bpix[file.split("_")[3].upper()][0]
         ) > 0
         msg = f"{file}  flagged {sat_mask[j,:,:].sum()}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     import skimage.morphology
 
@@ -510,22 +558,274 @@ def meta_lowercase(meta):
     return out
 
 
+def meta_to_yaml(meta, yaml_file=None, **kwargs):
+    """
+    Save simple elements of a metadata object to a yaml file
+    """
+    import yaml
+
+    mdict = meta_simpledict(meta, **kwargs)
+
+    if yaml_file is None:
+        yaml_file = mdict["filename"].replace(".fits", ".yaml")
+        yaml_file = yaml_file.replace(".gz", "")
+
+    msg = f"meta_to_yaml: {yaml_file}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    with open(yaml_file, "w") as fp:
+        yaml.dump(mdict, fp)
+
+    return mdict
+
+
+def meta_simpledict(meta, exclude=["wcs"], **kwargs):
+    """
+    Get a simplified dictionary version of a metadata object
+    """
+    mdict = {}
+
+    keys = meta.instance.keys()
+
+    for k in keys:
+        if k not in exclude:
+            attr = getattr(meta, k)
+            if hasattr(attr, "instance"):
+                mdict[k] = attr.instance
+            else:
+                mdict[k] = attr
+
+    return mdict
+
+
+def load_ifu_sflat(
+    grating="prism",
+    filter="clear",
+    detector="nrs1",
+    dilate_iterations=4,
+    **kwargs,
+):
+    """
+    Load SFLAT for IFU data
+    """
+    import scipy.ndimage as nd
+    from astropy.utils.data import download_file
+
+    sflat_file = f"sflat_{grating}-{filter}_{detector}.fits".lower()
+    msg = f"msaexp.ifu.load_ifu_sflat: {sflat_file}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    if not os.path.exists(sflat_file):
+        URL_ = (
+            "https://s3.amazonaws.com/msaexp-nirspec/ifu-sflat/" + sflat_file
+        )
+        msg = f"Download SFLAT file from {URL_}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        sflat_file = download_file(URL_, cache=True)
+
+    with pyfits.open(sflat_file) as sflat_im:
+        sflat = sflat_im[0].data
+
+    sflat_mask = np.isfinite(sflat)
+    if dilate_iterations > 0:
+        sflat_mask = nd.binary_dilation(
+            sflat_mask, iterations=dilate_iterations
+        )
+
+    return sflat, sflat_mask
+
+
+def ifu_sky_from_fixed_slit(
+    rate_file="jw02659003001_02101_00001_nrs1_rate.fits",
+    slit_names=["S200A1", "S200A2", "S400A1"],
+    **kwargs,
+):
+    """
+    Estimate sky of IFU exposures using the Fixed Slits
+    """
+    from scipy.stats import binned_statistic
+    from astropy.utils.data import download_file
+
+    from jwst.extract_2d import Extract2dStep
+
+    from .pipeline_extended import assign_wcs_with_extended
+
+    _im = pyfits.open(rate_file)
+    rate_sci = _im["SCI"].data * 1
+    rate_err = _im["ERR"].data * 1
+    rate_dq = _im["DQ"].data * 1
+
+    ORIG_EXPTYPE = _im[0].header["EXP_TYPE"]
+    fixed_slit = "S200A1"
+    if ORIG_EXPTYPE != "NRS_FIXEDSLIT":
+        _im[0].header["EXP_TYPE"] = "NRS_FIXEDSLIT"
+        _im[0].header["APERNAME"] = f"NRS_{fixed_slit}_SLIT"
+        _im[0].header["OPMODE"] = "FIXEDSLIT"
+        _im[0].header["FXD_SLIT"] = fixed_slit
+
+    gr = _im[0].header["GRATING"]
+    if gr == "PRISM":
+        _im[0].header["FILTER"] = "CLEAR"
+    elif gr.startswith("G140"):
+        _im[0].header["FILTER"] = "F100LP"
+    elif gr.startswith("G235"):
+        _im[0].header["FILTER"] = "F170LP"
+    elif gr.startswith("G395"):
+        _im[0].header["FILTER"] = "F290LP"
+
+    with_wcs = assign_wcs_with_extended(_im, **kwargs)
+    _im.close()
+    ext2d = Extract2dStep().process(with_wcs)
+
+    meta = meta_simpledict(ext2d.meta)["instrument"]
+    grating = meta["grating"].upper()
+
+    wave_grid = msautils.get_standard_wavelength_grid(grating, sample=1.05)
+    wave_bin = msautils.array_to_bin_edges(wave_grid)
+
+    sflat_file = "sflat_{grating}-{filter}_{detector}.fits".format(
+        **meta
+    ).lower()
+
+    if not os.path.exists(sflat_file):
+        URL_ = (
+            "https://s3.amazonaws.com/msaexp-nirspec/ifu-sflat/" + sflat_file
+        )
+        msg = f"Download SFLAT file from {URL_}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        sflat_file = download_file(URL_, cache=True)
+
+    with pyfits.open(sflat_file) as sflat_im:
+        sflat = sflat_im[0].data
+
+    imask = ~np.isfinite(sflat) & ((rate_dq & 1) == 0)
+    rate_median = np.median(rate_sci[imask])
+    rate_sci -= rate_median
+
+    fs = {}
+
+    for slit in ext2d.slits:
+        if slit.name not in slit_names:
+            continue
+
+        msg = f"ifu_sky_from_fixed_slit: {rate_file} {slit.name}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        slx = slice(slit.xstart - 1, slit.xstart - 1 + slit.xsize)
+        sly = slice(slit.ystart - 1, slit.ystart - 1 + slit.ysize)
+
+        slit_data = (rate_sci / sflat)[sly, slx]
+        slit_err = (rate_err / sflat)[sly, slx]
+        slit_dq = rate_dq[sly, slx]
+
+        # xspl_int = np.interp(slit.wavelength.flatten(), wave_grid, xspl)
+        #
+        # xbspl = utils.bspline_templates(
+        #     xspl_int, df=nspl, minmax=(0, 1), get_matrix=True
+        # )
+        #
+        # Ax = xbspl.T
+        # yx = slit_data.flatten()
+        ok = np.isfinite((slit_data + slit.wavelength).flatten())  # & (yx > 0)
+        ok &= (slit_dq.flatten() & (1 + 1024 + 4096)) == 0
+
+        wavef = slit.wavelength.flatten()
+
+        med = binned_statistic(
+            wavef[ok],
+            slit_data.flatten()[ok],
+            statistic="median",
+            bins=wave_bin,
+        )
+
+        dev = slit_data.flatten() - np.interp(
+            wavef, wave_grid, med.statistic, left=np.nan, right=np.nan
+        )
+
+        mad = binned_statistic(
+            wavef[ok], np.abs(dev)[ok], statistic=np.nanmedian, bins=wave_bin
+        )
+
+        # ount = binned_statistic(fs['wave'][fs['ok']], np.abs(dev)[fs['ok']]**0, statistic=np.nansum, bins=wave_bin)
+
+        nmad = 1.48 * mad.statistic  # / np.sqrt(count.statistic)
+        nmad_i = np.interp(wavef, wave_grid, nmad, left=np.nan, right=np.nan)
+
+        valid = ok & np.isfinite(nmad_i) & (np.abs(dev) < nmad_i * 3)
+
+        # coeffs = np.linalg.lstsq(Ax.T[ok & valid,:], yx[ok & valid], rcond=None)
+        # full_sky = xbspl.dot(coeffs[0])
+        # resid = (slit_data.flatten() - full_sky)
+        # rnorm = resid / slit_err.flatten()
+        #
+        # sky_model = bspl.dot(coeffs[0])
+        #
+        # fig, ax = plt.subplots(1,1,figsize=(8,5), sharex=True, sharey=True)
+        # axes = [ax]
+        #
+        # for ax in axes:
+        #     ax.scatter(
+        #         wavef[ok & valid],
+        #         slit_data.flatten()[ok & valid],
+        #         alpha=0.04,
+        #         color='r'
+        #     )
+        #     ax.plot(wave_grid, sky_model, color='k')
+        #     # ax.plot(wave_grid, nmad, color='orange')
+        #     # ax.scatter(wavef[ok & valid], dev[ok & valid], color='k', alpha=0.1)
+        #     ax.grid()
+        #
+        # # ax.set_ylim(-0.02, 0.3); ax.set_xlim(0.5, 2)
+        # axes[0].set_title(slit.name)
+
+        slit_ptab = utils.GTable()
+        slit_ptab.meta["rate_file"] = rate_file
+        slit_ptab.meta["ny"], slit_ptab.meta["nx"] = slit_data.shape
+        slit_ptab.meta["fsname"] = slit.name
+        slit_ptab.meta["datamed"] = rate_median
+        for k in ["xstart", "xsize", "ystart", "ysize"]:
+            slit_ptab.meta[k] = getattr(slit, k)
+
+        for k in meta:
+            slit_ptab.meta[k] = meta[k]
+
+        slit_ptab["wave"] = slit.wavelength.flatten()
+        slit_ptab["data"] = slit_data.flatten()
+        slit_ptab["err"] = slit_err.flatten()
+        slit_ptab["dq"] = slit_dq.flatten()
+        slit_ptab["ok"] = ok
+        slit_ptab["valid"] = valid
+
+        fs[slit.name] = slit_ptab
+
+    return fs
+
+
 def pixel_table_background(
     ptab,
     bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     sky_center=(0, 0),
     sky_annulus=(0.5, 1.0),
     make_plot=True,
+    skip_pixel_table_background=False,
     **kwargs,
 ):
     """
     Extract background spectrum from pixel table cube data
     """
+    if skip_pixel_table_background:
+        return False
+
     meta = meta_lowercase(ptab.meta)
 
     grating = meta["grating"].upper()
 
-    wave_grid = msautils.get_standard_wavelength_grid(grating, sample=1.05)
+    wave_grid = msautils.get_standard_wavelength_grid(
+        grating,
+        sample=1.05,
+    )
 
     if grating == "PRISM":
         nspl = 71
@@ -551,12 +851,11 @@ def pixel_table_background(
     poisson_threshold = np.nanpercentile(ptab["var_poisson"][valid_dq], 97)
     rnoise_threshold = np.nanpercentile(ptab["var_rnoise"][valid_dq], 97)
 
-    # print(f"xxx {poisson_threshold} {rnoise_threshold}")
     valid_dq &= ptab["var_poisson"] < 100
     valid_dq &= ptab["var_rnoise"] < 100
 
     valid_dq &= np.isfinite(ptab["lam"])
-    valid_dq &= ptab["lam"] > 0.65
+    # valid_dq &= ptab["lam"] > 0.65
 
     # ptab["valid"] = valid_dq & True
 
@@ -604,7 +903,7 @@ def pixel_table_background(
             ptab["var_total"][test][ok]
         )
         msg = f"iter {_iter} {ok.sum()}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     ix_bad = np.where(test)[0][~ok]
     # ptab['valid'][ix_bad] = False
@@ -660,7 +959,7 @@ def pixel_table_background(
     scale_rnoise = res.x[0]
 
     msg = f"  uncertainty nmad={utils.nmad(resid):.3f} std={np.std(resid):.3f}  scale_rnoise={np.sqrt(scale_rnoise):.3f}"
-    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     ptab.meta["rnoise_nmad"] = utils.nmad(resid)
     ptab.meta["rnoise_std"] = np.std(resid)
@@ -695,6 +994,8 @@ def pixel_table_background(
 
     # ptab["valid"] &= ptab["lam"] > np.nanpercentile(ptab["lam"], 2)
     # ptab["valid"] &= ptab["lam"] < np.nanpercentile(ptab["lam"], 98)
+
+    return True
 
 
 def slice_corners(
@@ -783,7 +1084,7 @@ def slice_corners(
     return x_slice, y_slice, yslit_data, coord1_data, coord2_data, lam_data
 
 
-def query_ifu_exposures(
+def query_obsid_exposures(
     obsid="04056002001",
     grating="G395H",
     filter=None,
@@ -791,6 +1092,7 @@ def query_ifu_exposures(
     exposure_type="cal",
     extend_wavelengths=True,
     detectors=None,
+    fixed_slit=False,
     **kwargs,
 ):
     """
@@ -807,15 +1109,17 @@ def query_ifu_exposures(
         values=["1", "1a", "1b", "2", "2a", "2b"],
     )
 
-    query += mastquery.jwst.make_query_filter("grating", values=[grating])
+    if grating is not None:
+        query += mastquery.jwst.make_query_filter("grating", values=[grating])
     if filter is not None:
         query += mastquery.jwst.make_query_filter("filter", values=[filter])
 
     query += mastquery.jwst.make_query_filter("obs_id", text=f"V{obsid}%")
 
-    query += mastquery.jwst.make_query_filter("is_imprt", values=["f"])
+    if not fixed_slit:
+        query += mastquery.jwst.make_query_filter("is_imprt", values=["f"])
 
-    if detectors is None:
+    if (detectors is None) & (grating is not None):
         if grating.upper() in ["G395M", "PRISM"]:
             detectors = ["nrs1"]
         elif (
@@ -827,10 +1131,11 @@ def query_ifu_exposures(
         else:
             detectors = ["nrs1"]
 
-    query += mastquery.jwst.make_query_filter("detector", values=detectors)
+    if detectors is not None:
+        query += mastquery.jwst.make_query_filter("detector", values=detectors)
 
     msg = f"QUERY = {query}"
-    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     res = mastquery.jwst.query_jwst(
         instrument="NRS",
@@ -862,7 +1167,7 @@ def query_ifu_exposures(
     res = res[unique_indices]
 
     msg = f"Found {len(res)} exposures"
-    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     if download:
         mast = mastquery.utils.download_from_mast(res, **kwargs)
@@ -875,10 +1180,11 @@ def query_ifu_exposures(
 def drizzle_cube_data(
     ptab,
     wave_sample=1.05,
+    wrange=None,
     pixel_size=0.1,
     pixfrac=0.75,
-    side=2.2,
-    center=(0., 0.),
+    side="auto",
+    center=(0.0, 0.0),
     column=None,
     bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     **kwargs,
@@ -888,19 +1194,36 @@ def drizzle_cube_data(
     """
     from tqdm import tqdm
 
-    Nside = int(np.ceil(side / pixel_size))
-    xbin = np.arange(-Nside, Nside + 1) * pixel_size - pixel_size / 2
-    ybin = xbin * 1
+    if side in ["auto"]:
+        sx = (int(np.nanmax(np.abs(ptab["dx"])) / pixel_size) + 4) * pixel_size
+        sy = (int(np.nanmax(np.abs(ptab["dy"])) / pixel_size) + 4) * pixel_size
+        side = [sx, sy]
 
+    if not hasattr(side, "__len__"):
+        sides = [side, side]
+    else:
+        sides = side
+
+    Nside = [int(np.ceil(s / pixel_size)) for s in sides]
+    xbin = np.arange(-Nside[0], Nside[0] + 1) * pixel_size  # - pixel_size / 2
+    ybin = np.arange(-Nside[1], Nside[1] + 1) * pixel_size  # - pixel_size / 2
 
     wave_grid = msautils.get_standard_wavelength_grid(
         ptab.meta["grating"], sample=wave_sample
     )
+    if wrange is not None:
+        wsub = (wave_grid >= wrange[0]) & (wave_grid <= wrange[1])
+        wave_grid = wave_grid[wsub]
 
     wbin = msautils.array_to_bin_edges(wave_grid)
 
     nx = len(xbin) - 1
     ny = len(ybin) - 1
+
+    msg = f"drizzle_cube_data: (NW, NY, NX) = ({len(wbin)-1}, {ny}, {nx})"
+    msg += f"\ndrizzle_cube_data: {wave_grid[0]:.2f} - {wave_grid[-1]:.2f} um, wave_sample: {wave_sample:.2f}"
+    msg += f"\ndrizzle_cube_data: {pixel_size:.2f} arcsec/pix ({sides[1]:.2f}, {sides[0]:.2f}) arcsec"
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     num = np.zeros((len(wave_grid), ny, nx))
     den = np.zeros((len(wave_grid), ny, nx))
@@ -956,10 +1279,11 @@ def make_drizzle_hdul(
     den,
     vnum,
     wave_sample=1.05,
+    wrange=None,
     pixel_size=0.1,
     pixfrac=0.75,
-    center=(0., 0.),
-    side=2.2,
+    center=(0.0, 0.0),
+    side="auto",
     **kwargs,
 ):
     """
@@ -973,13 +1297,26 @@ def make_drizzle_hdul(
 
     """
 
-    Nside = int(np.ceil(side / pixel_size))
-    xbin = np.arange(-Nside, Nside + 1) * pixel_size - pixel_size / 2
-    ybin = xbin * 1
+    if side in ["auto"]:
+        sx = (int(np.nanmax(np.abs(ptab["dx"])) / pixel_size) + 4) * pixel_size
+        sy = (int(np.nanmax(np.abs(ptab["dy"])) / pixel_size) + 4) * pixel_size
+        side = [sx, sy]
+
+    if not hasattr(side, "__len__"):
+        sides = [side, side]
+    else:
+        sides = side
+
+    Nside = [int(np.ceil(s / pixel_size)) for s in sides]
+    xbin = np.arange(-Nside[0], Nside[0] + 1) * pixel_size  # - pixel_size / 2
+    ybin = np.arange(-Nside[1], Nside[1] + 1) * pixel_size  # - pixel_size / 2
 
     wave_grid = msautils.get_standard_wavelength_grid(
         ptab.meta["grating"], sample=wave_sample
     )
+    if wrange is not None:
+        wsub = (wave_grid >= wrange[0]) & (wave_grid <= wrange[1])
+        wave_grid = wave_grid[wsub]
 
     wbin = msautils.array_to_bin_edges(wave_grid)
 
@@ -990,7 +1327,7 @@ def make_drizzle_hdul(
     hdul = utils.make_wcsheader(
         meta["ra_ref"],
         meta["dec_ref"],
-        size=2 * Nside * pixel_size,
+        size=[2 * s * pixel_size for s in Nside],
         pixscale=pixel_size,
         get_hdu=True,
         theta=pa_aper,
@@ -1049,6 +1386,7 @@ def ifu_pipeline(
     files=None,
     make_drizzled=True,
     perform_saturation=False,
+    cumulative_saturation=True,
     low_threshold=-4,
     **kwargs,
 ):
@@ -1091,7 +1429,9 @@ def ifu_pipeline(
 
     """
     if files is None:
-        res, mast = query_ifu_exposures(obsid=obsid, grating=grating, **kwargs)
+        res, mast = query_obsid_exposures(
+            obsid=obsid, grating=grating, **kwargs
+        )
         if res is None:
             return None
 
@@ -1104,7 +1444,7 @@ def ifu_pipeline(
 
     msg = f"ifu_pipeline: file={files[0]}  {obsid} {grating}"
     utils.LOGFILE = f"cube-{obsid}-{grating}.log.txt".lower()
-    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     # Initialize
     cubes = []
@@ -1125,6 +1465,9 @@ def ifu_pipeline(
 
             cube.process_pixel_table(**kwargs)
             plt.close("all")
+        else:
+            if use_first_center & ("ref_coord" not in kwargs):
+                kwargs["ref_coord"] = (cubes[0].target_ra, cubes[0].target_dec)
 
     #### TBD: saturated mask when running on cal files
 
@@ -1154,8 +1497,16 @@ def ifu_pipeline(
             sat_mask = this_sat
 
         ptab_sat = sat_mask[cube.ptab["ypix"], cube.ptab["xpix"]]
+
+        # print("xxx", files[i], ptab_sat.sum())
+
         cube.ptab["dq"] |= (ptab_sat * 4096).astype(cube.ptab["dq"].dtype)
-        sat_det[det] = this_sat
+        if cumulative_saturation:
+            # Full cumulative mask
+            sat_det[det] = sat_mask
+        else:
+            # Previous exposure
+            sat_det[det] = this_sat
 
     ptabs = [cube.ptab for cube in cubes]
 
@@ -1183,7 +1534,15 @@ def ifu_pipeline(
 
     # Full ptab cube
     ptab = astropy.table.vstack(ptabs)
-    ptab.meta['srcname'] = SOURCE
+    ptab.meta["srcname"] = SOURCE
+    ptab.meta["obsid"] = obsid
+    if "proposer_ra" in ptabs[0].meta:
+        ptab.meta["ra_ref"] = ptabs[0].meta["proposer_ra"]
+        ptab.meta["dec_ref"] = ptabs[0].meta["proposer_dec"]
+
+    ptab.meta["nfiles"] = len(files)
+    for i, file_ in enumerate(files):
+        ptab.meta[f"file{i:04d}"] = file_
 
     if "valid" not in ptab.colnames:
         ptab["valid"] = True
@@ -1192,8 +1551,9 @@ def ifu_pipeline(
         msg = 'Update "valid" with bad_pixel_flag = {bad_pixel_flag}'.format(
             **kwargs
         )
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
+        ptab.meta["bad_pixel_flag"] = kwargs["bad_pixel_flag"]
         ptab["valid"] = (ptab["dq"] & kwargs["bad_pixel_flag"]) == 0
 
     if low_threshold is not None:
@@ -1201,7 +1561,7 @@ def ifu_pipeline(
         msg = (
             f"Pixels below {low_threshold} x sqrt(var_total): {bad_low.sum()}"
         )
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
         ptab["valid"] &= ~bad_low
 
     if make_drizzled:
@@ -1210,21 +1570,47 @@ def ifu_pipeline(
 
         for ext in range(3):
             hdul[ext].header["SRCNAME"] = SOURCE
+            hdul[ext].header["NFILES"] = len(files)
             for i, file_ in enumerate(files):
                 hdul[ext].header[f"FILE{i:04d}"] = file_
 
-        for i, file_ in enumerate(files):
-            ptab.meta[f"file{i:04d}"] = file_
-
         cube_file = f"{outroot}.fits"
         msg = f"cube_file: {cube_file}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         hdul.writeto(cube_file, overwrite=True)
     else:
         hdul = None
 
     return outroot, cubes, ptab, hdul
+
+
+def rerun_drizzle(ptab, **kwargs):
+    """
+    Rerun drizzle cube steps
+    """
+    num, den, vnum = drizzle_cube_data(ptab, **kwargs)
+    hdul = make_drizzle_hdul(ptab, num, den, vnum, **kwargs)
+
+    outroot = "cube-{obsid}_{grating}-{filter}_{srcname}".format(
+        **ptab.meta
+    ).lower()
+
+    for ext in range(3):
+        hdul[ext].header["SRCNAME"] = ptab.meta["srcname"]
+        for i in range(100):
+            k = f"FILE{i:04d}"
+            if k.lower() in ptab.meta:
+                hdul[ext].header[k] = ptab.meta[k.lower()]
+            else:
+                break
+
+    cube_file = f"{outroot}.fits"
+    msg = f"cube_file: {cube_file}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    hdul.writeto(cube_file, overwrite=True)
+    return cube_file, hdul
 
 
 def pixel_table_to_fits(
@@ -1308,3 +1694,53 @@ def pixel_table_to_detector(
         return hdu
     else:
         return detector_array
+
+
+def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
+    """
+    Run full pipeline for DJA
+    """
+    from .pipeline_extended import EXTENDED_RANGES
+    import yaml
+
+    wrange = [w * 1.0e-6 for w in EXTENDED_RANGES[gfilt]]
+
+    filter, grating = gfilt.split("_")
+
+    params = dict(
+        outroot=None,
+        pixel_size=0.08,
+        pixfrac=0.75,
+        side="auto",
+        wave_sample=1.05,
+        files=None,
+        obsid=obsid,
+        filter=filter,
+        grating=grating,
+        download=True,
+        use_token=False,
+        sky_annulus=None,
+        exposure_type="rate",
+        do_flatfield=False,
+        do_photom=False,
+        extend_wavelengths=True,
+        use_first_center=True,
+        slice_wavelength_range=wrange,  # [0.5e-6, 5.6e-6],
+        make_drizzled=True,
+        bad_pixel_flag=(
+            msautils.BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
+        ),
+        perform_saturation=True,
+        cumulative_saturation=True,
+    )
+
+    for k in kwargs:
+        params[k] = kwargs[k]
+
+    yaml_file = f"cube-{obsid}-{grating}.params.yaml".lower()
+    with open(yaml_file, "w") as fp:
+        yaml.dump(params, fp)
+
+    outroot, cubes, ptab, hdul = ifu_pipeline(**params)
+
+    return outroot, cubes, ptab, hdul
