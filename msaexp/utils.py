@@ -53,6 +53,7 @@ def _set_bad_pixel_flag():
 
 _set_bad_pixel_flag()
 
+VERBOSITY = True
 
 def rename_source(source_name):
     """
@@ -121,7 +122,7 @@ def update_slit_metadata(slit):
 
 
 def update_slit_dq_mask(
-    slit, mask_padded=False, bar_threshold=-1, verbose=True
+    slit, mask_padded=False, bar_threshold=-1, **kwargs
 ):
     """
     Update slit dq array and masking for padded slits and barshadow
@@ -158,7 +159,7 @@ def update_slit_dq_mask(
         msg = "msaexp.utils.update_slit_dq_mask: Mask padded area of"
         msg += " slitlet: {mask_padded*1:.1f}"
         grizli.utils.log_comment(
-            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+            grizli.utils.LOGFILE, msg, verbose=VERBOSITY, show_date=False
         )
 
         _wcs = _slit.meta.wcs
@@ -173,14 +174,14 @@ def update_slit_dq_mask(
 
     if hasattr(_slit, "barshadow") & (bar_threshold > 0):
         grizli.utils.log_comment(
-            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+            grizli.utils.LOGFILE, msg, verbose=VERBOSITY, show_date=False
         )
         msk = _slit.barshadow < bar_threshold
 
         msg = "msaexp.utils.update_slit_dq_mask: mask barshadow < "
         msg += "{bar_threshold:.2f}, N={msk.sum()} pix"
         grizli.utils.log_comment(
-            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+            grizli.utils.LOGFILE, msg, verbose=VERBOSITY, show_date=False
         )
 
         _slit.data[msk] = np.nan
@@ -195,7 +196,7 @@ def update_slit_dq_mask(
         msg += f" scale by {1./_slit.meta.photometry.pixelarea_steradians:.2e}"
 
         grizli.utils.log_comment(
-            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+            grizli.utils.LOGFILE, msg, verbose=VERBOSITY, show_date=False
         )
 
         _slit.data /= _slit.meta.photometry.pixelarea_steradians
@@ -624,7 +625,6 @@ def build_regular_wavelength_wcs(
     wave_scale=1,
     log_wave=False,
     refmodel=None,
-    verbose=True,
     wave_range=None,
     wave_step=None,
     wave_array=None,
@@ -799,8 +799,11 @@ def build_regular_wavelength_wcs(
             lmax = np.nanmax(target_waves)
             dlam = np.nanmedian(np.diff(target_waves))
 
-    if verbose:
-        print("build_regular_wavelength_wcs: " + msg)
+        grizli.utils.log_comment(
+            grizli.utils.LOGFILE,
+            "build_regular_wavelength_wcs: " + msg,
+            verbose=VERBOSITY
+        )
 
     n_lam = target_waves.size
     if not n_lam:
@@ -845,9 +848,6 @@ def build_regular_wavelength_wcs(
     ny = int(np.ceil(det_slit_span * pscale_ratio + 0.5)) + 1
 
     if ypad > 0:
-        if verbose:
-            print(f"Pad {ypad} pixels on 2D cutout")
-
         ny += 2 * ypad
 
     if center_on_source:
@@ -1024,7 +1024,6 @@ def build_slit_centered_wcs(
             force_nypix=force_nypix,
             ypad=ypad,
             pscale_ratio=pscale_ratio,
-            verbose=False,
             fix_slope=fix_slope,
         )
 
@@ -1053,7 +1052,6 @@ def build_slit_centered_wcs(
         force_nypix=force_nypix,
         force_yoffset=yoff,
         ypad=0,
-        verbose=False,
         fix_slope=fix_slope,
     )
 
@@ -1372,7 +1370,6 @@ def combine_2d_with_rejection(
     fit_prf=True,
     fix_center=False,
     fix_sigma=False,
-    verbose=True,
     profile_slice=None,
     sigma_bounds=(0.5, 2.0),
     background=None,
@@ -1539,8 +1536,8 @@ def combine_2d_with_rejection(
     if prf_center is None:
         msk = ok & (np.abs(x0) < center_limit)
         prf_center = np.nanargmax(prof1d * msk) - sh[0] / 2.0
-        if verbose:
-            print(f"Set prf_center: {prf_center} {sh} {ok.sum()}")
+        msg = f"Set prf_center: {prf_center} {sh} {ok.sum()}"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     ok &= np.abs(x0 - prf_center) < center_limit
 
@@ -1559,10 +1556,9 @@ def combine_2d_with_rejection(
 
         pfit = fitter(prf, x0[ok] * 0.0, x0[ok], prof1d[ok])
 
-        if verbose:
-            msg = f"fit_prf: center = {pfit.y_0.value:.2f}"
-            msg += f". sigma = {pfit.sigma.value:.2f}"
-            print(msg)
+        msg = f"fit_prf: center = {pfit.y_0.value:.2f}"
+        msg += f". sigma = {pfit.sigma.value:.2f}"
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     else:
         pfit = prf
@@ -2683,7 +2679,7 @@ def get_prism_wave_bar_correction(
 
     if wrap in ["auto"]:
         is_wrapped = np.nanmin(scaled_yshutter) < bar_data["minmax"][0] - 0.5
-        is_wrapped |= np.nanmin(scaled_yshutter) > bar_data["minmax"][1] + 0.5
+        is_wrapped |= np.nanmax(scaled_yshutter) > bar_data["minmax"][1] + 0.5
     elif wrap in [True]:
         is_wrapped = True
     else:
@@ -2885,7 +2881,7 @@ SFLAT_DATA = {}
 SFLAT_STRAIGHTEN = 0
 
 
-def load_sflat_data(flat_file, verbose=True):
+def load_sflat_data(flat_file, **kwargs):
     """
     Load MSAEXP MSA quadrant/detector S-flat reference data
 
@@ -2938,7 +2934,7 @@ def load_sflat_data(flat_file, verbose=True):
         shutter_sflat = (shutter_sflat.T / cfit).T
 
         msg = f"{__name__}: straighten sflat {flat_file} {SFLAT_STRAIGHTEN}"
-        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     if "SM_WAVE" not in ftab.meta:
         ftab.meta["SM_WAVE"] = 3.1
@@ -2950,7 +2946,7 @@ def load_sflat_data(flat_file, verbose=True):
     ysm = ysm * ftab.meta["SM_SCALE"] + (1 - ftab.meta["SM_SCALE"])
     shutter_sflat = ((shutter_sflat.T - 1) * ysm + 1).T
     msg = f"   {__name__}.load_sflat_data: smooth middle of sflat {ftab.meta['SM_SCALE']}"
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     ftab["shutter_sflat"] = shutter_sflat
 
@@ -2985,7 +2981,7 @@ def msa_slit_sflat(
     slit_wave=None,
     apply=True,
     force=False,
-    verbose=True,
+    **kwargs
 ):
     """
     Field dependent S-Flat for MSA slitlets derived from empty sky spectra
@@ -3020,16 +3016,12 @@ def msa_slit_sflat(
     else:
         if qxy is None:
             msg = "msa_slit_sflat: either slit or qxy must be provided"
-            grizli.utils.log_comment(
-                grizli.utils.LOGFILE, msg, verbose=verbose
-            )
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
             return None
 
         if slit_wave is None:
             msg = "msa_slit_sflat: slit_wave must be provided along with qxy"
-            grizli.utils.log_comment(
-                grizli.utils.LOGFILE, msg, verbose=verbose
-            )
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
             return None
 
         apply = False
@@ -3046,19 +3038,19 @@ def msa_slit_sflat(
 
     if not os.path.exists(flat_file):
         msg = f"   msa_slit_sflat: {flat_file} not found"
-        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
         return None
 
     shutter_label = f"q:{quadrant} x:{xcen} y:{ycen}"
     msg = f"   msa_slit_sflat: compute s-flat for {shutter_label} with "
     msg += f"{os.path.basename(flat_file)}"
 
-    ftab = load_sflat_data(flat_file, verbose=verbose)
+    ftab = load_sflat_data(flat_file, verbose=VERBOSITY)
 
     if "MTIME" in ftab.meta:
         msg += f" (mtime: {ftab.meta['MTIME']})"
 
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     flat_ = ftab["shutter_sflat"][:, ycen, xcen] * 1.0
 
@@ -3101,9 +3093,7 @@ def msa_slit_sflat(
             slit.var_poisson /= sflat_data**2
         else:
             msg = f"msa_slit_sflat: existing sflat_data attribute found"
-            grizli.utils.log_comment(
-                grizli.utils.LOGFILE, msg, verbose=verbose
-            )
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     return sflat_data
 
@@ -3113,7 +3103,6 @@ def fixed_slit_flat_field(
     slit_data=None,
     low_threshold=0.2,
     apply=True,
-    verbose=True,
     force=False,
     erosion=2,
     **kwargs,
@@ -3155,11 +3144,11 @@ def fixed_slit_flat_field(
 
     if not os.path.exists(profile_file):
         msg = f"fixed_slit_flat_field: {profile_file} not found"
-        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
         return None
 
     msg = f"fixed_slit_flat_field: {os.path.basename(profile_file)}  (apply={apply})"
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     with open(profile_file) as fp:
         fs_data = yaml.load(fp, Loader=yaml.Loader)
@@ -3215,9 +3204,7 @@ def fixed_slit_flat_field(
             slit.var_poisson /= flat_profile**2
         else:
             msg = f"fixed_slit_flat_field: existing flat_profile found"
-            grizli.utils.log_comment(
-                grizli.utils.LOGFILE, msg, verbose=verbose
-            )
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     return flat_profile
 
@@ -3270,7 +3257,6 @@ def slit_extended_flux_calibration(
         "G395M",
         "G395H",
     ],
-    verbose=True,
     **kwargs,
 ):
     """
@@ -3305,9 +3291,6 @@ def slit_extended_flux_calibration(
 
     nrs2_scale_gratings : list
         List of gratings where the NRS2 / NRS1 correction will be applied if necessary
-
-    verbose : bool
-        Verbose messaging
 
     threshold : float
         Threshold relative to the maximum of a particular grating sensitivivity curve
@@ -3351,7 +3334,7 @@ def slit_extended_flux_calibration(
 
     if file_path is None:
         msg = f"slit_extended_flux_calibration: {sens_file} not found"
-        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
         return 1
 
     sens = grizli.utils.read_catalog(os.path.join(file_path, sens_file))
@@ -3362,7 +3345,7 @@ def slit_extended_flux_calibration(
     if "MTIME" in sens.meta:
         msg += f" (mtime: {sens.meta['MTIME']})"
 
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     needs_det_correction = slit.meta.instrument.detector.upper() == "NRS2"
     needs_det_correction &= (
@@ -3373,7 +3356,7 @@ def slit_extended_flux_calibration(
 
     if needs_det_correction:
         msg = f"   slit_extended_flux_calibration: scale NRS2 to NRS1"
-        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
         det_correction = sens["nrs1_nrs2"]
         slit.detector_correction_type = "nrs1_nrs2"
@@ -3432,7 +3415,7 @@ def slit_extended_flux_calibration(
                 msg += "  FAILED...."
 
             grizli.utils.log_comment(
-                grizli.utils.LOGFILE, msg, verbose=verbose
+                grizli.utils.LOGFILE, msg, verbose=VERBOSITY
             )
 
     phot_corr *= slit.sensitivity_correction
@@ -3445,7 +3428,7 @@ def slit_extended_flux_calibration(
         if (qc in sens.colnames) & (slit.quadrant < 4):
             msg = f"   slit_extended_flux_calibration: {qc.upper()} quadrant correction"
             grizli.utils.log_comment(
-                grizli.utils.LOGFILE, msg, verbose=verbose
+                grizli.utils.LOGFILE, msg, verbose=VERBOSITY
             )
             slit.quadrant_correction = 1.0 / np.interp(
                 _wave,
@@ -3520,7 +3503,7 @@ def cache_badpix_arrays():
     return MSAEXP_BADPIX
 
 
-def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
+def extra_slit_dq_flags(slit, dq_arr=None, **kwargs):
     """
     Set extra DQ flags, including a big stuck open shutter on NRS1.
 
@@ -3576,7 +3559,7 @@ def extra_slit_dq_flags(slit, dq_arr=None, verbose=True):
     dq = dq_arr[sly, slx]  # .reshape(dq_data["shape"])[sly, slx]
 
     msg = f" extra_slit_dq_flags: ({os.path.basename(path_to_ref)})  N={(dq > 0).sum()}"
-    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=verbose)
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     return dq, flags
 
@@ -3632,9 +3615,6 @@ def slit_hot_pixels(
     if "jwst_dq_flags" not in kwargs:
         kwargs["jwst_dq_flags"] = dq_flags
 
-    if "verbose" not in kwargs:
-        kwargs["verbose"] = False
-
     sn, dq, count = flag_nirspec_hot_pixels(hdulist, **kwargs)
     if count < max_allowed_flagged:
         slit.dq |= dq.astype(slit.dq.dtype)
@@ -3645,7 +3625,7 @@ def slit_hot_pixels(
     return dq, count, status
 
 
-def slit_normalization_correction(slit, verbose=True):
+def slit_normalization_correction(slit, **kwargs):
     """
     Run `~msaexp.utils.get_normalization_correction` for a ``SlitModel`` object
 
@@ -3666,14 +3646,11 @@ def slit_normalization_correction(slit, verbose=True):
         slit.xcen,
         slit.ycen,
         grating=slit.meta.instrument.grating,
-        verbose=verbose,
     )
     return corr
 
 
-def get_normalization_correction(
-    wavelengths, quadrant, xcen, ycen, grating="PRISM", verbose=True
-):
+def get_normalization_correction(wavelengths, quadrant, xcen, ycen, grating="PRISM", **kwargs):
     """
     Normalization correction derived from empty sky slits, analagous to a correction
     to the SFLAT calibration
@@ -3736,11 +3713,7 @@ def get_normalization_correction(
     if quadrant not in [1, 2, 3, 4]:
         msg = "msaexp.utils.get_normalization_correction: "
         msg += f"quadrant={quadrant} must be one of [1,2,3,4]"
-        grizli.utils.log_comment(
-            grizli.utils.LOGFILE,
-            msg,
-            verbose=verbose,
-        )
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
         return np.ones_like(wavelengths)
 
     path_to_ref = os.path.join(
@@ -3751,20 +3724,12 @@ def get_normalization_correction(
 
     if not os.path.exists(path_to_ref):
         msg = f"msaexp.utils.get_normalization_correction: {path_to_ref} not found"
-        grizli.utils.log_comment(
-            grizli.utils.LOGFILE,
-            msg,
-            verbose=verbose,
-        )
+        grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
         return np.ones_like(wavelengths)
 
     msg = f" get_normalization_correction: {os.path.basename(path_to_ref)}"
     msg += f" quadrant={quadrant} xcen={xcen} ycen={ycen}"
-    grizli.utils.log_comment(
-        grizli.utils.LOGFILE,
-        msg,
-        verbose=verbose,
-    )
+    grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
 
     with open(path_to_ref) as fp:
         norm_data = yaml.load(fp, Loader=yaml.Loader)
@@ -3884,7 +3849,7 @@ def objfun_prf(
     bkg_parity,
     fit_type,
     ret,
-    verbose,
+    verbose
 ):
     """
     Objective function for fitting the 2D profile
@@ -3921,9 +3886,6 @@ def objfun_prf(
     ret : int
         Control fit outputs for either fitting or returning the
         model given ``params``
-
-    verbose : bool
-        Print verbose output.
 
     Returns
     -------
@@ -3985,7 +3947,7 @@ def objfun_prf(
     chi = (sci2d - model) * np.sqrt(wht2d)
 
     chi2 = (chi[ok] ** 2).sum()
-    if verbose:
+    if (verbose & 2):
         print(params, chi2)
 
     if ret == 1:
@@ -4357,7 +4319,6 @@ def exposure_ramp_saturation(
     saturation_level=2**16 - 2048,
     cleanup=True,
     force=False,
-    verbose=True,
     perform=True,
     **kwargs,
 ):
@@ -4394,7 +4355,7 @@ def exposure_ramp_saturation(
 
         msg = f"exposure_ramp_saturation: found {output_file} N={is_saturated.sum()}"
         grizli.utils.log_comment(
-            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+            grizli.utils.LOGFILE, msg, verbose=VERBOSITY, show_date=False
         )
 
         return output_file, is_saturated
@@ -4430,21 +4391,25 @@ def exposure_ramp_saturation(
     with pyfits.open(uncal_file) as im:
         header = im[0].header
 
+    if not output_file.endswith(".gz"):
+        output_file += ".gz"
+
     pyfits.writeto(
         output_file, header=header, data=is_saturated * 1, overwrite=True
     )
 
     msg = f"exposure_ramp_saturation: {output_file} N={is_saturated.sum()}"
     grizli.utils.log_comment(
-        grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+        grizli.utils.LOGFILE, msg, verbose=VERBOSITY, show_date=False
     )
 
     if cleanup:
         msg = f"exposure_ramp_saturation: cleanup remove {uncal_file}"
         grizli.utils.log_comment(
-            grizli.utils.LOGFILE, msg, verbose=verbose, show_date=False
+            grizli.utils.LOGFILE, msg, verbose=VERBOSITY, show_date=False
         )
 
         os.remove(uncal_file)
 
     return output_file, is_saturated
+
