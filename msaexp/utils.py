@@ -4413,3 +4413,50 @@ def exposure_ramp_saturation(
 
     return output_file, is_saturated
 
+
+def resize_subarray_to_full(file, overwrite=True):
+    """
+    Resize a subarray exposure to the FULL 2048 x 2048 dimensions
+
+    """
+    mode = "update" if overwrite else "readonly"
+    with pyfits.open(file, mode=mode) as hdul:
+        h0 = hdul[0].header
+        subname = h0['SUBARRAY']
+        
+        if subname != 'FULL':
+            slx = slice(
+                h0["SUBSTRT1"] - 1,
+                h0["SUBSTRT1"] - 1 + h0["SUBSIZE1"]
+            )
+            sly = slice(
+                h0["SUBSTRT2"] - 1,
+                h0["SUBSTRT2"] - 1 + h0["SUBSIZE2"]
+            )
+            msg = f"{file} {subname} [{sly.start}:{sly.stop}, {slx.start}:{slx.stop}] > FULL"
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
+
+            hdul[0].header["OSUBNAME"] = subname
+            hdul[0].header["SUBSTRT1"] = 1
+            hdul[0].header["SUBSTRT2"] = 1
+            hdul[0].header["SUBSIZE1"] = 2048
+            hdul[0].header["SUBSIZE2"] = 2048
+
+            for e in hdul:
+                if hdul[e].data is None:
+                    continue
+                if hdul[e].header['EXTNAME'] == 'ASDF':
+                    continue
+
+                full = np.zeros((2048, 2048), dtype=hdul[e].data.dtype)
+                full[sly, slx] = hdul[e].data
+                hdul[e].data = full
+                hdul[e].header["NAXIS1"] = 2048
+                hdul[e].header["NAXIS2"] = 2048
+
+            hdul[0].header['SUBARRAY'] = 'FULL'
+
+        if overwrite:
+            hdul.flush()
+
+    return hdul
