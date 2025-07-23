@@ -192,12 +192,14 @@ class NirspecCalibrated:
         read_slitlet=False,
         write_results=True,
         pixel_area_ref=4.88e-13,
+        just_fixed_slit=False,
         **kwargs,
     ):
 
         self.file = file
 
         self.pixel_area_ref = pixel_area_ref
+        self.just_fixed_slit = just_fixed_slit
 
         with pyfits.open(file) as hdu:
             self.rate_data = hdu["SCI"].data
@@ -210,7 +212,12 @@ class NirspecCalibrated:
         else:
             self.run_pipeline(**kwargs)
             self.fs_extractor = MultiSlitGroup(self.fs_photom_file)
-            self.extractor = MultiSlitGroup(self.photom_file)
+
+            if just_fixed_slit:
+                self.extractor = self.fs_extractor
+            else:
+                self.extractor = MultiSlitGroup(self.photom_file)
+
             self.slits_to_full_frame(**kwargs)
 
             if write_results:
@@ -283,30 +290,34 @@ class NirspecCalibrated:
     def run_pipeline(self, ranges=ranges, preprocess_kwargs={}, **kwargs):
         file = self.file
 
-        self.photom_file = file.replace("rate.fits", "photom.fits")
-
-        if os.path.exists(self.photom_file):
-            print("Read ", self.photom_file)
-            photom = jwst.datamodels.open(self.photom_file)
-            print(f"{len(photom.slits)} slits")
+        if self.just_fixed_slit:
+            self.photom_file = None
+            photom = None
         else:
-            photom = pipeline_extended.run_pipeline(
-                file,
-                slit_index=0,
-                all_slits=True,
-                write_output=False,
-                set_log=True,
-                skip_existing_log=False,
-                undo_flat=True,
-                preprocess_kwargs=preprocess_kwargs,
-                ranges=ranges,
-                make_trace_figures=False,
-                run_pathloss=False,
-                **kwargs,
-            )
+            self.photom_file = file.replace("rate.fits", "photom.fits")
 
-            print("write file")
-            photom.write(self.photom_file)
+            if os.path.exists(self.photom_file):
+                print("Read ", self.photom_file)
+                photom = jwst.datamodels.open(self.photom_file)
+                print(f"{len(photom.slits)} slits")
+            else:
+                photom = pipeline_extended.run_pipeline(
+                    file,
+                    slit_index=0,
+                    all_slits=True,
+                    write_output=False,
+                    set_log=True,
+                    skip_existing_log=False,
+                    undo_flat=True,
+                    preprocess_kwargs=preprocess_kwargs,
+                    ranges=ranges,
+                    make_trace_figures=False,
+                    run_pathloss=False,
+                    **kwargs,
+                )
+
+                print("write file")
+                photom.write(self.photom_file)
 
         self.fs_photom_file = file.replace("rate.fits", "fs_photom.fits")
 
@@ -369,7 +380,9 @@ class NirspecCalibrated:
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
             return None
 
-        for slit_obj in [self.photom, self.fs_photom]:
+        for i, slit_obj in enumerate([self.photom, self.fs_photom]):
+            if self.just_fixed_slit & (i == 0):
+                continue
             # flat_reference_files = load_used_flat_models(slit_obj)
             ref_files = slit_obj.meta.ref_file.instance
 
@@ -460,7 +473,9 @@ class NirspecCalibrated:
         self.slit_shutter = []
         self.pixel_areas = []
 
-        for slit_group in [self.fs_photom, self.photom]:
+        for i, slit_group in enumerate([self.fs_photom, self.photom]):
+            if self.just_fixed_slit & (i == 1):
+                continue
 
             flat_models = load_used_flat_models(slit_group)
 
