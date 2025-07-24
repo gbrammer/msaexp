@@ -84,8 +84,8 @@ class ExposureCube:
         do_photom=True,
         extend_wavelengths=True,
         local_sflat=True,
-        run_oneoverf=True,
-        prism_oneoverf_rows=True,
+        # run_oneoverf=True,
+        # prism_oneoverf_rows=True,
         **kwargs,
     ):
         """
@@ -109,51 +109,54 @@ class ExposureCube:
         from .pipeline_extended import assign_wcs_with_extended
         from . import utils as msautils
 
-        do_corr = run_oneoverf
-        with pyfits.open(self.file) as im:
-            if "ONEFEXP" in im[0].header:
-                if im[0].header["ONEFEXP"]:
-                    do_corr = False
-            grating = im[0].header["GRATING"]
-            filter = im[0].header["FILTER"]
-            detector = im[0].header["DETECTOR"]
-            rate_sci = im["SCI"].data * 1
-            rate_err = im["ERR"].data * 1
-            rate_dq = im["DQ"].data * 1
-
-        sflat, sflat_mask = load_ifu_sflat(
-            grating="prism",
-            filter="clear",
-            detector="nrs1",
-        )
-
-        if do_corr:
-            rate_empty = (
-                (~sflat_mask) & (np.isfinite(rate_sci)) & (rate_dq & 1 == 0)
-            )
-            rate_empty &= rate_sci > -10 * rate_err
-
-            jwst_utils.exposure_oneoverf_correction(
-                self.file,
-                erode_mask=False,
-                in_place=True,
-                axis=0,
-                force_oneoverf=True,
-                manual_mask=rate_empty,
-                deg_pix=2048,
-            )
-
-            if (grating == "PRISM") & (prism_oneoverf_rows):
-                jwst_utils.exposure_oneoverf_correction(
-                    self.file,
-                    erode_mask=False,
-                    in_place=True,
-                    axis=1,
-                    nirspec_prism_mask=False,
-                    manual_mask=rate_empty,
-                    force_oneoverf=True,
-                    deg_pix=2048,
-                )
+        det = detector_corrections(self.file, **kwargs)
+        # do_corr = run_oneoverf
+        #
+        # with pyfits.open(self.file) as im:
+        #     if "ONEFEXP" in im[0].header:
+        #         if (im[0].header["ONEFEXP"]) & (run_oneoverf < 2):
+        #             do_corr = False
+        #     grating = im[0].header["GRATING"]
+        #     filter = im[0].header["FILTER"]
+        #     detector = im[0].header["DETECTOR"]
+        #     rate_sci = im["SCI"].data * 1
+        #     rate_err = im["ERR"].data * 1
+        #     rate_dq = im["DQ"].data * 1
+        #
+        # sflat, sflat_mask = load_ifu_sflat(
+        #     grating=grating, #"prism",
+        #     filter=filter, #"clear",
+        #     # detector="nrs1",
+        #     detector=detector.lower(),
+        # )
+        #
+        # if do_corr:
+        #     rate_empty = (
+        #         (~sflat_mask) & (np.isfinite(rate_sci)) & (rate_dq & 1 == 0)
+        #     )
+        #     rate_empty &= rate_sci > -10 * rate_err
+        #
+        #     jwst_utils.exposure_oneoverf_correction(
+        #         self.file,
+        #         erode_mask=False,
+        #         in_place=True,
+        #         axis=0,
+        #         force_oneoverf=True,
+        #         manual_mask=rate_empty,
+        #         deg_pix=2048,
+        #     )
+        #
+        #     if (grating == "PRISM") & (prism_oneoverf_rows):
+        #         jwst_utils.exposure_oneoverf_correction(
+        #             self.file,
+        #             erode_mask=False,
+        #             in_place=True,
+        #             axis=1,
+        #             nirspec_prism_mask=False,
+        #             manual_mask=rate_empty,
+        #             force_oneoverf=True,
+        #             deg_pix=2048,
+        #         )
 
         # jwst_utils.exposure_oneoverf_correction(
         #     self.file, erode_mask=False, in_place=True, axis=1, deg_pix=2048
@@ -535,6 +538,121 @@ def plot_cube_strips(ptab, figsize=(10, 5), cmap="bone_r"):
     return fig
 
 
+def detector_corrections(file, run_oneoverf=True, prism_oneoverf_rows=True, update_stats=True, **kwargs):
+    """
+    Detector-level corrections on a rate file
+    """
+    from grizli import jwst_utils
+
+    is_resized = msautils.resize_subarray_to_full(file, **kwargs)
+    if is_resized:
+        return None
+
+    do_corr = run_oneoverf
+
+    with pyfits.open(file) as im:
+        if "ONEFEXP" in im[0].header:
+            if (im[0].header["ONEFEXP"]) & (run_oneoverf < 2):
+                do_corr = False
+        grating = im[0].header["GRATING"]
+        filter = im[0].header["FILTER"]
+        detector = im[0].header["DETECTOR"]
+        rate_sci = im["SCI"].data * 1
+        rate_err = im["ERR"].data * 1
+        rate_dq = im["DQ"].data * 1
+
+    sflat, sflat_mask = load_ifu_sflat(
+        grating=grating, #"prism",
+        filter=filter, #"clear",
+        # detector="nrs1",
+        detector=detector.lower(),
+    )
+
+    empty_mask = (
+        (~sflat_mask) & (np.isfinite(rate_sci)) & (rate_dq & 1 == 0)
+    )
+    empty_mask &= rate_sci > -10 * rate_err
+
+    if do_corr:
+
+        jwst_utils.exposure_oneoverf_correction(
+            file,
+            erode_mask=False,
+            in_place=True,
+            axis=0,
+            force_oneoverf=True,
+            manual_mask=empty_mask,
+            deg_pix=2048,
+        )
+
+        if (grating == "PRISM") & (prism_oneoverf_rows):
+            jwst_utils.exposure_oneoverf_correction(
+                file,
+                erode_mask=False,
+                in_place=True,
+                axis=1,
+                nirspec_prism_mask=False,
+                manual_mask=empty_mask,
+                force_oneoverf=True,
+                deg_pix=2048,
+            )
+
+    # Reopen
+    with pyfits.open(file) as im:
+        if "ONEFEXP" in im[0].header:
+            if (im[0].header["ONEFEXP"]) & (run_oneoverf < 2):
+                do_corr = False
+        grating = im[0].header["GRATING"]
+        filter = im[0].header["FILTER"]
+        detector = im[0].header["DETECTOR"]
+        rate_sci = im["SCI"].data * 1
+        rate_err = im["ERR"].data * 1
+        rate_dq = im["DQ"].data * 1
+        rate_var_rnoise = im["VAR_RNOISE"].data * 1
+        rate_var_poisson = im["VAR_POISSON"].data * 1
+
+    det_median = np.nanmedian(rate_sci[empty_mask])
+    det_nmad = utils.nmad((rate_sci / np.sqrt(rate_var_rnoise))[empty_mask])
+
+    msg = f"msaexp.ifu.detector_corrections: median {det_median:7.4f}  nmad {det_nmad:.3f}"
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    if update_stats:
+        rate_sci -= det_median
+        rate_var_rnoise *= det_nmad**2
+        rate_err = np.sqrt(rate_var_rnoise + rate_var_poisson)
+
+        with pyfits.open(file, mode="update") as im:
+            if 'DETMED' in im[0].header:
+                im[0].header['DETMED'] += det_median
+            else:
+                im[0].header['DETMED'] = (det_median, "Median from empty pixels")
+
+            if 'DETNMAD' in im[0].header:
+                im[0].header['DETNMAD'] *= det_nmad
+            else:
+                im[0].header['DETNMAD'] = (det_nmad, "RNOISE NMAD from empty pixels")
+
+            im['SCI'].data -= det_median
+            im['VAR_RNOISE'].data *= det_nmad**2
+            im['ERR'].data = np.sqrt(im['VAR_RNOISE'].data + im['VAR_POISSON'].data)
+            im.flush()
+
+    res = {
+        "file": file,
+        "sci": rate_sci,
+        "err": rate_err,
+        "var_rnoise": rate_var_rnoise,
+        "var_poisson": rate_var_poisson,
+        "dq": rate_dq,
+        "sflat": sflat,
+        "sflat_mask": sflat_mask,
+        "empty_mask": empty_mask,
+    }
+
+    return res
+
+
 def objfun_scale_rnoise(theta, resid_num, resid_rnoise, resid_poisson):
     """
     objective function for scaling readnoise extension
@@ -610,6 +728,17 @@ def load_ifu_sflat(
     """
     import scipy.ndimage as nd
     from astropy.utils.data import download_file
+
+    if (grating.lower() == "prism") & (detector.lower() == "nrs2"):
+        # Doesn't exist
+        sflat = np.zeros((2048, 2048))
+        sflat[900:990, 400:950] = 1.
+        sflat_mask = sflat > 0
+
+        msg = f"msaexp.ifu.load_ifu_sflat: mask S200B1 for {grating} {filter} {detector}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        return sflat, sflat_mask
 
     sflat_file = f"sflat_{grating}-{filter}_{detector}.fits".lower()
     msg = f"msaexp.ifu.load_ifu_sflat: {sflat_file}"
@@ -1093,6 +1222,9 @@ def query_obsid_exposures(
     extend_wavelengths=True,
     detectors=None,
     fixed_slit=False,
+    trim_prism_nrs2=True,
+    extra_query=[],
+    param_ranges=None,
     **kwargs,
 ):
     """
@@ -1134,6 +1266,8 @@ def query_obsid_exposures(
     if detectors is not None:
         query += mastquery.jwst.make_query_filter("detector", values=detectors)
 
+    query += extra_query
+
     msg = f"QUERY = {query}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
@@ -1165,6 +1299,23 @@ def query_obsid_exposures(
     res["dataURI"] = rates
 
     res = res[unique_indices]
+
+    if param_ranges is not None:
+        in_range = np.ones(len(res), dtype=bool)
+        for p in param_ranges:
+            if p in res.colnames:
+                p_test = (res[p] >= param_ranges[p][0]) & (res[p] <= param_ranges[p][1])
+                print(f'param_range: {p} = {param_ranges[p]}  {p_test.sum()} / {len(res)}')
+                in_range &= p_test
+
+        res = res[in_range]
+
+    if (grating is None) & trim_prism_nrs2:
+        prism_nrs2 = (res['grating'] == 'PRISM') & (res['detector'] == 'NRS2')
+        if prism_nrs2.sum() > 0:
+            msg = f'Remove {prism_nrs2.sum()} PRISM NRS2 exposures that will be empty'
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+            res = res[~prism_nrs2]
 
     msg = f"Found {len(res)} exposures"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
