@@ -31,8 +31,7 @@ def test_wavelength_grids():
 
 
 def test_resolution_curves():
-    """
-    """
+    """ """
     for gr in utils.GRATING_LIMITS:
 
         wgrid = utils.get_standard_wavelength_grid(gr)
@@ -40,50 +39,42 @@ def test_resolution_curves():
         for grating in [gr.upper(), gr.lower()]:
             # calculate grid internally
             R = utils.get_default_resolution_curve(
-                grating=grating,
-                wave=None,
-                grating_degree=2
+                grating=grating, wave=None, grating_degree=2
             )
 
             # With grating fit
             Rg = utils.get_default_resolution_curve(
-                grating=grating,
-                wave=wgrid,
-                grating_degree=2
+                grating=grating, wave=wgrid, grating_degree=2
             )
 
             # Without extrapolation
             Ri = utils.get_default_resolution_curve(
-                grating=grating,
-                wave=wgrid,
-                grating_degree=None
+                grating=grating, wave=wgrid, grating_degree=None
             )
 
             # Only test over first part of the array
             sl = slice(0, 200)
-            assert np.allclose(R[sl], Rg[sl], rtol=1.e-3)
-            assert np.allclose(R[sl], Ri[sl], rtol=1.e-3)
-    
+            assert np.allclose(R[sl], Rg[sl], rtol=1.0e-3)
+            assert np.allclose(R[sl], Ri[sl], rtol=1.0e-3)
+
     # LRS prism
     _LRS_R = utils.get_default_resolution_curve(
-        grating="LRS",
-        wave=None,
-        grating_degree=2
+        grating="LRS", wave=None, grating_degree=2
     )
 
     # Test extrapolation from fit
-    grating = 'G235M'
-    wgrid = np.array([
-        2.0, # In nominal range
-        4.0, # Extended
-    ])
+    grating = "G235M"
+    wgrid = np.array(
+        [
+            2.0,  # In nominal range
+            4.0,  # Extended
+        ]
+    )
 
     # With polynomial extrapolation
     for deg in [0, 1, 2, 3]:
         Rg = utils.get_default_resolution_curve(
-            grating=grating,
-            wave=wgrid,
-            grating_degree=deg
+            grating=grating, wave=wgrid, grating_degree=deg
         )
         # R(2 x lam) ~ 2 * R(lam)
         assert np.allclose(Rg[1] / Rg[0], 2.0, rtol=0.05)
@@ -393,8 +384,9 @@ def test_slit_sign():
 
 
 def test_glob_sorted():
-    
+
     import time
+
     for i in range(3):
         with open(f"dummy_file_{i}.txt", "w") as fp:
             fp.write(time.ctime() + "\n")
@@ -403,7 +395,9 @@ def test_glob_sorted():
 
     files_by_date = utils.glob_sorted("dummy_file*txt", func=os.path.getmtime)
 
-    files_by_date_rev = utils.glob_sorted("dummy_file*txt", func=os.path.getmtime, reverse=True)
+    files_by_date_rev = utils.glob_sorted(
+        "dummy_file*txt", func=os.path.getmtime, reverse=True
+    )
 
     files_by_size = utils.glob_sorted("dummy_file*txt", func=os.path.getsize)
 
@@ -413,8 +407,7 @@ def test_glob_sorted():
     assert files_by_date[0] == "dummy_file_0.txt"
     assert files_by_date_rev[0] == "dummy_file_2.txt"
     assert files_by_size[-1] == "dummy_file_1.txt"
-    
+
     # Cleanup
     for f in files_by_size:
         os.remove(f)
-
