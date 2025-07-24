@@ -4460,3 +4460,36 @@ def resize_subarray_to_full(file, overwrite=True):
             hdul.flush()
 
     return hdul
+
+
+def glob_sorted(text, func=os.path.getmtime, reverse=False):
+    """
+    Return result of a file listing from glob sorted by file creation date
+    
+    Parameters
+    ----------
+    text : str
+        Query string input to ``glob.glob``
+
+    func : function
+        Function used to sort the result, e.g., `os.path.getmtime`, `os.path.getctime`, `os.path.getsize`
+
+    reverse : bool
+        Return result in reverse order
+
+    Returns
+    -------
+    files : list
+        File listing sorted by ``func`` / ``reverse``
+
+    """
+
+    files = glob.glob(text)
+
+    files = sorted( files, key = lambda file: func(file))
+
+    if reverse:
+        files = files[::-1]
+
+    return files
+

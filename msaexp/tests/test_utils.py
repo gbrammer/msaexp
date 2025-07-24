@@ -390,3 +390,31 @@ def test_slit_sign():
     with jwst.datamodels.open(file) as slit:
         sign = utils.get_slit_sign(slit)
         assert sign == -1
+
+
+def test_glob_sorted():
+    
+    import time
+    for i in range(3):
+        with open(f"dummy_file_{i}.txt", "w") as fp:
+            fp.write(time.ctime() + "\n")
+            if i == 1:
+                fp.write(time.ctime() + "\n")
+
+    files_by_date = utils.glob_sorted("dummy_file*txt", func=os.path.getmtime)
+
+    files_by_date_rev = utils.glob_sorted("dummy_file*txt", func=os.path.getmtime, reverse=True)
+
+    files_by_size = utils.glob_sorted("dummy_file*txt", func=os.path.getsize)
+
+    for file_set in [files_by_date, files_by_date_rev, files_by_size]:
+        assert len(file_set) == 3
+
+    assert files_by_date[0] == "dummy_file_0.txt"
+    assert files_by_date_rev[0] == "dummy_file_2.txt"
+    assert files_by_size[-1] == "dummy_file_1.txt"
+    
+    # Cleanup
+    for f in files_by_size:
+        os.remove(f)
+
