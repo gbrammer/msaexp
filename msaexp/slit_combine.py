@@ -113,6 +113,9 @@ def split_visit_groups(
             )
 
             # key = f"{fk}-{im[0].header['GRATING']}"
+            if "SPAT_NUM" in im[0].header:
+                fk += f'_dith{im[0].header["SPAT_NUM"]}'
+
             key = f"{fk}-{im[0].header['GRATING']}-{im[0].header['FILTER']}"
 
             keys.append(key.lower())
@@ -1373,6 +1376,21 @@ class SlitGroup:
             self.meta["nod_offset"] = MSA_NOD_ARCSEC / self.slit_pixel_scale
 
         sl = (slice(0, self.sh[0]), slice(0, self.sh[1]))
+
+        # Local sky overlaps
+        for j, slit in enumerate(slits):
+            if "_raw" in self.files[j]:
+                slit_sky_file = os.path.basename(self.files[j]).replace("_raw", "_sky")
+                if os.path.exists(slit_sky_file):
+                    with pyfits.open(slit_sky_file) as _sky_im:
+                        msg = f'parse_data: sky overlap file {slit_sky_file}'
+                        utils.log_comment(
+                            utils.LOGFILE, msg, verbose=True
+                        )
+
+                        slit.sky_overlap = _sky_im[0].data * 1
+                        slit.data -= slit.sky_overlap / slit.barshadow
+                        # slit.data = (slit.data * slit.barshadow - _sky_im[0].data)
 
         ##################
         # Extra flat field
@@ -2720,7 +2738,6 @@ class SlitGroup:
             slit.xcen,
             slit.ycen,
             grating=self.grating,
-            verbose=VERBOSE_LOG,
         )
 
         self.normalization = corr
@@ -3206,6 +3223,7 @@ class SlitGroup:
         flat_wave = []
         flat_dwave_dx = []
         flat_yslit = []
+        flat_yshutter = []
         flat_index = []
         flat_bar = []
         flat_pathloss = []
@@ -3264,10 +3282,11 @@ class SlitGroup:
                 flat_var_total.append(self.var_total[i, :] + vneg)
                 flat_var_rnoise.append(self.var_rnoise[i, :] + wneg)
 
-                flat_bar.append(self.bar[i, :] + wneg)
+                flat_bar.append(self.bar[i, :])
                 flat_wave.append(self.wave[i, :])
                 flat_dwave_dx.append(self.dwave_dx[i, :])
                 flat_yslit.append(self.yslit[i, :])
+                flat_yshutter.append(self.fixed_yshutter[i, :])
 
                 if prof is not None:
                     flat_profile.append(prof)
@@ -3332,6 +3351,7 @@ class SlitGroup:
             "wave": np.hstack(flat_wave).astype(float_dtype),
             "dwave_dx": np.hstack(flat_dwave_dx).astype(float_dtype),
             "yslit": np.hstack(flat_yslit).astype(float_dtype),
+            "yshutter": np.hstack(flat_yshutter).astype(float_dtype),
             "bar": np.hstack(flat_bar).astype(float_dtype),
             "profile": np.hstack(flat_profile).astype(float_dtype),
             "pathloss": np.hstack(flat_pathloss).astype(float_dtype),
@@ -5106,6 +5126,7 @@ def extract_spectra(
     lookup_prf_version="001",
     include_full_pixtab=["PRISM"],
     plot_kws={},
+    protect_exception=True,
     **kwargs,
 ):
     """
@@ -5332,7 +5353,41 @@ def extract_spectra(
         else:
             prf = None
 
-        try:
+        if protect_exception:
+            try:
+                obj = SlitGroup(
+                    groups[g],
+                    g,
+                    position_key=position_key,
+                    diffs=diffs,  # (True & (~isinstance(id, str))),
+                    stuck_threshold=stuck_threshold,
+                    undo_barshadow=undo_barshadow,
+                    undo_pathloss=undo_pathloss,
+                    sky_arrays=sky_arrays,
+                    trace_with_xpos=trace_with_xpos,
+                    trace_with_ypos=trace_with_ypos,
+                    trace_from_yoffset=trace_from_yoffset,
+                    nod_offset=nod_offset,
+                    reference_exposure=reference_exposure,
+                    pad_border=pad_border,
+                    lookup_prf=prf,
+                    **kwargs,
+                )
+            except RuntimeError:
+                msg = f"\n    failed RuntimeError\n"
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+                continue
+
+            except TypeError:
+                msg = f"\n    failed TypeError\n"
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+                continue
+
+            except ValueError:
+                msg = f"\n    failed ValueError\n"
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+                continue
+        else:
             obj = SlitGroup(
                 groups[g],
                 g,
@@ -5351,20 +5406,6 @@ def extract_spectra(
                 lookup_prf=prf,
                 **kwargs,
             )
-        except RuntimeError:
-            msg = f"\n    failed RuntimeError\n"
-            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
-            continue
-
-        except TypeError:
-            msg = f"\n    failed TypeError\n"
-            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
-            continue
-
-        except ValueError:
-            msg = f"\n    failed ValueError\n"
-            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
-            continue
 
         if 0:
             if (obj.grating not in do_gratings) | (
