@@ -997,6 +997,22 @@ class SpectrumSampler(object):
                     )
                     self.sensitivity_correction_type = "nrs1_s200a1"
 
+                if 'S400A1_SLIT' in self.meta['APERNAME']:
+                    s400_file = os.path.join(file_path, "sensitivity_ratio_s400a1_s200a1_001.yaml")
+                    # print("xxx", s400_file)
+                    if os.path.exists(s400_file):
+                        with open(s400_file) as fp:
+                            s400 = yaml.load(fp, Loader=yaml.Loader)
+                            df = len(s400['s400a1_s200a1_coefs'])
+                            wpr = msautils.get_standard_wavelength_grid(grating='PRISM', sample=1.0)
+                            spx = np.interp(self.spec['wave'], wpr, np.arange(len(wpr))/len(wpr))
+                            bspl = utils.bspline_templates(
+                                spx, df=df, minmax=(0, 1), get_matrix=True
+                            )
+
+                            self.sensitivity_correction *= bspl.dot(s400['s400a1_s200a1_coefs'])
+                            self.sensitivity_correction_type = "nrs1_s200a1_s400a1"
+
         self.sensitivity[1] = np.interp(
             self.spec["wave"],
             sens_data["wavelength"],
