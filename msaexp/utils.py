@@ -3411,7 +3411,34 @@ def slit_extended_flux_calibration(
                     right=np.nan,
                 )
                 slit.sensitivity_correction_type = "nrs1_s200a1"
-            except (ValueError, TypeError):
+
+                if 'S400A1_SLIT' in slit.meta.aperture.name.upper():
+
+                    s400_file = os.path.join(
+                        file_path,
+                        "sensitivity_ratio_s400a1_s200a1_001.yaml"
+                    )
+
+                    if os.path.exists(s400_file):
+                        with open(s400_file) as fp:
+                            s400 = yaml.load(fp, Loader=yaml.Loader)
+                            df = len(s400['s400a1_s200a1_coefs'])
+
+                            wpr = get_standard_wavelength_grid(grating='PRISM', sample=1.0)
+
+                            spx = np.interp(_wave.flatten(), wpr, np.arange(len(wpr))/len(wpr))
+
+                            bspl = grizli.utils.bspline_templates(
+                                spx, df=df, minmax=(0, 1), get_matrix=True
+                            )
+
+                            corr_s400 = bspl.dot(s400['s400a1_s200a1_coefs'])
+                            slit.sensitivity_correction /= corr_s400.reshape(_wave.shape)
+                            slit.sensitivity_correction_type = "nrs1_s200a1_s400a1"
+
+                msg += f" type={slit.sensitivity_correction_type}"
+
+            except (ImportError): #(ValueError, TypeError):
                 msg += "  FAILED...."
 
             grizli.utils.log_comment(
@@ -4414,7 +4441,7 @@ def exposure_ramp_saturation(
     return output_file, is_saturated
 
 
-def resize_subarray_to_full(file, overwrite=True):
+def resize_subarray_to_full(file, overwrite=True, **kwargs):
     """
     Resize a subarray exposure to the FULL 2048 x 2048 dimensions
 
@@ -4423,8 +4450,12 @@ def resize_subarray_to_full(file, overwrite=True):
     with pyfits.open(file, mode=mode) as hdul:
         h0 = hdul[0].header
         subname = h0['SUBARRAY']
-        
+
+        is_resized = ('OSUBNAME' in h0)
+
         if subname != 'FULL':
+            is_resized = True
+
             slx = slice(
                 h0["SUBSTRT1"] - 1,
                 h0["SUBSTRT1"] - 1 + h0["SUBSIZE1"]
@@ -4456,10 +4487,14 @@ def resize_subarray_to_full(file, overwrite=True):
 
             hdul[0].header['SUBARRAY'] = 'FULL'
 
-        if overwrite:
-            hdul.flush()
+            if overwrite:
+                hdul.flush()
 
-    return hdul
+        elif is_resized:
+            msg = f"{file} was resized from {h0['OSUBNAME']} subarray"
+            grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    return is_resized
 
 
 def glob_sorted(text, func=os.path.getmtime, reverse=False):
