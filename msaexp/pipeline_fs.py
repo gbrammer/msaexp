@@ -219,11 +219,11 @@ def reduce_fixed_slit_obsid(
     HOME = os.getcwd()
 
     if os.path.exists("/GrizliImaging"):
-        base = "/GrizliImaging"
+        base_path = "/GrizliImaging"
     else:
-        base = os.getcwd()
+        base_path = os.getcwd()
 
-    grizli.utils.LOGFILE = os.path.join(base, f"jw{obsid}-{version}_fs.log.txt")
+    grizli.utils.LOGFILE = os.path.join(base_path, f"jw{obsid}-{version}_fs.log.txt")
     s3_root = f"jw{obsid}-{version}"
 
     # grizli.utils.log_comment(grizli.utils.LOGFILE, msg, verbose=True)
@@ -232,7 +232,7 @@ def reduce_fixed_slit_obsid(
         grizli.utils.LOGFILE,
         frame,
         "reduce_fixed_slit_obsid",
-        ignore=["sky_arrays", "base", "HOME"],
+        ignore=["sky_arrays", "base_path", "HOME"],
     )
 
     reduce_path = os.path.join(base, f"jw{obsid}-{version}_fs")
@@ -383,7 +383,7 @@ def reduce_fixed_slit_obsid(
     except:
         spec_info = None
 
-    os.chdir(HOME)
+    os.chdir(base_path)
 
     return files, s3_root, slit_info, spec_info
 
