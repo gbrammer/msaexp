@@ -22,6 +22,9 @@ QUERY_KWARGS = dict(
 
 
 def initialize_fs_helper_table():
+    """
+    Commands for initializing nirspec_fs_helper DB table
+    """
     import astropy.time
     import time
 
@@ -65,7 +68,9 @@ def initialize_fs_helper_table():
 
 
 def run_one_fixed_slit(clean=True):
-
+    """
+    Query grizli db for FS data to process
+    """
     rows = db.SQL(
         "SELECT * FROM nirspec_fs_helper WHERE status = 0 ORDER BY RANDOM() LIMIT 1"
     )
@@ -178,7 +183,36 @@ def reduce_fixed_slit_obsid(
     **kwargs,
 ):
     """
-    Full pipeline for FS
+    Full pipeline for NIRSpec Fixed-Slit observations
+
+    Parameters
+    ----------
+    obsid : str
+        Unique JWST observations ID
+
+    version : str
+        Version string for data products
+
+    query_kwargs : dict
+        Keyword arguments passed to `msaexp.ifu.query_obsid_exposures` for MAST query
+
+    extract_kwargs : dict
+        Keyword argments for the spectral combination in `msaexp.slit_combine.extract_spectra`
+
+    Returns
+    -------
+    files : list
+        List of `rate` files
+
+    s3_root : str
+        Basename of the output products, ``{obsid}-{version}``
+    
+    slit_info : table
+        Slit cutout info table
+
+    spec_info : table
+        Properties of the combined spectrum / spectra
+
     """
     frame = inspect.currentframe()
 
