@@ -300,7 +300,7 @@ def reduce_fixed_slit_obsid(
     slit_files.sort()
 
     exposure_groups = slit_combine.split_visit_groups(
-        slit_files, gratings=slit_combine.SPLINE_BAR_GRATINGS
+        slit_files, gratings=slit_combine.SPLINE_BAR_GRATINGS, **extract_kwargs
     )
 
     for g in list(exposure_groups.keys()):
