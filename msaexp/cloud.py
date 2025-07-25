@@ -49,9 +49,9 @@ def fetch_files(
         slit_files = f"jw*_{key}.fits"
     else:
         if shutter is None:
-            slit_files = f"jw*.{key}.fits"
+            slit_files = f"jw*_raw*.{key}.fits"
         else:
-            slit_files = f"jw*.{shutter}.*fits"
+            slit_files = f"jw*_raw*.{shutter}.*fits"
 
     fetch_command = (
         f'aws s3 sync {s3_base}/slitlets/{root}/ ./ --exclude "*" '
@@ -337,6 +337,7 @@ def combine_spectra_pipeline(
             fit_shutter_offset_kwargs=None,
             shutter_offset=0.0,
             with_extra_dq=True,
+            include_full_pixtab=["PRISM"],
         )
 
         for k in kws:
@@ -446,7 +447,7 @@ def combine_spectra_pipeline(
             kwargs["recenter_all"] = True
             kwargs["grating_diffs"] = False
             kwargs["diffs"] = True
-            kwargs["include_full_pixtab"] = ["PRISM"]
+            # kwargs["include_full_pixtab"] = ["PRISM"]
 
         if root.split("-v3")[0] in ["abell2744-glass"]:
             kwargs["diffs"] = True
@@ -621,12 +622,12 @@ def combine_spectra_pipeline(
             if kwargs["diffs"]:
                 kwargs["estimate_sky_kwargs"] = None
 
-            kwargs["include_full_pixtab"] = [
-                "PRISM",
-                # "G140M",
-                # "G235M",
-                # "G395M",
-            ]
+            # kwargs["include_full_pixtab"] = [
+            #     "PRISM",
+            #     # "G140M",
+            #     # "G235M",
+            #     # "G395M",
+            # ]
 
             if force_diffs:
                 kwargs["diffs"] = True
@@ -875,7 +876,8 @@ def get_extraction_info(root="snh0pe-v4", outroot=None, key="4446_274"):
 
         for k in ikeys + fkeys:
             if k in rev:
-                info[k.lower()][i] = sp.meta[rev[k]]
+                if rev[k] in sp.meta:
+                    info[k.lower()][i] = sp.meta[rev[k]]
             else:
                 info[k.lower()][i] = sp.meta[k]
 
