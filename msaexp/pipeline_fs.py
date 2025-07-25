@@ -235,7 +235,7 @@ def reduce_fixed_slit_obsid(
         ignore=["sky_arrays", "base_path", "HOME"],
     )
 
-    reduce_path = os.path.join(base, f"jw{obsid}-{version}_fs")
+    reduce_path = os.path.join(base_path, f"jw{obsid}-{version}_fs")
     if not os.path.exists(reduce_path):
         os.makedirs(reduce_path)
 
