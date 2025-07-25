@@ -397,6 +397,9 @@ class NirspecCalibrated:
 
                 root_ = self.file.split("_rate")[0]
                 if _slit.meta.exposure.type == "NRS_FIXEDSLIT":
+                    if targ_ == "":
+                        targ_ = "indef"
+
                     slit_prefix_ = f"{root_}_{targ_}_{inst_key}_{_slit.name}"
                 else:
                     if "_ext" in ref_files["fflat"]["name"]:
