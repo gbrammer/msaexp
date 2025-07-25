@@ -538,14 +538,14 @@ def plot_cube_strips(ptab, figsize=(10, 5), cmap="bone_r"):
     return fig
 
 
-def detector_corrections(file, run_oneoverf=True, prism_oneoverf_rows=True, update_stats=True, **kwargs):
+def detector_corrections(file, run_oneoverf=True, prism_oneoverf_rows=True, update_stats=True, skip_subarray=True, **kwargs):
     """
     Detector-level corrections on a rate file
     """
     from grizli import jwst_utils
 
     is_resized = msautils.resize_subarray_to_full(file, **kwargs)
-    if is_resized:
+    if is_resized & skip_subarray:
         return None
 
     do_corr = run_oneoverf
@@ -741,6 +741,10 @@ def load_ifu_sflat(
         return sflat, sflat_mask
 
     sflat_file = f"sflat_{grating}-{filter}_{detector}.fits".lower()
+
+    if sflat_file == "sflat_g395m-f290lp_nrs2.fits":
+        return np.ones((2048, 2048)), np.zeros((2048, 2048), dtype=bool)
+
     msg = f"msaexp.ifu.load_ifu_sflat: {sflat_file}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
@@ -1312,6 +1316,8 @@ def query_obsid_exposures(
 
     if (grating is None) & trim_prism_nrs2:
         prism_nrs2 = (res['grating'] == 'PRISM') & (res['detector'] == 'NRS2')
+        prism_nrs2 &= (res['apername'] != 'NRS_S200B2_SLIT')
+
         if prism_nrs2.sum() > 0:
             msg = f'Remove {prism_nrs2.sum()} PRISM NRS2 exposures that will be empty'
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
