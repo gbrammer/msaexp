@@ -74,6 +74,7 @@ def split_visit_groups(
     join=[0, 3],
     gratings=["PRISM"],
     split_uncover=True,
+    **kwargs,
 ):
     """
     Compute groupings of `SlitModel` files based on exposure, visit, detector,
@@ -5089,6 +5090,7 @@ def extract_spectra(
     files=None,
     do_gratings=["PRISM", "G395H", "G395M", "G235M", "G140M"],
     join=[0, 3, 5],
+    exposure_groups=None,
     split_uncover=True,
     stuck_threshold=0.3,
     valid_frac_threshold=0.1,
@@ -5295,9 +5297,12 @@ def extract_spectra(
         verbose=VERBOSE_LOG,
     )
 
-    groups = split_visit_groups(
-        files, join=join, gratings=do_gratings, split_uncover=split_uncover
-    )
+    if exposure_groups is None:
+        groups = split_visit_groups(
+            files, join=join, gratings=do_gratings, split_uncover=split_uncover
+        )
+    else:
+        groups = exposure_groups
 
     xobj = {}
     for ig, g in enumerate(groups):
