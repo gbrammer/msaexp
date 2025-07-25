@@ -389,6 +389,7 @@ def test_glob_sorted():
 
     for i in range(3):
         with open(f"dummy_file_{i}.txt", "w") as fp:
+            time.sleep(1)
             fp.write(time.ctime() + "\n")
             if i == 1:
                 fp.write(time.ctime() + "\n")
