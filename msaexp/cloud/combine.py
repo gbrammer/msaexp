@@ -22,9 +22,19 @@ import jwst.datamodels
 from grizli.aws import db
 from grizli import utils
 
-from .slit_combine import extract_spectra
-from . import slit_combine, spectrum
-from . import utils as msautils
+from ..slit_combine import extract_spectra
+from .. import slit_combine, spectrum
+from .. import utils as msautils
+
+__all__ = [
+    "fetch_files",
+    "get_join_indices",
+    "combine_spectra_pipeline",
+    "get_extraction_info",
+    "handle_spectrum_extraction",
+    "get_targets",
+]
+
 
 if 0:
     root = "snh0pe-v4"
@@ -338,6 +348,7 @@ def combine_spectra_pipeline(
             shutter_offset=0.0,
             with_extra_dq=True,
             include_full_pixtab=["PRISM"],
+            do_multiple_mask=True,
         )
 
         for k in kws:

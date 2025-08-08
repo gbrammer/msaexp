@@ -2016,10 +2016,13 @@ def fit_redshift_grid(
         _Ax = _A[okt, :] / eflam
         _yx = flam / eflam
 
-        if eazy_templates is None:
-            _x = np.linalg.lstsq(_Ax[:, mask].T, _yx[mask], rcond=None)
-        else:
-            _x = nnls(_Ax[:, mask].T, _yx[mask])
+        try:
+            if eazy_templates is None:
+                _x = np.linalg.lstsq(_Ax[:, mask].T, _yx[mask], rcond=None)
+            else:
+                _x = nnls(_Ax[:, mask].T, _yx[mask])
+        except RuntimeError:
+            x = [np.zeros(okt.sum())]
 
         coeffs = np.zeros(_A.shape[0])
         coeffs[okt] = _x[0]
