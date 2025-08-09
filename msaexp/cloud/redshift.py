@@ -276,7 +276,7 @@ def add_new_columns():
     new_columns = []
     
     if 0:
-        res = fit_msa_redshift.run_fit(
+        res = run_fit(
             file='rubies-uds21-nod-v3_prism-clear_4233_141828.spec.fits', 
             root='rubies-uds21-nod-v3',
             z0=[2, 4],
@@ -288,7 +288,7 @@ def add_new_columns():
         kws["clean"] = False
         kws["z0"] = [kws.pop(k) for k in ["zmin", "zmax"]]
 
-        res = fit_msa_redshift.run_fit(**kws)
+        res = run_fit(**kws)
 
     file, ztab, zfit, row, rf_row  = res
     
