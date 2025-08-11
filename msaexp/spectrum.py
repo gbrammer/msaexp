@@ -1005,7 +1005,12 @@ class SpectrumSampler(object):
                             s400 = yaml.load(fp, Loader=yaml.Loader)
                             df = len(s400['s400a1_s200a1_coefs'])
                             wpr = msautils.get_standard_wavelength_grid(grating='PRISM', sample=1.0)
-                            spx = np.interp(self.spec['wave'], wpr, np.arange(len(wpr))/len(wpr))
+                            spx = np.interp(
+                                # self.spec['wave'],
+                                sens_data["wavelength"],
+                                wpr,
+                                np.arange(len(wpr))/len(wpr)
+                            )
                             bspl = utils.bspline_templates(
                                 spx, df=df, minmax=(0, 1), get_matrix=True
                             )

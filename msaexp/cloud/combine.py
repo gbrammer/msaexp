@@ -68,6 +68,15 @@ def fetch_files(
         + f'--include "{slit_files}"'
     )
 
+    if root.startswith('jw0'):
+        # Fixed slit
+        slit_name = key.split('_')[1]
+        slit_files = f"{root[:13]}*{slit_name}.fits"
+        fetch_command = (
+            f'aws s3 sync {s3_base}/{root}/ ./ --exclude "*" '
+            + f'--include "{slit_files}"'
+        )
+
     if get_bkg:
         fetch_command += ' --include "*bkg.fits"'
 
@@ -721,6 +730,22 @@ def combine_spectra_pipeline(
             )
 
             kwargs["grating_diffs"] = sky_diffs >= 0
+
+        # # Fixed slit
+        # if root.startswith("jw0") & ("_s" in key) & (0):
+        #     for g in list(file_groups.keys()):
+        #         if len(file_groups[g]) == 5:
+        #             spl = g.split("_")
+        #             files = [f for f in file_groups[g]]
+        #             spl.insert(2, "set1")
+        #             g1 = "_".join(spl)
+        #             file_groups[g1] = files[0::2]
+        #
+        #             spl[2] = "set2"
+        #             g2 = "_".join(spl)
+        #             file_groups[g2] = files[1::2]
+        #
+        #             _ = file_groups.pop(g)
 
         for grp in file_groups:
             kwargs["files"] = file_groups[grp]
