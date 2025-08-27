@@ -1093,7 +1093,7 @@ def slice_corners(
     from gwcs import wcstools
     from .pipeline_extended import EXTENDED_RANGES
 
-    if slice_wavelength_range is "auto":
+    if slice_wavelength_range == "auto":
         inst_ = input.meta.instrument.instance
         gfilt = '{filter}_{grating}'.format(**inst_).upper()
 
@@ -1391,7 +1391,8 @@ def make_drizzle_hdul(
     ... TBD
 
     """
-
+    import astropy.wcs as pywcs
+    
     dx, dy = pixel_table_dx_dy(ptab, **kwargs)
 
     if side in ["auto"]:
