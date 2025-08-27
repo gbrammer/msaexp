@@ -11,9 +11,13 @@ jwst_utils.set_quiet_logging(50)
 
 from grizli import utils
 
-from .. import ifu
+from .. import ifu as msaifu
 from .. import utils as msautils
 
+__all__ = [
+    "preprocess_ifu_file",
+    "fs_to_ptab",
+]
 
 def preprocess_ifu_file(
     file,
@@ -50,7 +54,7 @@ def preprocess_ifu_file(
     if not os.path.exists(file):
         mastquery.utils.download_from_mast([file])
 
-    cube = msaexp.ifu.ExposureCube(
+    cube = msaifu.ExposureCube(
         file,
         do_flatfield=do_flatfield,
         do_photom=do_photom,
@@ -92,7 +96,7 @@ def preprocess_ifu_file(
                 k = ext.header["FSNAME"]
                 fs_data[k] = utils.read_catalog(ext)
     else:
-        fs_data = msaexp.ifu.ifu_sky_from_fixed_slit(
+        fs_data = msaifu.ifu_sky_from_fixed_slit(
             rate_file=file,
             slit_names=["S200A1", "S200A2", "S400A1", "S200B1", "S1600A1"][:-1],
         )
@@ -107,7 +111,7 @@ def preprocess_ifu_file(
 
     if sync:
         visit = os.path.basename(file.split("_")[0])
-        s3_path = os.path.join(s3_prefix, visit).replace("//","/")
+        s3_path = os.path.join(s3_prefix, visit).replace("//","/").replace("s3:/", "s3://")
         file_prefix = os.path.basename(file.split("_rate")[0])
         for ext in [
             "cal.yaml",
@@ -126,3 +130,66 @@ def preprocess_ifu_file(
                 )
 
     return cube
+
+
+def fs_to_ptab(fs_file, slice_offset=50):
+    """
+    Convert a ``fs.fits`` table of the fixed-slit spectra to a pixel table
+
+    Parameters
+    ----------
+    fs_file : str
+        Filename of a fixed slit summary fits file generated from the
+        `msaexp.ifu.ifu_sky_from_fixed_slit` table
+
+    slice_offset : int
+        Integer of first fixed slit "slice".  The IFU slices are numbered 0-29.
+
+    Returns
+    -------
+    fs_ptab : Table
+        Pixel table
+
+    """
+    import astropy.table
+
+    FIXED_SLIT_NAMES = ['S200A1', 'S200A2', 'S400A1', 'S1600A1', 'S200B1']
+
+    fs_data = {}
+    with pyfits.open(fs_file) as fs_im:
+        for ext in fs_im[1:]:
+            k = ext.header['FSNAME']
+            fs_data[k] = utils.read_catalog(ext)
+
+    tabs = []
+    for i, k in enumerate(fs_data):
+        if k not in FIXED_SLIT_NAMES:
+            continue
+
+        fsk = fs_data[k]
+        fsk.meta = msaifu.meta_lowercase(fsk.meta)
+
+        yp, xp = np.indices((fsk.meta['ysize'], fsk.meta['xsize']))
+        xp += fsk.meta['xstart'] - 1
+        yp += fsk.meta['ystart'] - 1
+
+        # Like pixtab
+        fsk['xpix'] = xp.flatten()
+        fsk['ypix'] = yp.flatten()
+        fsk['slice'] = slice_offset + FIXED_SLIT_NAMES.index(k)
+        # fsk['xsky'] = 0.
+        tabs.append(fsk[np.isfinite(fsk['wave'] + fsk['data'])])
+
+    fs_ptab = astropy.table.vstack(tabs)
+    fs_ptab.meta['nslits'] = len(tabs)
+
+    for i, k in enumerate(fs_data):
+        if k not in FIXED_SLIT_NAMES:
+            continue
+
+        slice_id = 50 + FIXED_SLIT_NAMES.index(k)
+        fs_ptab.meta[f'slice{i}'] = slice_id
+        fs_ptab.meta[f'slit{i}'] = k
+
+    return fs_ptab
+
