@@ -1729,7 +1729,7 @@ def pixel_table_to_fits(
     return hdul
 
 
-def pixel_table_valid_data(ptab, low_threshold=-4, bad_pixel_flag=IFU_BAD_PIXEL_FLAG):
+def pixel_table_valid_data(ptab, low_threshold=-4, bad_pixel_flag=IFU_BAD_PIXEL_FLAG, **kwargs):
     """
     Determine "valid" pixels in a pixel table with optional bad pixel flagging
 
