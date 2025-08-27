@@ -27,6 +27,16 @@ IFU_BAD_PIXEL_FLAG = BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
 
 VERBOSITY = True
 
+def rotation_matrix(angle):
+    """
+    Compute a 2x2 rotation matrix for an input ``angle`` in degrees
+    """
+    theta = angle / 180 * np.pi
+    rot = np.array(
+        [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+    )
+    return rot
+
 
 class ExposureCube:
     input = None
@@ -64,7 +74,7 @@ class ExposureCube:
         if dilate_failed_open:
             self._dilate_failed_open_mask()
 
-        self.roll = -self.input.meta.aperture.position_angle
+        self.position_angle = self.input.meta.aperture.position_angle
         self.ra_ref = self.input.meta.wcsinfo.ra_ref
         self.dec_ref = self.input.meta.wcsinfo.dec_ref
         self.target_ra = self.input.meta.target.proposer_ra
@@ -72,11 +82,6 @@ class ExposureCube:
         if self.target_ra is None:
             self.target_ra = self.input.meta.target.ra
             self.target_dec = self.input.meta.target.dec
-
-        theta = self.roll / 180 * np.pi
-        rot = np.array(
-            [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
-        )
 
     def preprocess(
         self,
@@ -110,57 +115,6 @@ class ExposureCube:
         from . import utils as msautils
 
         det = detector_corrections(self.file, **kwargs)
-        # do_corr = run_oneoverf
-        #
-        # with pyfits.open(self.file) as im:
-        #     if "ONEFEXP" in im[0].header:
-        #         if (im[0].header["ONEFEXP"]) & (run_oneoverf < 2):
-        #             do_corr = False
-        #     grating = im[0].header["GRATING"]
-        #     filter = im[0].header["FILTER"]
-        #     detector = im[0].header["DETECTOR"]
-        #     rate_sci = im["SCI"].data * 1
-        #     rate_err = im["ERR"].data * 1
-        #     rate_dq = im["DQ"].data * 1
-        #
-        # sflat, sflat_mask = load_ifu_sflat(
-        #     grating=grating, #"prism",
-        #     filter=filter, #"clear",
-        #     # detector="nrs1",
-        #     detector=detector.lower(),
-        # )
-        #
-        # if do_corr:
-        #     rate_empty = (
-        #         (~sflat_mask) & (np.isfinite(rate_sci)) & (rate_dq & 1 == 0)
-        #     )
-        #     rate_empty &= rate_sci > -10 * rate_err
-        #
-        #     jwst_utils.exposure_oneoverf_correction(
-        #         self.file,
-        #         erode_mask=False,
-        #         in_place=True,
-        #         axis=0,
-        #         force_oneoverf=True,
-        #         manual_mask=rate_empty,
-        #         deg_pix=2048,
-        #     )
-        #
-        #     if (grating == "PRISM") & (prism_oneoverf_rows):
-        #         jwst_utils.exposure_oneoverf_correction(
-        #             self.file,
-        #             erode_mask=False,
-        #             in_place=True,
-        #             axis=1,
-        #             nirspec_prism_mask=False,
-        #             manual_mask=rate_empty,
-        #             force_oneoverf=True,
-        #             deg_pix=2048,
-        #         )
-
-        # jwst_utils.exposure_oneoverf_correction(
-        #     self.file, erode_mask=False, in_place=True, axis=1, deg_pix=2048
-        # )
 
         input = jwst.datamodels.open(self.file)
         _ = msautils.slit_hot_pixels(
@@ -255,7 +209,7 @@ class ExposureCube:
         self,
         ref_coord=None,
         mask_params=(2, 6),
-        image_attrs=["data", "dq", "var_poisson", "var_rnoise", "err"],
+        image_attrs=["data", "dq", "var_poisson", "var_rnoise"],
         **kwargs,
     ):
         """
@@ -270,19 +224,14 @@ class ExposureCube:
         _ = self.slice_data
         x_slice, y_slice, yslit_data, coord1_data, coord2_data, lam_data = _
 
-        theta = self.roll / 180 * np.pi
-        rot = np.array(
-            [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
-        )
-
-        cube = {}
+        ptab = {}
 
         for c in image_attrs:
-            cube[c] = []
+            ptab[c] = []
 
-        coord_cols = ["slice", "dx", "dy", "lam", "dra", "dde", "xpix", "ypix"]
+        coord_cols = ["slice", "wave", "ra", "dec", "xpix", "ypix"]
         for c in coord_cols:
-            cube[c] = []
+            ptab[c] = []
 
         shapes = []
         ypix, xpix = np.indices(self.input.data.shape, dtype=np.int16)
@@ -293,7 +242,7 @@ class ExposureCube:
 
             # cut = input_photom.data[sly, slx]
             for c in image_attrs:
-                cube[c].append(getattr(self.input, c)[sly, slx].flatten())
+                ptab[c].append(getattr(self.input, c)[sly, slx].flatten())
 
             if mask_params is not None:
                 msk = np.isfinite(self.input.data[sly, slx])
@@ -301,36 +250,25 @@ class ExposureCube:
                 shrink = nd.binary_erosion(
                     msk, structure=np.ones((mask_params[1], 1), dtype=bool)
                 )
-                cube["dq"][i][~shrink.flatten()] |= 1024
-
-            dra = (
-                (coord1_data[i] - ra_ref)
-                * np.cos(dec_ref / 180 * np.pi)
-                * 3600
-            )
-            dde = (coord2_data[i] - dec_ref) * 3600
-            dx = np.array([dra, dde]).T.dot(rot).T
+                ptab["dq"][i][~shrink.flatten()] |= 1024
 
             sh = coord1_data[i].shape
             shapes.append(sh)
-            cube["slice"].append(np.ones(sh, dtype=int).flatten() * i)
-            cube["dx"].append(dx[0].flatten())
-            cube["dy"].append(dx[1].flatten())
-            cube["lam"].append(lam_data[i].flatten())
-            cube["dra"].append(dra.flatten())
-            cube["dde"].append(dde.flatten())
-            cube["xpix"].append(xpix[sly, slx].flatten())
-            cube["ypix"].append(ypix[sly, slx].flatten())
+            ptab["slice"].append(np.ones(sh, dtype=int).flatten() * i)
+            ptab["wave"].append(lam_data[i].flatten())
+            ptab["ra"].append(coord1_data[i].flatten())
+            ptab["dec"].append(coord2_data[i].flatten())
+            ptab["xpix"].append(xpix[sly, slx].flatten())
+            ptab["ypix"].append(ypix[sly, slx].flatten())
 
-        for c in cube:
-            cube[c] = np.hstack(cube[c])
+        for c in ptab:
+            ptab[c] = np.hstack(ptab[c])
 
-        cube["var_total"] = cube["var_poisson"] + cube["var_rnoise"]
-        cube = utils.GTable(cube)
-        cube.meta["RA_REF"] = ra_ref
-        cube.meta["DEC_REF"] = dec_ref
-        cube.meta["NSLICE"] = len(shapes)
-        cube.meta["FILE"] = self.file
+        ptab = utils.GTable(ptab)
+        ptab.meta["RA_REF"] = ra_ref
+        ptab.meta["DEC_REF"] = dec_ref
+        ptab.meta["NSLICE"] = len(shapes)
+        ptab.meta["FILE"] = self.file
 
         # Save to YAML
         meta_to_yaml(self.input.meta)
@@ -347,26 +285,26 @@ class ExposureCube:
             self.input.meta.cal_step.instance,
         ]:
             for k in meta:
-                if k not in cube.meta:
+                if k not in ptab.meta:
                     if k in ["observation_folder"]:
                         continue
-                    cube.meta[k] = meta[k]
+                    ptab.meta[k] = meta[k]
 
-        cube.meta["bunit_data"] = self.input.meta.bunit_data
-        cube.meta["calver"] = self.input.meta.calibration_software_version
+        ptab.meta["bunit_data"] = self.input.meta.bunit_data
+        ptab.meta["calver"] = self.input.meta.calibration_software_version
 
         # Trim NaN, e.g., from S-Flats
-        valid_data = np.isfinite(cube["data"] + cube["err"] + cube["lam"])
-        cube = cube[valid_data]
+        valid_data = np.isfinite(ptab["data"] + ptab["var_rnoise"] + ptab["wave"])
+        ptab = ptab[valid_data]
 
         # Slice info
         for i in range(len(shapes)):
-            cube.meta[f"XSTRT{i}"] = x_slice[i][0]
-            cube.meta[f"XSIZE{i}"] = shapes[i][1]
-            cube.meta[f"YSTRT{i}"] = y_slice[i][0]
-            cube.meta[f"YSIZE{i}"] = shapes[i][0]
+            ptab.meta[f"XSTRT{i}"] = x_slice[i][0]
+            ptab.meta[f"XSIZE{i}"] = shapes[i][1]
+            ptab.meta[f"YSTRT{i}"] = y_slice[i][0]
+            ptab.meta[f"YSIZE{i}"] = shapes[i][0]
 
-        return cube
+        return ptab
 
     def process_pixel_table(self, load_existing=True, **kwargs):
         """ """
@@ -381,6 +319,7 @@ class ExposureCube:
             self.ptab.meta = meta_lowercase(self.ptab.meta)
             self.target_ra = self.ra_ref = self.ptab.meta["ra_ref"]
             self.target_dec = self.dec_ref = self.ptab.meta["dec_ref"]
+            self.position_angle = self.ptab.meta["position_angle"]
 
         elif self.input is not None:
             self.ptab = self.pixel_table(**kwargs)
@@ -390,7 +329,7 @@ class ExposureCube:
             except:
                 msg = f"pixel_table_background failed!"
                 utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-                self.ptab["sky"] = 0
+                # self.ptab["sky"] = 0
 
             self.ptab.write(ptab_file, overwrite=True)
 
@@ -448,7 +387,7 @@ def saturated_mask(files, ptab):
         print(f"{file}  {ovalid} > {nvalid}  ({ovalid - nvalid})")
 
 
-def plot_cube_strips(ptab, figsize=(10, 5), cmap="bone_r"):
+def plot_cube_strips(ptabs, figsize=(10, 5), cmap="bone_r", **kwargs):
     """
     Plot spatial slices of a cube pixel table
     """
@@ -456,57 +395,46 @@ def plot_cube_strips(ptab, figsize=(10, 5), cmap="bone_r"):
 
     fig, axes = plt.subplots(1, 2, figsize=figsize, sharex=True, sharey=True)
 
-    image_attrs = ["data", "dq", "var_poisson", "var_rnoise", "err"]
+    image_attrs = ["data", "dq", "var_poisson", "var_rnoise"]
 
-    for cube in ptab:
-        un = utils.Unique(cube["slice"], verbose=False)
-        ok = np.isfinite(cube["dx"] + cube["dy"])
+    for ptab in ptabs:
+        dx, dy = pixel_table_dx_dy(ptab, **kwargs)
 
-        hull = ConvexHull(np.array([cube["dx"][ok], cube["dy"][ok]]).T)
+        un = utils.Unique(ptab["slice"], verbose=False)
+        ok = np.isfinite(dx + dy)
+
+        hull = ConvexHull(np.array([dx[ok], dy[ok]]).T)
         vert = hull.vertices
 
         # Slice coordinates
         ax = axes[0]
-        pl = ax.plot(
-            cube["dx"][ok][vert],
-            cube["dy"][ok][vert],
-            alpha=0.5,
-            zorder=100,
-        )
+        pl = ax.plot(dx[ok][vert], dy[ok][vert], alpha=0.5, zorder=100)
 
         color = pl[0].get_color()
 
         for i, v in enumerate(un.values):
             ixi = un[v] & (
-                np.abs(cube["lam"] - np.nanmedian(cube["lam"])) < 0.01
+                np.abs(ptab["wave"] - np.nanmedian(ptab["wave"])) < 0.01
             )
-            ax.scatter(
-                cube["dx"][ixi], cube["dy"][ixi], alpha=0.1, color=color
-            )
+            ax.scatter(dx[ixi], dy[ixi], alpha=0.1, color=color)
 
         # Cube data
         ax = axes[1]
 
-        ax.plot(
-            cube["dx"][ok][vert],
-            cube["dy"][ok][vert],
-            alpha=0.5,
-            zorder=100,
-            color=color,
-        )
+        ax.plot(dx[ok][vert], dy[ok][vert], alpha=0.5, zorder=100, color=color)
 
         valid_dq = (
-            cube["dq"] & (jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"] | 1)
+            ptab["dq"] & (jwst.datamodels.dqflags.pixel["MSA_FAILED_OPEN"] | 1)
         ) == 0
 
         for c in image_attrs:
-            valid_dq &= np.isfinite(cube[c])
+            valid_dq &= np.isfinite(ptab[c])
 
-        valid_dq &= cube["var_poisson"] > 0
-        valid_dq &= cube["var_rnoise"] > 0
+        valid_dq &= ptab["var_poisson"] > 0
+        valid_dq &= ptab["var_rnoise"] > 0
 
-        test = np.isfinite(cube["data"])
-        test &= np.abs(cube["lam"] - np.nanmedian(cube["lam"])) < 0.02
+        test = np.isfinite(ptab["data"])
+        test &= np.abs(ptab["wave"] - np.nanmedian(ptab["wave"])) < 0.02
         test &= valid_dq
 
         rsize = 0.0
@@ -514,9 +442,9 @@ def plot_cube_strips(ptab, figsize=(10, 5), cmap="bone_r"):
         ry = np.random.rand(test.sum()) * rsize - rsize / 2
 
         ax.scatter(
-            cube["dx"][test] + rx,
-            cube["dy"][test] + ry,
-            c=cube["data"][test],
+            dx[test] + rx,
+            dy[test] + ry,
+            c=ptab["data"][test],
             cmap=cmap,
             alpha=0.3,
             marker="s",
@@ -657,10 +585,16 @@ def objfun_scale_rnoise(theta, resid_num, resid_rnoise, resid_poisson):
     """
     objective function for scaling readnoise extension
     """
+    try:
+        theta_rn, theta_p = theta
+    except:
+        theta_rn, theta_p = theta, 1.0
+
     norm = scipy.stats.norm(
-        scale=np.sqrt(theta * resid_rnoise + resid_poisson)
+        scale=np.sqrt(theta_rn * resid_rnoise + theta_p * resid_poisson)
     )
-    lnp = -norm.logpdf(resid_num).sum()
+    lnp = -2 * norm.logpdf(resid_num).sum()
+    # print(theta_rn, theta_p, lnp)
     # print(theta, lnp)
     return lnp
 
@@ -788,6 +722,8 @@ def ifu_sky_from_fixed_slit(
     rate_sci = _im["SCI"].data * 1
     rate_err = _im["ERR"].data * 1
     rate_dq = _im["DQ"].data * 1
+    rate_var_rnoise = _im["VAR_RNOISE"].data * 1
+    rate_var_poisson = _im["VAR_POISSON"].data * 1
 
     ORIG_EXPTYPE = _im[0].header["EXP_TYPE"]
     fixed_slit = "S200A1"
@@ -850,7 +786,9 @@ def ifu_sky_from_fixed_slit(
         sly = slice(slit.ystart - 1, slit.ystart - 1 + slit.ysize)
 
         slit_data = (rate_sci / sflat)[sly, slx]
-        slit_err = (rate_err / sflat)[sly, slx]
+        # slit_err = (rate_err / sflat)[sly, slx]
+        slit_var_rnoise = (rate_var_rnoise / sflat**2)[sly, slx]
+        slit_var_poisson = (rate_var_poisson / sflat**2)[sly, slx]
         slit_dq = rate_dq[sly, slx]
 
         # xspl_int = np.interp(slit.wavelength.flatten(), wave_grid, xspl)
@@ -888,31 +826,6 @@ def ifu_sky_from_fixed_slit(
 
         valid = ok & np.isfinite(nmad_i) & (np.abs(dev) < nmad_i * 3)
 
-        # coeffs = np.linalg.lstsq(Ax.T[ok & valid,:], yx[ok & valid], rcond=None)
-        # full_sky = xbspl.dot(coeffs[0])
-        # resid = (slit_data.flatten() - full_sky)
-        # rnorm = resid / slit_err.flatten()
-        #
-        # sky_model = bspl.dot(coeffs[0])
-        #
-        # fig, ax = plt.subplots(1,1,figsize=(8,5), sharex=True, sharey=True)
-        # axes = [ax]
-        #
-        # for ax in axes:
-        #     ax.scatter(
-        #         wavef[ok & valid],
-        #         slit_data.flatten()[ok & valid],
-        #         alpha=0.04,
-        #         color='r'
-        #     )
-        #     ax.plot(wave_grid, sky_model, color='k')
-        #     # ax.plot(wave_grid, nmad, color='orange')
-        #     # ax.scatter(wavef[ok & valid], dev[ok & valid], color='k', alpha=0.1)
-        #     ax.grid()
-        #
-        # # ax.set_ylim(-0.02, 0.3); ax.set_xlim(0.5, 2)
-        # axes[0].set_title(slit.name)
-
         slit_ptab = utils.GTable()
         slit_ptab.meta["rate_file"] = rate_file
         slit_ptab.meta["ny"], slit_ptab.meta["nx"] = slit_data.shape
@@ -926,7 +839,9 @@ def ifu_sky_from_fixed_slit(
 
         slit_ptab["wave"] = slit.wavelength.flatten()
         slit_ptab["data"] = slit_data.flatten()
-        slit_ptab["err"] = slit_err.flatten()
+        slit_ptab["var_rnoise"] = slit_var_rnoise.flatten()
+        slit_ptab["var_poisson"] = slit_var_poisson.flatten()
+        # slit_ptab["err"] = slit_err.flatten()
         slit_ptab["dq"] = slit_dq.flatten()
         slit_ptab["ok"] = ok
         slit_ptab["valid"] = valid
@@ -938,7 +853,6 @@ def ifu_sky_from_fixed_slit(
 
 def pixel_table_background(
     ptab,
-    bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     sky_center=(0, 0),
     sky_annulus=(0.5, 1.0),
     make_plot=True,
@@ -972,8 +886,10 @@ def pixel_table_background(
         xspl, df=nspl, minmax=(0, 1), get_matrix=True
     )
 
-    valid_dq = (ptab["dq"] & bad_pixel_flag) == 0
-    ptab["valid"] = valid_dq
+    if "valid" in ptab.colnames:
+        valid_dq = ptab["valid"] & True
+    else:
+        valid_dq = pixel_table_valid_data(ptab, **kwargs)
 
     for c in ptab.colnames:
         valid_dq &= np.isfinite(ptab[c])
@@ -987,18 +903,20 @@ def pixel_table_background(
     valid_dq &= ptab["var_poisson"] < 100
     valid_dq &= ptab["var_rnoise"] < 100
 
-    valid_dq &= np.isfinite(ptab["lam"])
-    # valid_dq &= ptab["lam"] > 0.65
+    valid_dq &= np.isfinite(ptab["wave"])
+    # valid_dq &= ptab["wave"] > 0.65
 
     # ptab["valid"] = valid_dq & True
+
+    dx, dy = pixel_table_dx_dy(ptab)
 
     ###
     if sky_annulus is None:
         coord_test = valid_dq & True
     else:
         dr = np.sqrt(
-            (ptab["dx"] - sky_center[0]) ** 2
-            + (ptab["dy"] - sky_center[1]) ** 2
+            (dx - sky_center[0]) ** 2
+            + (dy - sky_center[1]) ** 2
         )
         coord_test = valid_dq & (dr > sky_annulus[0])
         coord_test &= valid_dq & (dr < sky_annulus[1])
@@ -1018,23 +936,21 @@ def pixel_table_background(
         fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
         ax = axes[0]
 
-    ok = np.isfinite(ptab["lam"][test])
+    ok = np.isfinite(ptab["wave"][test])
+
+    var_total = ptab["var_rnoise"] + ptab["var_poisson"]
 
     for _iter in range(3):
 
-        so = np.argsort(ptab["lam"][test][ok])
-        xsky = ptab["lam"][test][ok][so]
-        sky_med = nd.median_filter(ptab["data"][test][ok][so], 64)
+        so = np.argsort(ptab["wave"][test][ok])
+        xsky = ptab["wave"][test][ok][so]
+        sky_med = nd.median_filter(ptab["data"][test][ok][so].astype(float), 64)
         if make_plot:
-            ax.plot(ptab["lam"][test][ok][so], sky_med, alpha=0.5)
+            ax.plot(ptab["wave"][test][ok][so], sky_med, alpha=0.5)
 
-        sky_interp = np.interp(ptab["lam"][test], xsky, sky_med)
-        ok = np.abs(ptab["data"][test] - sky_interp) < 5 * np.sqrt(
-            ptab["var_total"][test]
-        )
-        ok &= ptab["var_total"][test] < 8 * np.median(
-            ptab["var_total"][test][ok]
-        )
+        sky_interp = np.interp(ptab["wave"][test], xsky, sky_med)
+        ok = np.abs(ptab["data"][test] - sky_interp) < 5 * np.sqrt(var_total[test])
+        ok &= var_total[test] < 8 * np.median(var_total[test][ok])
         msg = f"iter {_iter} {ok.sum()}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
@@ -1057,7 +973,7 @@ def pixel_table_background(
         axes[0].plot(xsky, splm, color="yellow", alpha=0.5)
 
         ax.scatter(
-            ptab["lam"][test][ok][::skip],
+            ptab["wave"][test][ok][::skip],
             ptab["data"][test][ok][::skip],
             alpha=0.1,
             zorder=-10,
@@ -1065,43 +981,54 @@ def pixel_table_background(
         ax.set_ylim(-1, 5)
 
     resid_num = ptab["data"][test][ok] - np.interp(
-        ptab["lam"][test][ok], xsky, sky_med
+        ptab["wave"][test][ok], xsky, sky_med
     )
     resid_rnoise = ptab["var_rnoise"][test][ok]
     resid_poisson = ptab["var_poisson"][test][ok]
     resid = resid_num / np.sqrt(resid_rnoise + resid_poisson)
 
-    if make_plot:
-        ax = axes[1]
-        ax.scatter(
-            ptab["lam"][test][ok][::skip],
-            resid[::skip],
-            c=ptab["dy"][test][ok][::skip],
-            alpha=0.1,
-            marker=".",
-        )
-
-    args = (resid_num, resid_rnoise, resid_poisson)
     res = minimize(
         objfun_scale_rnoise,
-        x0=1.0,
+        x0=[1.0, 1.0],
         args=(resid_num, resid_rnoise, resid_poisson),
         method="bfgs",
+        options={'eps': 1.e-2},
         tol=1.0e-6,
     )
     scale_rnoise = res.x[0]
+    if len(res.x) > 1:
+        scale_poisson = res.x[1]
+    else:
+        scale_poisson = 1.0
 
-    msg = f"  uncertainty nmad={utils.nmad(resid):.3f} std={np.std(resid):.3f}  scale_rnoise={np.sqrt(scale_rnoise):.3f}"
+    msg = f"  uncertainty nmad={utils.nmad(resid):.3f} std={np.std(resid):.3f}  scale_rnoise={np.sqrt(scale_rnoise):.3f}  scale_poisson={np.sqrt(scale_poisson):.3f}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     ptab.meta["rnoise_nmad"] = utils.nmad(resid)
     ptab.meta["rnoise_std"] = np.std(resid)
-    ptab.meta["scale_rnoise"] = scale_rnoise
+    if "scale_rnoise" in ptab.meta:
+        ptab.meta["scale_rnoise"] *= scale_rnoise
+        ptab.meta["scale_poisson"] *= scale_poisson
+    else:
+        ptab.meta["scale_rnoise"] = scale_rnoise
+        ptab.meta["scale_poisson"] = scale_poisson
 
     ptab["var_rnoise"] *= scale_rnoise
-    ptab["var_total"] = ptab["var_rnoise"] + ptab["var_poisson"]
+    ptab["var_poisson"] *= scale_poisson
 
-    xspl_int = np.interp(ptab["lam"], wave_grid, xspl)
+    resid = resid_num / np.sqrt(resid_rnoise * scale_rnoise + resid_poisson * scale_poisson)
+
+    if make_plot:
+        ax = axes[1]
+        ax.scatter(
+            ptab["wave"][test][ok][::skip],
+            resid[::skip],
+            c=dy[test][ok][::skip],
+            alpha=0.1,
+            marker=".",
+        )
+
+    xspl_int = np.interp(ptab["wave"], wave_grid, xspl)
 
     xbspl = utils.bspline_templates(
         xspl_int, df=nspl, minmax=(0, 1), get_matrix=True
@@ -1115,18 +1042,11 @@ def pixel_table_background(
     if make_plot:
         ax.set_ylim(-5, 5)
         axes[0].plot(wave_grid, splm, color="magenta", alpha=0.5, zorder=1000)
+        fig.tight_layout(pad=1)
 
-    sky = np.interp(ptab["lam"], wave_grid, splm)  #
-    # sky = xbspl.dot(coeffs[0])
+    sky = np.interp(ptab["wave"], wave_grid, splm)  #
 
-    # ptab['sky'] = sky #np.interp(ptab['lam'], xsky, sky_med)
-    ptab["sky"] = np.interp(ptab["lam"], xsky, sky_med)
-    # ptab["valid"] &= (ptab["data"] - ptab["sky"]) > -9 * np.sqrt(
-    #     ptab["var_total"]
-    # )
-
-    # ptab["valid"] &= ptab["lam"] > np.nanpercentile(ptab["lam"], 2)
-    # ptab["valid"] &= ptab["lam"] < np.nanpercentile(ptab["lam"], 98)
+    ptab["sky"] = np.interp(ptab["wave"], xsky, sky_med)
 
     return True
 
@@ -1135,7 +1055,7 @@ def slice_corners(
     input,
     coord_system="skyalign",
     slice_indices=range(30),
-    slice_wavelength_range=None,
+    slice_wavelength_range="auto",
     **kwargs,
 ):
     """Find the sky footprint of a slice of a NIRSpec exposure
@@ -1149,8 +1069,16 @@ def slice_corners(
     ----------
     input: data model
        input model (or file)
+
     coord_system : str
        coordinate system of output cube: skyalign, ifualign, internal_cal
+
+    slice_indices : list
+        indices of the IFU slices to extract (0-30)
+
+    slice_wavelength_range : [float, float], "auto"
+        Wavelength range to extract for a particular slice.  If ``auto``, then determine from
+        `msaexp.pipeline.extended.EXTENDED_RANGES` for the grating and filter of ``input``.
 
     Notes
     -----
@@ -1159,10 +1087,20 @@ def slice_corners(
     min and max spatial coordinates and wavelength for slice.
 
     """
+    from tqdm import tqdm
     from jwst.assign_wcs import nirspec
     from jwst.assign_wcs.util import wrap_ra
     from gwcs import wcstools
-    from tqdm import tqdm
+    from .pipeline_extended import EXTENDED_RANGES
+
+    if slice_wavelength_range is "auto":
+        inst_ = input.meta.instrument.instance
+        gfilt = '{filter}_{grating}'.format(**inst_).upper()
+
+        slice_wavelength_range = [w*1.e-6 for w in EXTENDED_RANGES[gfilt]]
+
+        msg = f"slice_wavelength_range: auto {gfilt} {EXTENDED_RANGES[gfilt]}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     # nslices = 30
     nslices = len(slice_indices)
@@ -1337,13 +1275,12 @@ def query_obsid_exposures(
 def drizzle_cube_data(
     ptab,
     wave_sample=1.05,
-    wrange=None,
+    drizzle_wave_limits=None,
     pixel_size=0.1,
     pixfrac=0.75,
     side="auto",
     center=(0.0, 0.0),
     column=None,
-    bad_pixel_flag=IFU_BAD_PIXEL_FLAG,
     **kwargs,
 ):
     """
@@ -1351,9 +1288,11 @@ def drizzle_cube_data(
     """
     from tqdm import tqdm
 
+    dx, dy = pixel_table_dx_dy(ptab, **kwargs)
+
     if side in ["auto"]:
-        sx = (int(np.nanmax(np.abs(ptab["dx"])) / pixel_size) + 4) * pixel_size
-        sy = (int(np.nanmax(np.abs(ptab["dy"])) / pixel_size) + 4) * pixel_size
+        sx = (int(np.nanmax(np.abs(dx)) / pixel_size) + 4) * pixel_size
+        sy = (int(np.nanmax(np.abs(dy)) / pixel_size) + 4) * pixel_size
         side = [sx, sy]
 
     if not hasattr(side, "__len__"):
@@ -1368,8 +1307,8 @@ def drizzle_cube_data(
     wave_grid = msautils.get_standard_wavelength_grid(
         ptab.meta["grating"], sample=wave_sample
     )
-    if wrange is not None:
-        wsub = (wave_grid >= wrange[0]) & (wave_grid <= wrange[1])
+    if drizzle_wave_limits is not None:
+        wsub = (wave_grid >= drizzle_wave_limits[0]) & (wave_grid <= drizzle_wave_limits[1])
         wave_grid = wave_grid[wsub]
 
     wbin = msautils.array_to_bin_edges(wave_grid)
@@ -1386,30 +1325,29 @@ def drizzle_cube_data(
     den = np.zeros((len(wave_grid), ny, nx))
     vnum = np.zeros((len(wave_grid), ny, nx))
 
-    # no_dq = (ptab["dq"] - (ptab["dq"] & 4)) == 0
-    no_dq = (ptab["dq"] & bad_pixel_flag) == 0
+    var_total = ptab["var_rnoise"] + ptab["var_poisson"]
 
     for k in tqdm(range(len(wave_grid))):
 
-        sub = (ptab["lam"] > wbin[k]) & (ptab["lam"] < wbin[k + 1])
+        sub = (ptab["wave"] > wbin[k]) & (ptab["wave"] < wbin[k + 1])
         sub &= ptab["valid"]
-        sub &= no_dq
+        sub &= ptab["slice"] < 30
+
         if sub.sum() == 0:
             continue
 
-        if 1:
-            ysl = ptab["dy"][sub] * 1 - center[1]
-            xsl = ptab["dx"][sub] * 1 - center[0]
-        else:
-            ysl = ptab["dde"][sub] * 1
-            xsl = -1 * ptab["dra"][sub]
+        ysl = dy[sub] - center[1]
+        xsl = dx[sub] - center[0]
 
         if column is None:
-            data = (ptab["data"] - ptab["sky"])[sub] * 1
+            if "sky" in ptab.colnames:
+                data = (ptab["data"] - ptab["sky"])[sub] * 1
+            else:
+                data = ptab["data"][sub] * 1
         else:
             data = ptab[column][sub] * 1
 
-        var = (ptab["var_total"])[sub] * 1
+        var = var_total[sub] * 1
         wht = 1.0 / ptab["var_rnoise"][sub] * 1
 
         dkws = dict(oversample=5, pixfrac=pixfrac * 1, sample_axes="xy")
@@ -1436,7 +1374,7 @@ def make_drizzle_hdul(
     den,
     vnum,
     wave_sample=1.05,
-    wrange=None,
+    drizzle_wave_limits=None,
     pixel_size=0.1,
     pixfrac=0.75,
     center=(0.0, 0.0),
@@ -1454,9 +1392,11 @@ def make_drizzle_hdul(
 
     """
 
+    dx, dy = pixel_table_dx_dy(ptab, **kwargs)
+
     if side in ["auto"]:
-        sx = (int(np.nanmax(np.abs(ptab["dx"])) / pixel_size) + 4) * pixel_size
-        sy = (int(np.nanmax(np.abs(ptab["dy"])) / pixel_size) + 4) * pixel_size
+        sx = (int(np.nanmax(np.abs(dx)) / pixel_size) + 4) * pixel_size
+        sy = (int(np.nanmax(np.abs(dy)) / pixel_size) + 4) * pixel_size
         side = [sx, sy]
 
     if not hasattr(side, "__len__"):
@@ -1471,8 +1411,8 @@ def make_drizzle_hdul(
     wave_grid = msautils.get_standard_wavelength_grid(
         ptab.meta["grating"], sample=wave_sample
     )
-    if wrange is not None:
-        wsub = (wave_grid >= wrange[0]) & (wave_grid <= wrange[1])
+    if drizzle_wave_limits is not None:
+        wsub = (wave_grid >= drizzle_wave_limits[0]) & (wave_grid <= drizzle_wave_limits[1])
         wave_grid = wave_grid[wsub]
 
     wbin = msautils.array_to_bin_edges(wave_grid)
@@ -1487,14 +1427,16 @@ def make_drizzle_hdul(
         size=[2 * s * pixel_size for s in Nside],
         pixscale=pixel_size,
         get_hdu=True,
-        theta=pa_aper,
+        theta=-pa_aper,
     )
+    sky_wcs = pywcs.WCS(hdul.header, relax=True)
+
     hdul.header["NAXIS"] = 3
 
     hdul.header["CUNIT3"] = "Angstrom"
 
-    hdul.header["CD1_1"] *= -1
-    hdul.header["CD1_2"] *= -1
+    # hdul.header["CD1_1"] *= -1
+    # hdul.header["CD1_2"] *= -1
 
     if np.std(np.diff(wave_grid)) == 0:
         hdul.header["CTYPE3"] = "WAVE"
@@ -1538,13 +1480,13 @@ def make_drizzle_hdul(
 def ifu_pipeline(
     obsid="04056002001",
     grating="G395H",
+    output_suffix="",
     outroot=None,
     use_first_center=True,
     files=None,
     make_drizzled=True,
     perform_saturation=False,
     cumulative_saturation=True,
-    low_threshold=-4,
     **kwargs,
 ):
     """
@@ -1600,7 +1542,7 @@ def ifu_pipeline(
             grating = im[0].header["GRATING"]
 
     msg = f"ifu_pipeline: file={files[0]}  {obsid} {grating}"
-    utils.LOGFILE = f"cube-{obsid}-{grating}.log.txt".lower()
+    utils.LOGFILE = f"cube-{obsid}-{grating}{output_suffix}.log.txt".lower()
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     # Initialize
@@ -1625,6 +1567,10 @@ def ifu_pipeline(
         else:
             if use_first_center & ("ref_coord" not in kwargs):
                 kwargs["ref_coord"] = (cubes[0].target_ra, cubes[0].target_dec)
+
+    if "ref_coord" in kwargs:
+        for cube in cubes:
+            cube.ptab.meta["ra_ref"], cube.ptab.meta["dec_ref"] = kwargs["ref_coord"]
 
     #### TBD: saturated mask when running on cal files
 
@@ -1673,7 +1619,7 @@ def ifu_pipeline(
         SOURCE = "indef"
 
     if outroot is None:
-        outroot = f"cube-{obsid}_{grating}-{ptabs[0].meta['filter']}_{SOURCE}".lower()
+        outroot = f"cube-{obsid}_{grating}-{ptabs[0].meta['filter']}_{SOURCE}{output_suffix}".lower()
 
     strip_fig = plot_cube_strips(ptabs)
     strip_fig.text(
@@ -1701,25 +1647,7 @@ def ifu_pipeline(
     for i, file_ in enumerate(files):
         ptab.meta[f"file{i:04d}"] = file_
 
-    if "valid" not in ptab.colnames:
-        ptab["valid"] = True
-
-    if "bad_pixel_flag" in kwargs:
-        msg = 'Update "valid" with bad_pixel_flag = {bad_pixel_flag}'.format(
-            **kwargs
-        )
-        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-
-        ptab.meta["bad_pixel_flag"] = kwargs["bad_pixel_flag"]
-        ptab["valid"] = (ptab["dq"] & kwargs["bad_pixel_flag"]) == 0
-
-    if low_threshold is not None:
-        bad_low = ptab["data"] < low_threshold * np.sqrt(ptab["var_total"])
-        msg = (
-            f"Pixels below {low_threshold} x sqrt(var_total): {bad_low.sum()}"
-        )
-        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-        ptab["valid"] &= ~bad_low
+    ptab["valid"] = pixel_table_valid_data(ptab, **kwargs)
 
     if make_drizzled:
         num, den, vnum = drizzle_cube_data(ptab, **kwargs)
@@ -1742,15 +1670,15 @@ def ifu_pipeline(
     return outroot, cubes, ptab, hdul
 
 
-def rerun_drizzle(ptab, **kwargs):
+def rerun_drizzle(ptab, output_suffix="", **kwargs):
     """
     Rerun drizzle cube steps
     """
     num, den, vnum = drizzle_cube_data(ptab, **kwargs)
     hdul = make_drizzle_hdul(ptab, num, den, vnum, **kwargs)
 
-    outroot = "cube-{obsid}_{grating}-{filter}_{srcname}".format(
-        **ptab.meta
+    outroot = "cube-{obsid}_{grating}-{filter}_{srcname}{output_suffix}".format(
+        output_suffix=output_suffix, **ptab.meta
     ).lower()
 
     for ext in range(3):
@@ -1781,9 +1709,9 @@ def pixel_table_to_fits(
         "slice",
         "dx",
         "dy",
-        "dra",
-        "dde",
-        "lam",
+        "ra",
+        "dec",
+        "wave",
     ],
     **kwargs,
 ):
@@ -1791,15 +1719,49 @@ def pixel_table_to_fits(
     Make full HDUList
     """
     hdul = [pyfits.PrimaryHDU()]
-    hdul += [
-        pixel_table_to_detector(ptab, column=c, as_hdu=True, **kwargs)
-        for c in columns
-    ]
+    for c in columns:
+        if c in ptab.colnames:
+            hdul.append(pixel_table_to_detector(ptab, column=c, as_hdu=True, **kwargs))
+
     hdul = pyfits.HDUList(hdul)
-    if "lam" in columns:
-        hdul["LAM"].header["EXTNAME"] = "WAVE"
 
     return hdul
+
+
+def pixel_table_valid_data(ptab, low_threshold=-4, bad_pixel_flag=IFU_BAD_PIXEL_FLAG):
+    """
+    Determine "valid" pixels in a pixel table with optional bad pixel flagging
+
+    Parameters
+    ----------
+    ptab : Table
+        Pixel table
+
+    Returns
+    -------
+    valid : array-like
+        Boolean array True where data are determined to be valid
+
+    """
+    valid = np.isfinite(ptab["wave"] + ptab["data"])
+
+    if bad_pixel_flag is not None:
+        msg = f'Update "valid" with bad_pixel_flag = {bad_pixel_flag}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        ptab.meta["bad_pixel_flag"] = bad_pixel_flag
+        valid &= (ptab["dq"] & bad_pixel_flag) == 0
+
+    if low_threshold is not None:
+        var_total = ptab["var_poisson"] + ptab["var_rnoise"]
+        bad_low = ptab["data"] < low_threshold * np.sqrt(var_total)
+        msg = (
+            f"Pixels below {low_threshold} x sqrt(var_total): {bad_low.sum()}"
+        )
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+        valid &= ~bad_low
+
+    return valid
 
 
 def pixel_table_to_detector(
@@ -1853,6 +1815,47 @@ def pixel_table_to_detector(
         return detector_array
 
 
+def pixel_table_dx_dy(ptab, ref_coords=None, wcs=None, **kwargs):
+    """
+    Parameters
+    ----------
+    ptab : Table
+        IFU cube pixel table with (at least) columns ``ra``, ``dec`` and attribute
+        ``meta["position_angle"]``
+
+    ref_coords : (float, float), None
+        Reference decimal ra, dec.  If not specified, then get from ``ra_ref``, ``dec_ref``
+        entries in the metadata
+
+    Returns
+    -------
+    dx, dy : array-like
+        Offset coordinates in arcsec relative to the reference center
+
+    """
+    if wcs is not None:
+        dx, dy = wcs.all_world2pix(ptab["ra"], ptab["dec"], 0)
+        return dx, dy
+
+    rot = rotation_matrix(ptab.meta["position_angle"])
+
+    if ref_coords is None:
+        ra_ref = ptab.meta["ra_ref"]
+        dec_ref = ptab.meta["dec_ref"]
+    else:
+        ra_ref, dec_ref = ref_coords
+
+    dra = (
+        -(ptab["ra"] - ra_ref)
+        * np.cos(dec_ref / 180 * np.pi)
+        * 3600
+    )
+    dde = (ptab["dec"] - dec_ref) * 3600
+
+    dx, dy = np.array([dra, dde]).T.dot(rot).T
+
+    return dx, dy
+
 def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
     """
     Run full pipeline for DJA
@@ -1860,7 +1863,7 @@ def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
     from .pipeline_extended import EXTENDED_RANGES
     import yaml
 
-    wrange = [w * 1.0e-6 for w in EXTENDED_RANGES[gfilt]]
+    slice_wrange = [w * 1.0e-6 for w in EXTENDED_RANGES[gfilt]]
 
     filter, grating = gfilt.split("_")
 
@@ -1870,6 +1873,7 @@ def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
         pixfrac=0.75,
         side="auto",
         wave_sample=1.05,
+        drizzle_wave_limits=None,
         files=None,
         obsid=obsid,
         filter=filter,
@@ -1882,19 +1886,20 @@ def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
         do_photom=False,
         extend_wavelengths=True,
         use_first_center=True,
-        slice_wavelength_range=wrange,  # [0.5e-6, 5.6e-6],
+        slice_wavelength_range=slice_wrange,  # [0.5e-6, 5.6e-6],
         make_drizzled=True,
         bad_pixel_flag=(
             msautils.BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
         ),
         perform_saturation=True,
         cumulative_saturation=True,
+        output_suffix="",
     )
 
     for k in kwargs:
         params[k] = kwargs[k]
 
-    yaml_file = f"cube-{obsid}-{grating}.params.yaml".lower()
+    yaml_file = f"cube-{obsid}-{grating}{params['output_suffix']}.params.yaml".lower()
     with open(yaml_file, "w") as fp:
         yaml.dump(params, fp)
 
