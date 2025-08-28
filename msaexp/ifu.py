@@ -875,6 +875,7 @@ def pixel_table_background(
     sky_annulus=(0.5, 1.0),
     make_plot=True,
     skip_pixel_table_background=False,
+    rescale_noise=False,
     **kwargs,
 ):
     """
@@ -969,8 +970,8 @@ def pixel_table_background(
         sky_med = nd.median_filter(
             ptab["data"][test][ok][so].astype(float), 64
         )
-        if make_plot:
-            ax.plot(ptab["wave"][test][ok][so], sky_med, alpha=0.5)
+        # if make_plot:
+        #     ax.plot(ptab["wave"][test][ok][so], sky_med, alpha=0.5)
 
         sky_interp = np.interp(ptab["wave"][test], xsky, sky_med)
         ok = np.abs(ptab["data"][test] - sky_interp) < 5 * np.sqrt(
@@ -998,7 +999,7 @@ def pixel_table_background(
     if make_plot:
         axes[0].plot(xsky, splm, color="yellow", alpha=0.5)
 
-        ax.scatter(
+        axes[0].scatter(
             ptab["wave"][test][ok][::skip],
             ptab["data"][test][ok][::skip],
             alpha=0.1,
@@ -1013,18 +1014,25 @@ def pixel_table_background(
     resid_poisson = ptab["var_poisson"][test][ok] * ptab.meta["scale_poisson"]
     resid = resid_num / np.sqrt(resid_rnoise + resid_poisson)
 
-    res = minimize(
-        objfun_scale_rnoise,
-        x0=[1.0, 1.0],
-        args=(resid_num, resid_rnoise, resid_poisson),
-        method="bfgs",
-        options={"eps": 1.0e-2},
-        tol=1.0e-6,
-    )
-    scale_rnoise = res.x[0]
-    if len(res.x) > 1:
-        scale_poisson = res.x[1]
+    if rescale_noise:
+        res = minimize(
+            objfun_scale_rnoise,
+            x0=[1.0],
+            args=(resid_num, resid_rnoise, resid_poisson),
+            method="bfgs",
+            options={"eps": 1.0e-2},
+            tol=1.0e-6,
+        )
+        scale_rnoise = res.x[0]
+        if len(res.x) > 1:
+            scale_poisson = res.x[1]
+        else:
+            scale_poisson = 1.0
+
+        ptab.meta["scale_rnoise"] *= scale_rnoise
+        ptab.meta["scale_poisson"] *= scale_poisson
     else:
+        scale_rnoise = 1.0
         scale_poisson = 1.0
 
     msg = f"  uncertainty nmad={utils.nmad(resid):.3f} std={np.std(resid):.3f}  scale_rnoise={np.sqrt(scale_rnoise):.3f}  scale_poisson={np.sqrt(scale_poisson):.3f}"
@@ -1032,9 +1040,6 @@ def pixel_table_background(
 
     ptab.meta["rnoise_nmad"] = utils.nmad(resid)
     ptab.meta["rnoise_std"] = np.std(resid)
-
-    ptab.meta["scale_rnoise"] *= scale_rnoise
-    ptab.meta["scale_poisson"] *= scale_poisson
 
     # ptab["var_rnoise"] *= scale_rnoise
     # ptab["var_poisson"] *= scale_poisson
@@ -1068,6 +1073,8 @@ def pixel_table_background(
         ax.set_ylim(-5, 5)
         axes[0].plot(wave_grid, splm, color="magenta", alpha=0.5, zorder=1000)
         fig.tight_layout(pad=1)
+        ymax = np.nanpercentile(splm, 90)
+        axes[0].set_ylim(-0.2*ymax, 1.5*ymax)
 
     sky = np.interp(ptab["wave"], wave_grid, splm)  #
 
@@ -1581,8 +1588,9 @@ def ifu_pipeline(
         files.sort()
     else:
         obsid = files[0][2:13]
-        with pyfits.open(files[0]) as im:
-            grating = im[0].header["GRATING"]
+        if grating is None:
+            with pyfits.open(files[0]) as im:
+                grating = im[0].header["GRATING"]
 
     msg = f"ifu_pipeline: file={files[0]}  {obsid} {grating}"
     utils.LOGFILE = f"cube-{obsid}-{grating}{output_suffix}.log.txt".lower()
@@ -1867,6 +1875,9 @@ def pixel_table_to_detector(
         detector_array = detector_array[0, :, :]
 
     if as_hdu:
+        if "spectral_region" in ptab.meta:
+            _ = ptab.meta.pop("spectral_region")
+
         hdu = pyfits.ImageHDU(
             data=detector_array, header=pyfits.Header(ptab.meta)
         )
