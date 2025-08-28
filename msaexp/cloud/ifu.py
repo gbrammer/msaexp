@@ -17,7 +17,57 @@ from .. import utils as msautils
 __all__ = [
     "preprocess_ifu_file",
     "fs_to_ptab",
+    "run_one_preprocess_ifu",
 ]
+
+
+def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
+    """
+    Process with interaction with DJA db
+    """
+    import glob
+    from grizli.aws import db
+
+    if rowid is None:
+        row = db.SQL(f"""
+            SELECT rowid, \"fileSetName\", LOWER(detector) as detector
+            FROM nirspec_ifu_exposures
+            WHERE status = 0
+            ORDER BY RANDOM()
+            LIMIT 1
+        """)
+    else:
+        row = db.SQL(f"""
+            SELECT rowid, \"fileSetName\", LOWER(detector) as detector
+            FROM nirspec_ifu_exposures
+            WHERE rowid = {rowid}
+            ORDER BY RANDOM()
+            LIMIT 1
+        """)
+
+    if len(row) == 0:
+        return None
+
+    rate_file = "{fileSetName}_{detector}_rate.fits".format(**row[0])
+
+    rowid = row["rowid"][0]
+    if sync:
+        db.execute(f"UPDATE nirspec_ifu_exposures SET status = 1 WHERE rowid = {rowid}")
+
+    cube = preprocess_ifu_file(rate_file, sync=sync, **kwargs)
+
+    if sync:
+        db.execute(f"UPDATE nirspec_ifu_exposures SET status = 2 WHERE rowid = {rowid}")
+
+    if clean:
+        files = glob.glob(rate_file.replace("_rate.fits", "*"))
+        files.sort()
+        for file in files:
+            print(f"rm {file}")
+            os.remove(file)
+
+    return cube
+
 
 def preprocess_ifu_file(
     file,
