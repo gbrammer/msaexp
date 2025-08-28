@@ -61,9 +61,18 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     cube = preprocess_ifu_file(rate_file, sync=sync, **kwargs)
 
     if sync:
+        if isinstance(cube, str):
+            # rate_file not found / downloaded
+            status = 3
+        elif not os.path.exists(rate_file.replace('_ptab.fits')):
+            # Script seemed to finish but ptab product not found
+            status = 9
+        else:
+            status = 2
+
         now = time.time()
         db.execute(
-            f"UPDATE nirspec_ifu_exposures SET status = 2, ctime = {now} WHERE rowid = {rowid}"
+            f"UPDATE nirspec_ifu_exposures SET status = {status}, ctime = {now} WHERE rowid = {rowid}"
         )
 
     if clean:
@@ -110,6 +119,9 @@ def preprocess_ifu_file(
 
     if not os.path.exists(file):
         mastquery.utils.download_from_mast([file])
+
+    if not os.path.exists(file):
+        return f'{file} not found'
 
     cube = msaifu.ExposureCube(
         file,
