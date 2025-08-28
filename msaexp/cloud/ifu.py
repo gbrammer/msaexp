@@ -64,7 +64,7 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
         if isinstance(cube, str):
             # rate_file not found / downloaded
             status = 3
-        elif not os.path.exists(rate_file.replace('_ptab.fits')):
+        elif not os.path.exists(rate_file.replace("_rate.fits", "_ptab.fits")):
             # Script seemed to finish but ptab product not found
             status = 9
         else:
