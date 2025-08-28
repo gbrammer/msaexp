@@ -117,11 +117,11 @@ def preprocess_ifu_file(
     """
     import mastquery.utils
 
-    if not os.path.exists(file):
+    if (not os.path.exists(file)) & (not os.path.exists(file.replace("_rate.fits", "_ptab.fits"))):
         mastquery.utils.download_from_mast([file])
 
-    if not os.path.exists(file):
-        return f'{file} not found'
+        if not os.path.exists(file):
+            return f'{file} not found'
 
     cube = msaifu.ExposureCube(
         file,
