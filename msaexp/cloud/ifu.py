@@ -55,7 +55,7 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     if sync:
         now = time.time()
         db.execute(
-            f"UPDATE nirspec_ifu_exposures SET status = 1 WHERE rowid = {rowid}, ctime = {now}"
+            f"UPDATE nirspec_ifu_exposures SET status = 1, ctime = {now} WHERE rowid = {rowid}"
         )
 
     cube = preprocess_ifu_file(rate_file, sync=sync, **kwargs)
@@ -63,7 +63,7 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     if sync:
         now = time.time()
         db.execute(
-            f"UPDATE nirspec_ifu_exposures SET status = 2 WHERE rowid = {rowid}, ctime = {now}"
+            f"UPDATE nirspec_ifu_exposures SET status = 2, ctime = {now} WHERE rowid = {rowid}"
         )
 
     if clean:
