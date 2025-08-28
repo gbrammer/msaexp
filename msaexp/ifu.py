@@ -22,6 +22,7 @@ from grizli import utils
 from . import utils as msautils
 from .utils import BAD_PIXEL_FLAG
 from .slit_combine import pseudo_drizzle
+from .version import __version__ as msaexp_version
 
 IFU_BAD_PIXEL_FLAG = BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
 
@@ -270,6 +271,7 @@ class ExposureCube:
         ptab.meta["DEC_REF"] = dec_ref
         ptab.meta["NSLICE"] = len(shapes)
         ptab.meta["FILE"] = self.file
+        ptab.meta['MSAEXPV'] = msaexp_version
 
         # Save to YAML
         meta_to_yaml(self.input.meta)
