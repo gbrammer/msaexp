@@ -27,6 +27,7 @@ IFU_BAD_PIXEL_FLAG = BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
 
 VERBOSITY = True
 
+
 def rotation_matrix(angle):
     """
     Compute a 2x2 rotation matrix for an input ``angle`` in degrees
@@ -294,7 +295,9 @@ class ExposureCube:
         ptab.meta["calver"] = self.input.meta.calibration_software_version
 
         # Trim NaN, e.g., from S-Flats
-        valid_data = np.isfinite(ptab["data"] + ptab["var_rnoise"] + ptab["wave"])
+        valid_data = np.isfinite(
+            ptab["data"] + ptab["var_rnoise"] + ptab["wave"]
+        )
         ptab = ptab[valid_data]
 
         # Slice info
@@ -466,7 +469,14 @@ def plot_cube_strips(ptabs, figsize=(10, 5), cmap="bone_r", **kwargs):
     return fig
 
 
-def detector_corrections(file, run_oneoverf=True, prism_oneoverf_rows=True, update_stats=True, skip_subarray=True, **kwargs):
+def detector_corrections(
+    file,
+    run_oneoverf=True,
+    prism_oneoverf_rows=True,
+    update_stats=True,
+    skip_subarray=True,
+    **kwargs,
+):
     """
     Detector-level corrections on a rate file
     """
@@ -490,15 +500,13 @@ def detector_corrections(file, run_oneoverf=True, prism_oneoverf_rows=True, upda
         rate_dq = im["DQ"].data * 1
 
     sflat, sflat_mask = load_ifu_sflat(
-        grating=grating, #"prism",
-        filter=filter, #"clear",
+        grating=grating,  # "prism",
+        filter=filter,  # "clear",
         # detector="nrs1",
         detector=detector.lower(),
     )
 
-    empty_mask = (
-        (~sflat_mask) & (np.isfinite(rate_sci)) & (rate_dq & 1 == 0)
-    )
+    empty_mask = (~sflat_mask) & (np.isfinite(rate_sci)) & (rate_dq & 1 == 0)
     empty_mask &= rate_sci > -10 * rate_err
 
     if do_corr:
@@ -551,19 +559,27 @@ def detector_corrections(file, run_oneoverf=True, prism_oneoverf_rows=True, upda
         rate_err = np.sqrt(rate_var_rnoise + rate_var_poisson)
 
         with pyfits.open(file, mode="update") as im:
-            if 'DETMED' in im[0].header:
-                im[0].header['DETMED'] += det_median
+            if "DETMED" in im[0].header:
+                im[0].header["DETMED"] += det_median
             else:
-                im[0].header['DETMED'] = (det_median, "Median from empty pixels")
+                im[0].header["DETMED"] = (
+                    det_median,
+                    "Median from empty pixels",
+                )
 
-            if 'DETNMAD' in im[0].header:
-                im[0].header['DETNMAD'] *= det_nmad
+            if "DETNMAD" in im[0].header:
+                im[0].header["DETNMAD"] *= det_nmad
             else:
-                im[0].header['DETNMAD'] = (det_nmad, "RNOISE NMAD from empty pixels")
+                im[0].header["DETNMAD"] = (
+                    det_nmad,
+                    "RNOISE NMAD from empty pixels",
+                )
 
-            im['SCI'].data -= det_median
-            im['VAR_RNOISE'].data *= det_nmad**2
-            im['ERR'].data = np.sqrt(im['VAR_RNOISE'].data + im['VAR_POISSON'].data)
+            im["SCI"].data -= det_median
+            im["VAR_RNOISE"].data *= det_nmad**2
+            im["ERR"].data = np.sqrt(
+                im["VAR_RNOISE"].data + im["VAR_POISSON"].data
+            )
             im.flush()
 
     res = {
@@ -666,7 +682,7 @@ def load_ifu_sflat(
     if (grating.lower() == "prism") & (detector.lower() == "nrs2"):
         # Doesn't exist
         sflat = np.zeros((2048, 2048))
-        sflat[900:990, 400:950] = 1.
+        sflat[900:990, 400:950] = 1.0
         sflat_mask = sflat > 0
 
         msg = f"msaexp.ifu.load_ifu_sflat: mask S200B1 for {grating} {filter} {detector}"
@@ -914,10 +930,7 @@ def pixel_table_background(
     if sky_annulus is None:
         coord_test = valid_dq & True
     else:
-        dr = np.sqrt(
-            (dx - sky_center[0]) ** 2
-            + (dy - sky_center[1]) ** 2
-        )
+        dr = np.sqrt((dx - sky_center[0]) ** 2 + (dy - sky_center[1]) ** 2)
         coord_test = valid_dq & (dr > sky_annulus[0])
         coord_test &= valid_dq & (dr < sky_annulus[1])
 
@@ -938,18 +951,29 @@ def pixel_table_background(
 
     ok = np.isfinite(ptab["wave"][test])
 
-    var_total = ptab["var_rnoise"] + ptab["var_poisson"]
+    if "scale_rnoise" not in ptab.meta:
+        ptab.meta["scale_rnoise"] = 1.0
+        ptab.meta["scale_poisson"] = 1.0
+
+    var_total = (
+        ptab["var_rnoise"] * ptab.meta["scale_rnoise"]
+        + ptab["var_poisson"] * ptab.meta["scale_poisson"]
+    )
 
     for _iter in range(3):
 
         so = np.argsort(ptab["wave"][test][ok])
         xsky = ptab["wave"][test][ok][so]
-        sky_med = nd.median_filter(ptab["data"][test][ok][so].astype(float), 64)
+        sky_med = nd.median_filter(
+            ptab["data"][test][ok][so].astype(float), 64
+        )
         if make_plot:
             ax.plot(ptab["wave"][test][ok][so], sky_med, alpha=0.5)
 
         sky_interp = np.interp(ptab["wave"][test], xsky, sky_med)
-        ok = np.abs(ptab["data"][test] - sky_interp) < 5 * np.sqrt(var_total[test])
+        ok = np.abs(ptab["data"][test] - sky_interp) < 5 * np.sqrt(
+            var_total[test]
+        )
         ok &= var_total[test] < 8 * np.median(var_total[test][ok])
         msg = f"iter {_iter} {ok.sum()}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
@@ -983,8 +1007,8 @@ def pixel_table_background(
     resid_num = ptab["data"][test][ok] - np.interp(
         ptab["wave"][test][ok], xsky, sky_med
     )
-    resid_rnoise = ptab["var_rnoise"][test][ok]
-    resid_poisson = ptab["var_poisson"][test][ok]
+    resid_rnoise = ptab["var_rnoise"][test][ok] * ptab.meta["scale_rnoise"]
+    resid_poisson = ptab["var_poisson"][test][ok] * ptab.meta["scale_poisson"]
     resid = resid_num / np.sqrt(resid_rnoise + resid_poisson)
 
     res = minimize(
@@ -992,7 +1016,7 @@ def pixel_table_background(
         x0=[1.0, 1.0],
         args=(resid_num, resid_rnoise, resid_poisson),
         method="bfgs",
-        options={'eps': 1.e-2},
+        options={"eps": 1.0e-2},
         tol=1.0e-6,
     )
     scale_rnoise = res.x[0]
@@ -1006,17 +1030,16 @@ def pixel_table_background(
 
     ptab.meta["rnoise_nmad"] = utils.nmad(resid)
     ptab.meta["rnoise_std"] = np.std(resid)
-    if "scale_rnoise" in ptab.meta:
-        ptab.meta["scale_rnoise"] *= scale_rnoise
-        ptab.meta["scale_poisson"] *= scale_poisson
-    else:
-        ptab.meta["scale_rnoise"] = scale_rnoise
-        ptab.meta["scale_poisson"] = scale_poisson
 
-    ptab["var_rnoise"] *= scale_rnoise
-    ptab["var_poisson"] *= scale_poisson
+    ptab.meta["scale_rnoise"] *= scale_rnoise
+    ptab.meta["scale_poisson"] *= scale_poisson
 
-    resid = resid_num / np.sqrt(resid_rnoise * scale_rnoise + resid_poisson * scale_poisson)
+    # ptab["var_rnoise"] *= scale_rnoise
+    # ptab["var_poisson"] *= scale_poisson
+
+    resid = resid_num / np.sqrt(
+        resid_rnoise * scale_rnoise + resid_poisson * scale_poisson
+    )
 
     if make_plot:
         ax = axes[1]
@@ -1095,9 +1118,9 @@ def slice_corners(
 
     if slice_wavelength_range == "auto":
         inst_ = input.meta.instrument.instance
-        gfilt = '{filter}_{grating}'.format(**inst_).upper()
+        gfilt = "{filter}_{grating}".format(**inst_).upper()
 
-        slice_wavelength_range = [w*1.e-6 for w in EXTENDED_RANGES[gfilt]]
+        slice_wavelength_range = [w * 1.0e-6 for w in EXTENDED_RANGES[gfilt]]
 
         msg = f"slice_wavelength_range: auto {gfilt} {EXTENDED_RANGES[gfilt]}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
@@ -1246,18 +1269,22 @@ def query_obsid_exposures(
         in_range = np.ones(len(res), dtype=bool)
         for p in param_ranges:
             if p in res.colnames:
-                p_test = (res[p] >= param_ranges[p][0]) & (res[p] <= param_ranges[p][1])
-                print(f'param_range: {p} = {param_ranges[p]}  {p_test.sum()} / {len(res)}')
+                p_test = (res[p] >= param_ranges[p][0]) & (
+                    res[p] <= param_ranges[p][1]
+                )
+                print(
+                    f"param_range: {p} = {param_ranges[p]}  {p_test.sum()} / {len(res)}"
+                )
                 in_range &= p_test
 
         res = res[in_range]
 
     if (grating is None) & trim_prism_nrs2:
-        prism_nrs2 = (res['grating'] == 'PRISM') & (res['detector'] == 'NRS2')
-        prism_nrs2 &= (res['apername'] != 'NRS_S200B2_SLIT')
+        prism_nrs2 = (res["grating"] == "PRISM") & (res["detector"] == "NRS2")
+        prism_nrs2 &= res["apername"] != "NRS_S200B2_SLIT"
 
         if prism_nrs2.sum() > 0:
-            msg = f'Remove {prism_nrs2.sum()} PRISM NRS2 exposures that will be empty'
+            msg = f"Remove {prism_nrs2.sum()} PRISM NRS2 exposures that will be empty"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
             res = res[~prism_nrs2]
 
@@ -1308,7 +1335,9 @@ def drizzle_cube_data(
         ptab.meta["grating"], sample=wave_sample
     )
     if drizzle_wave_limits is not None:
-        wsub = (wave_grid >= drizzle_wave_limits[0]) & (wave_grid <= drizzle_wave_limits[1])
+        wsub = (wave_grid >= drizzle_wave_limits[0]) & (
+            wave_grid <= drizzle_wave_limits[1]
+        )
         wave_grid = wave_grid[wsub]
 
     wbin = msautils.array_to_bin_edges(wave_grid)
@@ -1325,7 +1354,16 @@ def drizzle_cube_data(
     den = np.zeros((len(wave_grid), ny, nx))
     vnum = np.zeros((len(wave_grid), ny, nx))
 
-    var_total = ptab["var_rnoise"] + ptab["var_poisson"]
+    if "scale_rnoise" in ptab.meta:
+        scale_rnoise = ptab.meta["scale_rnoise"]
+        scale_poisson = ptab.meta["scale_poisson"]
+    else:
+        scale_rnoise = 1.0
+        scale_poisson = 1.0
+
+    var_total = (
+        ptab["var_rnoise"] * scale_rnoise + ptab["var_poisson"] * scale_poisson
+    )
 
     for k in tqdm(range(len(wave_grid))):
 
@@ -1348,7 +1386,7 @@ def drizzle_cube_data(
             data = ptab[column][sub] * 1
 
         var = var_total[sub] * 1
-        wht = 1.0 / ptab["var_rnoise"][sub] * 1
+        wht = 1.0 / (ptab["var_rnoise"][sub] * scale_rnoise)
 
         dkws = dict(oversample=5, pixfrac=pixfrac * 1, sample_axes="xy")
 
@@ -1392,7 +1430,7 @@ def make_drizzle_hdul(
 
     """
     import astropy.wcs as pywcs
-    
+
     dx, dy = pixel_table_dx_dy(ptab, **kwargs)
 
     if side in ["auto"]:
@@ -1413,7 +1451,9 @@ def make_drizzle_hdul(
         ptab.meta["grating"], sample=wave_sample
     )
     if drizzle_wave_limits is not None:
-        wsub = (wave_grid >= drizzle_wave_limits[0]) & (wave_grid <= drizzle_wave_limits[1])
+        wsub = (wave_grid >= drizzle_wave_limits[0]) & (
+            wave_grid <= drizzle_wave_limits[1]
+        )
         wave_grid = wave_grid[wsub]
 
     wbin = msautils.array_to_bin_edges(wave_grid)
@@ -1571,7 +1611,9 @@ def ifu_pipeline(
 
     if "ref_coord" in kwargs:
         for cube in cubes:
-            cube.ptab.meta["ra_ref"], cube.ptab.meta["dec_ref"] = kwargs["ref_coord"]
+            cube.ptab.meta["ra_ref"], cube.ptab.meta["dec_ref"] = kwargs[
+                "ref_coord"
+            ]
 
     #### TBD: saturated mask when running on cal files
 
@@ -1678,9 +1720,11 @@ def rerun_drizzle(ptab, output_suffix="", **kwargs):
     num, den, vnum = drizzle_cube_data(ptab, **kwargs)
     hdul = make_drizzle_hdul(ptab, num, den, vnum, **kwargs)
 
-    outroot = "cube-{obsid}_{grating}-{filter}_{srcname}{output_suffix}".format(
-        output_suffix=output_suffix, **ptab.meta
-    ).lower()
+    outroot = (
+        "cube-{obsid}_{grating}-{filter}_{srcname}{output_suffix}".format(
+            output_suffix=output_suffix, **ptab.meta
+        ).lower()
+    )
 
     for ext in range(3):
         hdul[ext].header["SRCNAME"] = ptab.meta["srcname"]
@@ -1722,14 +1766,18 @@ def pixel_table_to_fits(
     hdul = [pyfits.PrimaryHDU()]
     for c in columns:
         if c in ptab.colnames:
-            hdul.append(pixel_table_to_detector(ptab, column=c, as_hdu=True, **kwargs))
+            hdul.append(
+                pixel_table_to_detector(ptab, column=c, as_hdu=True, **kwargs)
+            )
 
     hdul = pyfits.HDUList(hdul)
 
     return hdul
 
 
-def pixel_table_valid_data(ptab, low_threshold=-4, bad_pixel_flag=IFU_BAD_PIXEL_FLAG, **kwargs):
+def pixel_table_valid_data(
+    ptab, low_threshold=-4, bad_pixel_flag=IFU_BAD_PIXEL_FLAG, **kwargs
+):
     """
     Determine "valid" pixels in a pixel table with optional bad pixel flagging
 
@@ -1754,7 +1802,17 @@ def pixel_table_valid_data(ptab, low_threshold=-4, bad_pixel_flag=IFU_BAD_PIXEL_
         valid &= (ptab["dq"] & bad_pixel_flag) == 0
 
     if low_threshold is not None:
-        var_total = ptab["var_poisson"] + ptab["var_rnoise"]
+        if "scale_rnoise" in ptab.meta:
+            scale_rnoise = ptab.meta["scale_rnoise"]
+            scale_poisson = ptab.meta["scale_poisson"]
+        else:
+            scale_rnoise = 1.0
+            scale_poisson = 1.0
+
+        var_total = (
+            ptab["var_poisson"] * scale_poisson
+            + ptab["var_rnoise"] * scale_rnoise
+        )
         bad_low = ptab["data"] < low_threshold * np.sqrt(var_total)
         msg = (
             f"Pixels below {low_threshold} x sqrt(var_total): {bad_low.sum()}"
@@ -1846,16 +1904,13 @@ def pixel_table_dx_dy(ptab, ref_coords=None, wcs=None, **kwargs):
     else:
         ra_ref, dec_ref = ref_coords
 
-    dra = (
-        -(ptab["ra"] - ra_ref)
-        * np.cos(dec_ref / 180 * np.pi)
-        * 3600
-    )
+    dra = -(ptab["ra"] - ra_ref) * np.cos(dec_ref / 180 * np.pi) * 3600
     dde = (ptab["dec"] - dec_ref) * 3600
 
     dx, dy = np.array([dra, dde]).T.dot(rot).T
 
     return dx, dy
+
 
 def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
     """
@@ -1900,7 +1955,9 @@ def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
     for k in kwargs:
         params[k] = kwargs[k]
 
-    yaml_file = f"cube-{obsid}-{grating}{params['output_suffix']}.params.yaml".lower()
+    yaml_file = (
+        f"cube-{obsid}-{grating}{params['output_suffix']}.params.yaml".lower()
+    )
     with open(yaml_file, "w") as fp:
         yaml.dump(params, fp)
 
