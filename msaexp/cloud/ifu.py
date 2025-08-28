@@ -27,6 +27,7 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     """
     import glob
     from grizli.aws import db
+    import time
 
     if rowid is None:
         row = db.SQL(f"""
@@ -52,12 +53,18 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
 
     rowid = row["rowid"][0]
     if sync:
-        db.execute(f"UPDATE nirspec_ifu_exposures SET status = 1 WHERE rowid = {rowid}")
+        now = time.time()
+        db.execute(
+            f"UPDATE nirspec_ifu_exposures SET status = 1 WHERE rowid = {rowid}, ctime = {now}"
+        )
 
     cube = preprocess_ifu_file(rate_file, sync=sync, **kwargs)
 
     if sync:
-        db.execute(f"UPDATE nirspec_ifu_exposures SET status = 2 WHERE rowid = {rowid}")
+        now = time.time()
+        db.execute(
+            f"UPDATE nirspec_ifu_exposures SET status = 2 WHERE rowid = {rowid}, ctime = {now}"
+        )
 
     if clean:
         files = glob.glob(rate_file.replace("_rate.fits", "*"))
