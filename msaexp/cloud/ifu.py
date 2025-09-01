@@ -337,12 +337,10 @@ def run_one_products_ifu(
 
     outroot = result['outroot']
     result_files = glob.glob(f"{outroot}*")
-    # result_files += glob.glob(f"jw{row['obsid'][0]}*")
+
     resp = result["resp"]
-    result_files += [
-        glob.glob("{fileSetName}_{detector}*".format(**row).lower())
-        for row in resp
-    ]
+    for row in resp:
+        result_files += glob.glob("{fileSetName}_{detector}*".format(**row).lower())
     
     result_files.sort()
 
