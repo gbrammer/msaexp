@@ -324,16 +324,17 @@ def run_one_products_ifu(
                 kwargs[k] = yaml_kwargs[k]
 
     rowid = row["rowid"][0]
-
+    obsid = row["obsid"][0]
+    gfilt = row["gfilt"][0]
+    
     if sync:
         now = time.time()
         db.execute(
             f"UPDATE nirspec_ifu_products SET status = 1, ctime = {now} WHERE rowid = {rowid}"
         )
 
-    result = combine_ifu_pipeline(
-        obsid=row["obsid"][0], gfilt=row["gfilt"][0], **kwargs
-    )
+    # Do it
+    result = combine_ifu_pipeline(obsid=obsid, gfilt=gfilt, **kwargs)
 
     outroot = result['outroot']
     result_files = glob.glob(f"{outroot}*")
@@ -351,7 +352,7 @@ def run_one_products_ifu(
             f"UPDATE nirspec_ifu_products SET status = 2, ctime = {now}, outroot = '{outroot}' WHERE rowid = {rowid}"
         )
 
-        s3_path = os.path.join(s3_prefix, "jw" + row["obsid"][0]) + "/"
+        s3_path = os.path.join(s3_prefix, "jw" + obsid) + "/"
         s3_path = s3_path.replace("//", "/").replace("s3:/", "s3://")
 
         send_command = f"aws s3 sync ./ {s3_path} --exclude \"*\" --include \"{outroot}*\" --acl public-read"
