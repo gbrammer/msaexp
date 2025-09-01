@@ -2463,6 +2463,9 @@ def cube_make_diagnostics(
     #     )
 
     for i, j in enumerate(src_sorted):
+        if i >= len(axes):
+            break
+
         ax = axes[i]
 
         seg_id = j + 1
