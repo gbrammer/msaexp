@@ -2066,7 +2066,9 @@ def cube_integrate_filter(cube_hdu, f_number=377, background=0, **kwargs):
 def cube_load_sensitivity(
     cube_hdu, prefix="msaexp_sensitivity", version="001", **kwargs
 ):
-    """ """
+    """
+    """
+    path_to_data = os.path.join(os.path.dirname(__file__), "data/extended_sensitivity")
     stab = utils.GTable(cube_hdu["WCS-TAB"].data)
     stab["wave"] = stab["WAVELENGTH"] / 1.0e4
 
@@ -2076,7 +2078,7 @@ def cube_load_sensitivity(
     file_template = "{prefix}_{grating}_{filter}_{version}.fits".lower()
 
     sens_file = os.path.join(
-        "/usr/local/share/python/msaexp/msaexp/data/extended_sensitivity",
+        path_to_data,
         file_template.format(
             prefix=prefix,
             filter=filter,
