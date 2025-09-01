@@ -323,7 +323,7 @@ def run_one_products_ifu(
             if k not in kwargs:
                 kwargs[k] = yaml_kwargs[k]
 
-    rowid = row["rowid"]
+    rowid = row["rowid"][0]
 
     if sync:
         now = time.time()
