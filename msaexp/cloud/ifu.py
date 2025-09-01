@@ -319,9 +319,9 @@ def run_one_products_ifu(
     if row["yaml_kwargs"][0]:
         yaml_kwargs = yaml.load(row["yaml_kwargs"][0], Loader=yaml.Loader)
 
-    for k in yaml_kwargs:
-        if k not in kwargs:
-            kwargs[k] = yaml_kwargs[k]
+        for k in yaml_kwargs:
+            if k not in kwargs:
+                kwargs[k] = yaml_kwargs[k]
 
     rowid = row["rowid"]
 
