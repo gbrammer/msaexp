@@ -2450,6 +2450,8 @@ def cube_make_diagnostics(
         [stab.meta[f"pflux{seg_id+1}"] for seg_id in range(stab.meta["nsrc"])]
     )
     src_sorted = np.argsort(src_fluxes)
+    if len(src_sorted) > ny:
+        src_sorted = src_sorted[-ny:]
 
     sens_flam = stab["sensitivity"] / stab["wave"] ** wave_power
     sens_flam[sens_flam == 0] = np.nan
