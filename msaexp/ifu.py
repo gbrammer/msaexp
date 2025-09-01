@@ -271,7 +271,7 @@ class ExposureCube:
         ptab.meta["DEC_REF"] = dec_ref
         ptab.meta["NSLICE"] = len(shapes)
         ptab.meta["FILE"] = self.file
-        ptab.meta['MSAEXPV'] = msaexp_version
+        ptab.meta["MSAEXPV"] = msaexp_version
 
         # Save to YAML
         meta_to_yaml(self.input.meta)
@@ -1074,7 +1074,7 @@ def pixel_table_background(
         axes[0].plot(wave_grid, splm, color="magenta", alpha=0.5, zorder=1000)
         fig.tight_layout(pad=1)
         ymax = np.nanpercentile(splm, 90)
-        axes[0].set_ylim(-0.2*ymax, 1.5*ymax)
+        axes[0].set_ylim(-0.2 * ymax, 1.5 * ymax)
 
     sky = np.interp(ptab["wave"], wave_grid, splm)  #
 
@@ -1488,7 +1488,7 @@ def make_drizzle_hdul(
     # hdul.header["CD1_1"] *= -1
     # hdul.header["CD1_2"] *= -1
 
-    if np.std(np.diff(wave_grid)) == 0:
+    if np.std(np.diff(wave_grid)) < 1.0e-9:
         hdul.header["CTYPE3"] = "WAVE"
         hdul.header["CRVAL3"] = wave_grid[0] * 1.0e4
         hdul.header["CRPIX3"] = 1
@@ -1503,6 +1503,16 @@ def make_drizzle_hdul(
         hdul.header["PS3_0"] = "WCS-TAB"
         hdul.header["PS3_1"] = "WAVELENGTH"
 
+    hdul.header["NSIDE0"] = Nside[0]
+    hdul.header["NSIDE1"] = Nside[1]
+    hdul.header["PIXSIZE"] = pixel_size
+    hdul.header["PIXFRAC"] = pixfrac
+    hdul.header["WAVESAMP"] = wave_sample
+
+    if drizzle_wave_limits is not None:
+        hdul.header["WAVEMIN"] = drizzle_wave_limits[0]
+        hdul.header["WAVEMAX"] = drizzle_wave_limits[1]
+
     wtab = utils.GTable()
     wtab["ROW"] = np.arange(len(wave_grid))
     wtab["WAVELENGTH"] = wave_grid * 1.0e4
@@ -1511,6 +1521,14 @@ def make_drizzle_hdul(
     dcube = num / den
     # dcube[~np.isfinite(dcube)] = 0.0
     dvar = vnum / den**2
+
+    for k in meta:
+        if k.lower() in ["spectral_region"]:
+            continue
+        elif k.upper() in hdul.header:
+            continue
+
+        hdul.header[k] = meta[k]
 
     hdul = pyfits.HDUList(
         [
@@ -1537,6 +1555,7 @@ def ifu_pipeline(
     make_drizzled=True,
     perform_saturation=False,
     cumulative_saturation=True,
+    recenter_cube=False,
     **kwargs,
 ):
     """
@@ -1577,6 +1596,8 @@ def ifu_pipeline(
         Drizzled image HDU, if requested
 
     """
+    from scipy.spatial import ConvexHull
+
     if files is None:
         res, mast = query_obsid_exposures(
             obsid=obsid, grating=grating, **kwargs
@@ -1674,7 +1695,34 @@ def ifu_pipeline(
     if outroot is None:
         outroot = f"cube-{obsid}_{grating}-{ptabs[0].meta['filter']}_{SOURCE}{output_suffix}".lower()
 
-    strip_fig = plot_cube_strips(ptabs)
+    # Full ptab cube
+    ptab = astropy.table.vstack(ptabs)
+    ptab.meta["srcname"] = SOURCE
+    ptab.meta["obsid"] = obsid
+    if "proposer_ra" in ptabs[0].meta:
+        ptab.meta["ra_ref"] = ptabs[0].meta["proposer_ra"]
+        ptab.meta["dec_ref"] = ptabs[0].meta["proposer_dec"]
+
+    if recenter_cube:
+        oref = ptab.meta["ra_ref"] * 1, ptab.meta["dec_ref"] * 1
+
+        coo_ = np.array([ptab["ra"], ptab["dec"]])
+        hull_ = ConvexHull(coo_.T)
+        vertices_ = coo_[:, hull_.vertices]
+        sr_ = utils.SRegion(vertices_)
+        center_ = np.squeeze(sr_.shapely[0].centroid.xy)
+
+        ptab.meta["ra_ref"] = center_[0]
+        ptab.meta["dec_ref"] = center_[1]
+
+        msg = f"recenter_cube: ({oref[0]:>.6f}, {oref[1]:.6f}) -> "
+        msg += f'({ptab.meta["ra_ref"]:>.6f}, {ptab.meta["dec_ref"] :.6f})'
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    strip_fig = plot_cube_strips(
+        ptabs, ref_coords=(ptab.meta["ra_ref"], ptab.meta["dec_ref"])
+    )
+
     strip_fig.text(
         0.5,
         0.005,
@@ -1684,17 +1732,10 @@ def ifu_pipeline(
         transform=strip_fig.transFigure,
         fontsize=8,
     )
+
     utils.figure_timestamp(strip_fig)
 
     strip_fig.savefig(f"{outroot}.strips.png")
-
-    # Full ptab cube
-    ptab = astropy.table.vstack(ptabs)
-    ptab.meta["srcname"] = SOURCE
-    ptab.meta["obsid"] = obsid
-    if "proposer_ra" in ptabs[0].meta:
-        ptab.meta["ra_ref"] = ptabs[0].meta["proposer_ra"]
-        ptab.meta["dec_ref"] = ptabs[0].meta["proposer_dec"]
 
     ptab.meta["nfiles"] = len(files)
     for i, file_ in enumerate(files):
@@ -1977,3 +2018,527 @@ def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
     outroot, cubes, ptab, hdul = ifu_pipeline(**params)
 
     return outroot, cubes, ptab, hdul
+
+
+CUBE_WHITE_DEFAULT = {
+    "PRISM": 376,  # F356W
+    "G140H": 364,  # F115W
+    "G140M": 365,  # F150W
+    "G235M": 375,  # F277W
+    "G235H": 375,  # F277W
+    "G395M": 375,  # F277W
+    "G395H": 376,  # F356W
+}
+
+
+def cube_integrate_filter(cube_hdu, f_number=377, background=0, **kwargs):
+    """
+    Integrate a cube across a filter bandpass
+    """
+    import eazy.filters
+
+    RES = eazy.filters.FilterFile()
+    if f_number is None:
+        f_number = CUBE_WHITE_DEFAULT[
+            cube_hdu["SCI"].header["GRATING"].upper()
+        ]
+
+    fi = RES[f_number]
+
+    sci = cube_hdu["SCI"].data
+    wht = 1.0 / cube_hdu["VAR"].data
+
+    # wtab = utils.GTable(cube_hdu['WCS-TAB'].data)
+    stab = cube_load_sensitivity(cube_hdu, **kwargs)
+
+    xfi = np.interp(stab["wave"] * 1.0e4, fi.wave, fi.throughput)
+
+    num = (((sci.T - background).T * wht).T * xfi * stab["sensitivity"]).T
+    den = (wht.T * xfi * stab["sensitivity"] ** 2).T
+
+    img = np.nansum(num, axis=0) / np.nansum(den, axis=0)
+    ivar = np.nansum(den, axis=0)
+    ivar[ivar == 0] = np.nan
+
+    return img, ivar, fi
+
+
+def cube_load_sensitivity(
+    cube_hdu, prefix="msaexp_sensitivity", version="001", **kwargs
+):
+    """ """
+    stab = utils.GTable(cube_hdu["WCS-TAB"].data)
+    stab["wave"] = stab["WAVELENGTH"] / 1.0e4
+
+    grating = cube_hdu["SCI"].header["GRATING"]
+    filter = cube_hdu["SCI"].header["FILTER"]
+
+    file_template = "{prefix}_{grating}_{filter}_{version}.fits".lower()
+
+    sens_file = os.path.join(
+        "/usr/local/share/python/msaexp/msaexp/data/extended_sensitivity",
+        file_template.format(
+            prefix=prefix,
+            filter=filter,
+            grating=grating,
+            version=version,
+        ).lower(),
+    )
+
+    sens_data = utils.read_catalog(sens_file)
+
+    sens = np.interp(
+        stab["wave"], sens_data["wavelength"], sens_data["sensitivity"]
+    )
+
+    stab["sensitivity"] = sens
+    stab.meta["sensfile"] = sens_file
+
+    return stab
+
+
+CUBE_RGB_DEFAULT = {
+    "PRISM": [364, 375, 377],
+    "G140H": [364, 368, 369],  # F115W, 140m, 162m
+    "G140M": [364, 365, 366],  # 115w, 150w, 200w
+    "G235M": [366, 375, 377],  # F277W
+    "G235H": [370, 371, 379],  # F277W
+    "G395M": [380, 382, 384],  # F277W
+    "G395H": [380, 382, 384],  # F356W
+}
+
+
+def cube_filter_rgb(
+    cube_hdu,
+    f_numbers=None,
+    rgb_scale=None,
+    wave_power=-1,
+    total_scale=1.0,
+    **kwargs,
+):
+    """
+    Make an RGB image of three filters integrated through the cube
+    """
+    from astropy.visualization import make_lupton_rgb
+    import eazy.filters
+
+    RES = eazy.filters.FilterFile()
+
+    if f_numbers is None:
+        f_numbers = CUBE_RGB_DEFAULT[cube_hdu["SCI"].header["GRATING"].upper()]
+
+    rgb_filters = [RES[fi] for fi in f_numbers]
+    if rgb_scale is None:
+        rgb_scale = np.array(
+            [(f.pivot / 1.0e4) ** wave_power for f in rgb_filters]
+        )
+
+    rgb_img, rgb_ivar = [], []
+
+    for fi, scale in zip(f_numbers, rgb_scale):
+        img_i, ivar_i, filter_i = cube_integrate_filter(
+            cube_hdu, f_number=fi, **kwargs
+        )
+
+        rgb_img.append(img_i * scale / rgb_scale[-1])
+        rgb_ivar.append(ivar_i / (scale / rgb_scale[-1]) ** 2)
+
+        print(f"{RES[fi].name}  scale = {scale / rgb_scale[-1]:.2f}")
+
+    imax = np.nanpercentile(rgb_img[1], 84) * 50.2 * total_scale
+    rgb = make_lupton_rgb(
+        *rgb_img[::-1], stretch=0.1 * imax / 1.1, minimum=-0.01 * imax / 1.1
+    )
+
+    nvalid = np.isfinite(np.array(rgb_img)).sum(axis=0) == 3
+    for i in range(3):
+        rgb[:, :, i][~nvalid] = 255
+
+    return rgb, rgb_img, rgb_ivar, rgb_filters
+
+
+def cube_extract_segments(
+    cube_hdu,
+    min_thresh=3,
+    thresh_percentile=86,
+    iterate=True,
+    f_number=None,
+    deblend_nthresh=32,
+    deblend_cont=1.0e-3,
+    erode_background=4,
+    filter_kernel=None,
+    **kwargs,
+):
+    """ """
+    import sep
+
+    grating = cube_hdu["SCI"].header["GRATING"]
+
+    img, ivar, filt = cube_integrate_filter(
+        cube_hdu, f_number=f_number, **kwargs
+    )
+    img_clean = img - np.nanmedian(img[np.isfinite(ivar)])
+
+    err = np.sqrt(1.0 / ivar)
+    err[~np.isfinite(ivar)] = 0
+
+    thresh = np.nanpercentile(img_clean / err, thresh_percentile)
+    thresh = np.maximum(thresh, min_thresh)
+
+    _ = sep.extract(
+        img_clean,
+        thresh,
+        err=err,
+        mask=(err == 0),
+        segmentation_map=True,
+        filter_kernel=filter_kernel,
+        clean=True,
+        deblend_nthresh=deblend_nthresh,
+        deblend_cont=deblend_cont,
+    )
+
+    seg1 = _[-1]
+    seg = seg1
+
+    if iterate:
+        thresh = np.nanpercentile(img_clean / err, thresh_percentile)
+        thresh = np.maximum(thresh, min_thresh)
+        print(f"Threshold: {thresh:.2f}")
+
+        img_clean = img - np.nanmedian(img[(err > 0) & (seg1 == 0)])
+
+        _ = sep.extract(
+            img_clean,
+            thresh,
+            err=err,
+            mask=(err == 0),
+            segmentation_map=True,
+            filter_kernel=filter_kernel,
+            clean=True,
+            deblend_nthresh=deblend_nthresh,
+            deblend_cont=deblend_cont,
+        )
+        seg = _[-1]
+
+    ### Extract segment spectra
+    sci = cube_hdu["SCI"].data
+    wht = 1.0 / cube_hdu["VAR"].data
+
+    seg_ids = np.unique(seg)
+    auto_src = False
+
+    sh = img_clean.shape
+    yp, xp = np.indices(sh)
+
+    if len(seg_ids) == 1:
+        # Force a source at the center
+        auto_src = True
+
+        R = np.sqrt((xp - sh[1] / 2) ** 2 + (yp - sh[0] / 2) ** 2)
+
+        print(f"Force a source at {sh[0]/2}, {sh[1]/2}")
+
+        seg = (R < 4) * 1
+        seg_ids = np.unique(seg)
+
+    # Reorder seg by flux
+    seg_flux = []
+    for seg_id in seg_ids[1:]:
+        seg_mask = seg == seg_id
+        seg_flux.append(np.nansum(img_clean[seg_mask]))
+
+    so = np.argsort(seg_flux)[::-1]
+    seg_sorted = seg * 1
+    for i, j in enumerate(so):
+        seg_mask = seg == i + 1
+        seg_sorted[seg_mask] = j + 1
+
+    seg = seg_sorted
+
+    seg_bkg = 0
+
+    stab = cube_load_sensitivity(cube_hdu, **kwargs)
+    stab.meta["detfilt"] = filt.name.split()[0]
+    stab.meta["detthrsh"] = thresh
+    stab.meta["detdebln"] = deblend_nthresh
+    stab.meta["detdeblc"] = deblend_cont
+    stab.meta["nsrc"] = len(seg_ids) - 1
+    stab.meta["autosrc"] = auto_src
+
+    for i, seg_id in enumerate(seg_ids):
+        seg_mask = seg == seg_id
+
+        if (seg_id == 0) & (erode_background is not None):
+            seg_mask = nd.binary_erosion(seg_mask, iterations=erode_background)
+
+        stab.meta[f"nmask{seg_id}"] = seg_mask.sum()
+
+        if seg_id == 0:
+            prof = 1.0
+        else:
+
+            stab.meta[f"pflux{seg_id}"] = np.nansum(img_clean[seg_mask])
+
+            prof = img_clean / stab.meta[f"pflux{seg_id}"]
+
+            stab.meta[f"pmax{seg_id}"] = prof[seg_mask].max()
+
+            stab.meta[f"xsrc{seg_id}"] = np.nansum((xp * prof)[seg_mask])
+            stab.meta[f"ysrc{seg_id}"] = np.nansum((yp * prof)[seg_mask])
+
+            prof *= (seg_mask).sum()
+
+        total_num = np.nansum(
+            prof * (sci.T - seg_bkg).T * (seg_mask) * wht, axis=(1, 2)
+        )
+
+        # No background
+        total_num0 = np.nansum(prof * sci * (seg_mask) * wht, axis=(1, 2))
+
+        # Denominator
+        total_den = np.nansum(prof**2 * (seg_mask) * wht, axis=(1, 2))
+
+        if seg_id == 0:
+            seg_bkg = total_num / total_den
+            stab["background"] = seg_bkg
+
+        elif 1:
+            err = 1 / np.sqrt(total_den)
+            if grating not in "PRISM":
+                err_mask = err > 5 * np.nanmedian(err)
+                err_mask = nd.binary_dilation(err_mask, iterations=4)
+            else:
+                err_mask = ~np.isfinite(total_num)
+
+            total_num[err_mask] = np.nan
+            total_num0[err_mask] = np.nan
+
+            stab[f"flux{seg_id}"] = total_num / total_den
+            stab[f"oflux{seg_id}"] = total_num0 / total_den
+            stab[f"ivar{seg_id}"] = total_den
+
+    return seg, stab
+
+
+def cube_make_diagnostics(
+    cube_hdu,
+    scale_func=np.log10,
+    wave_power=-1,
+    figsize=(9, 3),
+    cmap=plt.cm.rainbow,
+    **kwargs,
+):
+    """
+    Make diagnostics from 3D cube data
+    """
+
+    grating = cube_hdu["SCI"].header["GRATING"]
+
+    seg, stab = cube_extract_segments(cube_hdu, **kwargs)
+
+    img, ivar, img_filter = cube_integrate_filter(
+        cube_hdu, background=stab["background"], **kwargs
+    )
+
+    rgb, rgb_img, rgb_ivar, rgb_filters = cube_filter_rgb(
+        cube_hdu,
+        background=stab["background"],
+        wave_power=wave_power,
+        **kwargs,
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=figsize, sharex=True, sharey=True)
+
+    img_scale = scale_func(img)
+    perc = np.nanpercentile(img_scale, [2, 50, 98])
+
+    seg_mask = seg * 1.0
+    seg_mask[seg == 0] = np.nan
+
+    nmax = np.maximum(len(np.unique(seg)) - 1, 1)
+
+    axes[0].imshow(
+        scale_func(img), vmin=perc[0], vmax=perc[2], cmap=plt.cm.gray
+    )
+    axes[1].imshow(rgb)
+    axes[2].imshow(seg_mask, vmin=0, vmax=nmax, cmap=cmap, alpha=0.9)
+
+    for i in range(2):
+        for seg_id in np.unique(seg):
+            if seg_id == 0:
+                continue
+
+            c = cmap(seg_id / nmax)
+
+            axes[i].contour(
+                (seg == seg_id) * 1,
+                vmin=0,
+                vmax=1,
+                levels=0,
+                origin=None,
+                colors=["w"],
+                alpha=0.3,
+                zorder=10,
+            )
+
+            axes[i].contour(
+                (seg == seg_id) * 1,
+                vmin=0,
+                vmax=1,
+                levels=0,
+                origin=None,
+                colors=[c],
+                alpha=0.8,
+                zorder=11,
+            )
+
+    axes[0].text(
+        0.015,
+        0.01,
+        img_filter.name.split()[0].split("_")[-1].upper(),
+        ha="left",
+        va="bottom",
+        transform=axes[0].transAxes,
+        fontsize=7,
+        bbox={"fc": "w", "ec": "None", "alpha": 1.0},
+    )
+
+    for j, c in enumerate(["steelblue", "olive", "tomato"]):
+        axes[1].text(
+            0.015 + 0.18 * j,
+            0.01,
+            rgb_filters[j].name.split()[0].split("_")[-1].upper(),
+            color=c,
+            ha="left",
+            va="bottom",
+            transform=axes[1].transAxes,
+            fontsize=7,
+            bbox={"fc": "w", "ec": "None", "alpha": 1.0},
+        )
+
+    axes[2].text(
+        0.015,
+        0.01,
+        f'threshold = {stab.meta["detthrsh"]:.1f}' + r"$\sigma$",
+        ha="left",
+        va="bottom",
+        transform=axes[2].transAxes,
+        fontsize=7,
+        bbox={"fc": "w", "ec": "None", "alpha": 1.0},
+    )
+
+    for ax in axes:
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+    fig.tight_layout(pad=1)
+    img_fig = fig
+
+    # Spectra
+    # seg_ids = np.unique(seg)
+
+    ny = np.minimum(stab.meta["nsrc"], 7)
+
+    fig, axes = plt.subplots(ny, 1, sharex=True, figsize=(8, 2.0 * ny))
+    if ny == 1:
+        axes = [axes]
+
+    # Sort order
+    src_fluxes = np.array(
+        [stab.meta[f"pflux{seg_id+1}"] for seg_id in range(stab.meta["nsrc"])]
+    )
+    src_sorted = np.argsort(src_fluxes)
+
+    sens_flam = stab["sensitivity"] / stab["wave"] ** wave_power
+    sens_flam[sens_flam == 0] = np.nan
+
+    # for ax in axes:
+    #     ax.plot(
+    #         stab["wave"],
+    #         stab["background"] / sens_flam,
+    #         color="k",
+    #         alpha=0.2,
+    #     )
+
+    for i, j in enumerate(src_sorted):
+        ax = axes[i]
+
+        seg_id = j + 1
+
+        c = cmap(seg_id / nmax)
+
+        flux = stab[f"flux{seg_id}"]
+        oflux = stab[f"oflux{seg_id}"]
+
+        bkg_diff = oflux - flux
+        bkg_scl = np.nanmedian(bkg_diff / stab["background"])
+        ax.plot(
+            stab["wave"],
+            stab["background"] / sens_flam * bkg_scl,
+            color="k",
+            alpha=0.1,
+            zorder=-1,
+        )
+
+        # print(seg_id, stab.meta[f"nmask{seg_id}"], stab.meta[f"pmax{seg_id}"], stab.meta[f"pmax{seg_id}"] / stab.meta[f"nmask{seg_id}"])
+
+        err = 1 / np.sqrt(stab[f"ivar{seg_id}"])
+
+        if grating.upper() not in "PRISM":
+            err_mask = err > 5 * np.nanmedian(err)
+            err_mask = nd.binary_dilation(err_mask, iterations=4)
+        else:
+            err_mask = ~np.isfinite(err)
+
+        if grating.upper().startswith("G140"):
+            err_mask |= stab["wave"] < 0.97
+
+        flux[err_mask] = np.nan
+        oflux[err_mask] = np.nan
+
+        # Gray background
+        ax.plot(stab["wave"], flux / sens_flam, alpha=0.5, color="0.8")
+        ax.plot(stab["wave"], oflux / sens_flam, alpha=0.5, color="0.8")
+
+        ax.fill_between(
+            stab["wave"], flux * 0.0, flux / sens_flam, alpha=0.05, color=c
+        )
+
+        ax.plot(stab["wave"], flux / sens_flam, alpha=0.5, color=c)
+        ax.plot(stab["wave"], oflux / sens_flam, alpha=0.2, color=c)
+
+        ymax = np.nanpercentile(flux / sens_flam, 99)
+        ax.set_ylim(-0.2 * ymax, 1.2 * ymax)
+        ax.set_yticklabels([])
+
+    for ax in axes:
+        ax.grid()
+
+    ax.set_xlabel(r"wavelength")
+    if wave_power == 0:
+        ax.set_ylabel(r"$f_\nu$")
+    elif wave_power == -1:
+        ax.set_ylabel(r"$f_\nu~/~\lambda$")
+    elif wave_power == -2:
+        ax.set_ylabel(r"$f_\lambda$")
+    else:
+        ax.set_ylabel(
+            r"$f_\nu~\cdot~\lambda^{x}$".replace("x", f"{wave_power}")
+        )
+
+    fig.tight_layout(pad=0.5)
+
+    result = {
+        "img": img,
+        "ivar": ivar,
+        "rgb": rgb,
+        "rgb_img": rgb_img,
+        "rgb_ivar": rgb_ivar,
+        "rgb_filters": rgb_filters,
+        "seg": seg,
+        "stab": stab,
+        "img_fig": img_fig,
+        "fig": fig,
+    }
+
+    return result

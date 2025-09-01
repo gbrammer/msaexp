@@ -18,6 +18,7 @@ __all__ = [
     "preprocess_ifu_file",
     "fs_to_ptab",
     "run_one_preprocess_ifu",
+    "combine_ifu_pipeline",
 ]
 
 
@@ -30,21 +31,25 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     import time
 
     if rowid is None:
-        row = db.SQL(f"""
+        row = db.SQL(
+            f"""
             SELECT rowid, \"fileSetName\", LOWER(detector) as detector
             FROM nirspec_ifu_exposures
             WHERE status = 0
             ORDER BY RANDOM()
             LIMIT 1
-        """)
+        """
+        )
     else:
-        row = db.SQL(f"""
+        row = db.SQL(
+            f"""
             SELECT rowid, \"fileSetName\", LOWER(detector) as detector
             FROM nirspec_ifu_exposures
             WHERE rowid = {rowid}
             ORDER BY RANDOM()
             LIMIT 1
-        """)
+        """
+        )
 
     if len(row) == 0:
         return None
@@ -117,11 +122,13 @@ def preprocess_ifu_file(
     """
     import mastquery.utils
 
-    if (not os.path.exists(file)) & (not os.path.exists(file.replace("_rate.fits", "_ptab.fits"))):
+    if (not os.path.exists(file)) & (
+        not os.path.exists(file.replace("_rate.fits", "_ptab.fits"))
+    ):
         mastquery.utils.download_from_mast([file])
 
         if not os.path.exists(file):
-            return f'{file} not found'
+            return f"{file} not found"
 
     cube = msaifu.ExposureCube(
         file,
@@ -167,7 +174,9 @@ def preprocess_ifu_file(
     else:
         fs_data = msaifu.ifu_sky_from_fixed_slit(
             rate_file=file,
-            slit_names=["S200A1", "S200A2", "S400A1", "S200B1", "S1600A1"][:-1],
+            slit_names=["S200A1", "S200A2", "S400A1", "S200B1", "S1600A1"][
+                :-1
+            ],
         )
 
         hdul = pyfits.HDUList(
@@ -180,7 +189,11 @@ def preprocess_ifu_file(
 
     if sync:
         visit = os.path.basename(file.split("_")[0])
-        s3_path = os.path.join(s3_prefix, visit).replace("//","/").replace("s3:/", "s3://")
+        s3_path = (
+            os.path.join(s3_prefix, visit)
+            .replace("//", "/")
+            .replace("s3:/", "s3://")
+        )
         file_prefix = os.path.basename(file.split("_rate")[0])
         for ext in [
             "cal.yaml",
@@ -192,7 +205,9 @@ def preprocess_ifu_file(
         ]:
             file_ext = file_prefix + "_" + ext
             if os.path.exists(file_ext):
-                send_command = f"aws s3 cp {file_ext} {s3_path}/ --acl public-read"
+                send_command = (
+                    f"aws s3 cp {file_ext} {s3_path}/ --acl public-read"
+                )
                 print(send_command)
                 sync_result = subprocess.run(
                     send_command, shell=True, capture_output=True
@@ -222,12 +237,12 @@ def fs_to_ptab(fs_file, slice_offset=50):
     """
     import astropy.table
 
-    FIXED_SLIT_NAMES = ['S200A1', 'S200A2', 'S400A1', 'S1600A1', 'S200B1']
+    FIXED_SLIT_NAMES = ["S200A1", "S200A2", "S400A1", "S1600A1", "S200B1"]
 
     fs_data = {}
     with pyfits.open(fs_file) as fs_im:
         for ext in fs_im[1:]:
-            k = ext.header['FSNAME']
+            k = ext.header["FSNAME"]
             fs_data[k] = utils.read_catalog(ext)
 
     tabs = []
@@ -238,27 +253,239 @@ def fs_to_ptab(fs_file, slice_offset=50):
         fsk = fs_data[k]
         fsk.meta = msaifu.meta_lowercase(fsk.meta)
 
-        yp, xp = np.indices((fsk.meta['ysize'], fsk.meta['xsize']))
-        xp += fsk.meta['xstart'] - 1
-        yp += fsk.meta['ystart'] - 1
+        yp, xp = np.indices((fsk.meta["ysize"], fsk.meta["xsize"]))
+        xp += fsk.meta["xstart"] - 1
+        yp += fsk.meta["ystart"] - 1
 
         # Like pixtab
-        fsk['xpix'] = xp.flatten()
-        fsk['ypix'] = yp.flatten()
-        fsk['slice'] = slice_offset + FIXED_SLIT_NAMES.index(k)
+        fsk["xpix"] = xp.flatten()
+        fsk["ypix"] = yp.flatten()
+        fsk["slice"] = slice_offset + FIXED_SLIT_NAMES.index(k)
         # fsk['xsky'] = 0.
-        tabs.append(fsk[np.isfinite(fsk['wave'] + fsk['data'])])
+        tabs.append(fsk[np.isfinite(fsk["wave"] + fsk["data"])])
 
     fs_ptab = astropy.table.vstack(tabs)
-    fs_ptab.meta['nslits'] = len(tabs)
+    fs_ptab.meta["nslits"] = len(tabs)
 
     for i, k in enumerate(fs_data):
         if k not in FIXED_SLIT_NAMES:
             continue
 
         slice_id = 50 + FIXED_SLIT_NAMES.index(k)
-        fs_ptab.meta[f'slice{i}'] = slice_id
-        fs_ptab.meta[f'slit{i}'] = k
+        fs_ptab.meta[f"slice{i}"] = slice_id
+        fs_ptab.meta[f"slit{i}"] = k
 
     return fs_ptab
 
+
+def run_one_products_ifu(
+    rowid=None,
+    sync=True,
+    clean=True,
+    s3_prefix="s3://msaexp-nirspec/ifu_exposures/",
+    **kwargs,
+):
+    """ """
+    import glob
+    import yaml
+
+    from grizli.aws import db
+    import time
+
+    if rowid is None:
+        row = db.SQL(
+            f"""
+            SELECT *
+            FROM nirspec_ifu_products
+            WHERE status = 0
+            ORDER BY RANDOM()
+            LIMIT 1
+        """
+        )
+    else:
+        row = db.SQL(
+            f"""
+            SELECT *
+            FROM nirspec_ifu_products
+            WHERE rowid = {rowid}
+            ORDER BY RANDOM()
+            LIMIT 1
+        """
+        )
+
+    if len(row) == 0:
+        return None
+
+    if row["yaml_kwargs"][0]:
+        yaml_kwargs = yaml.load(row["yaml_kwargs"][0], Loader=yaml.Loader)
+
+    for k in yaml_kwargs:
+        if k not in kwargs:
+            kwargs[k] = yaml_kwargs[k]
+
+    rowid = row["rowid"]
+
+    if sync:
+        now = time.time()
+        db.execute(
+            f"UPDATE nirspec_ifu_products SET status = 1, ctime = {now} WHERE rowid = {rowid}"
+        )
+
+    result = combine_ifu_pipeline(
+        obsid=row["obsid"][0], gfilt=row["gfilt"][0], **kwargs
+    )
+
+    outroot = result['outroot']
+    result_files = glob.glob(f"{outroot}*")
+    # result_files += glob.glob(f"jw{row['obsid'][0]}*")
+    resp = result["resp"]
+    result_files += [
+        glob.glob("{fileSetName}_{detector}*".format(**row).lower()
+        for row in resp
+    ]
+    
+    result_files.sort()
+
+    if sync:
+
+        now = time.time()
+        db.execute(
+            f"UPDATE nirspec_ifu_products SET status = 2, ctime = {now}, outroot = '{outroot}' WHERE rowid = {rowid}"
+        )
+
+        s3_path = os.path.join(s3_prefix, "jw" + row["obsid"][0]) + "/"
+        s3_path = s3_path.replace("//", "/").replace("s3:/", "s3://")
+
+        send_command = f"aws s3 sync ./ {s3_path} --exclude \"*\" --include \"{outroot}*\" --acl public-read"
+
+        print(send_command)
+        sync_result = subprocess.run(
+            send_command, shell=True, capture_output=True
+        )
+
+    if clean:
+        for file in result_files:
+            print(f"rm {file}")
+            os.remove(file)
+
+    return result
+
+
+def combine_ifu_pipeline(
+    obsid="02913001001",
+    gfilt="F170LP_G235M",
+    scale=0.05,
+    pixfrac=0.75,
+    **kwargs,
+):
+    """ """
+    from grizli.aws import db
+
+    filter, grating = gfilt.split("_")
+
+    resp = db.SQL(
+        f"""
+    select * from nirspec_ifu_exposures
+    where visit_id = '{obsid}' AND grating = '{grating}' AND filter = '{filter}' and status = 2
+    order by \"fileSetName\", detector
+    """
+    )
+
+    print(f"response: {len(resp)} rows")
+
+    s3_prefix = "s3://msaexp-nirspec/ifu_exposures"
+
+    for row in resp:
+        for ext in ["ptab.fits", "fs.fits", "satflag.fits.gz"]:
+            s3_file = "{s3_prefix}/jw{visit_id}/{fileSetName}_{detector}_{ext}".format(
+                s3_prefix=s3_prefix, ext=ext, **row
+            ).lower()
+            # print(s3_file)
+            if not os.path.exists(os.path.basename(s3_file)):
+                os.system(f"aws s3 cp {s3_file} . ")
+            else:
+                print(os.path.basename(s3_file))
+
+    files = [
+        "{fileSetName}_{detector}_rate.fits".format(**row).lower()
+        for row in resp
+    ]
+
+    outroot, cubes, ptab, hdul = msaifu.ifu_pipeline(
+        outroot=None,
+        pixel_size=scale,
+        pixfrac=pixfrac,
+        side="auto",
+        wave_sample=1.05,
+        files=files,
+        obsid=obsid,
+        filter=filter,
+        grating=grating,
+        # download=False,
+        use_token=False,
+        sky_annulus=None,
+        exposure_type="rate",
+        do_flatfield=False,
+        do_photom=False,
+        extend_wavelengths=True,
+        use_first_center=True,
+        slice_wavelength_range=[0.5e-6, 5.6e-6],
+        make_drizzled=1,
+        bad_pixel_flag=(
+            msautils.BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
+        ),
+        # detectors=["nrs1", "nrs2"],
+        # BAD_PIXEL_FLAG=1, dilate_failed_open=False,
+        perform_saturation=True,
+        recenter_cube=True,
+        # drizzle_wave_limits=(4.5, 4.9),
+    )
+
+    cube_file = outroot + ".fits"
+
+    # cube products
+    cube_hdu = pyfits.open(cube_file)
+
+    result = msaifu.cube_make_diagnostics(
+        cube_hdu,
+        **kwargs,
+        # scale_func=np.arcsinh, figsize=(12, 4), wave_power=-1, erode_background=None,
+        # thresh_percentile=80, min_thresh=3, cmap=plt.cm.rainbow,
+    )
+
+    utils.figure_timestamp(result["fig"])
+
+    result["fig"].text(
+        0.005,
+        0.005,
+        outroot,
+        ha="left",
+        va="bottom",
+        transform=result["fig"].transFigure,
+        fontsize=8,
+    )
+
+    utils.figure_timestamp(result["img_fig"])
+
+    result["img_fig"].text(
+        0.5,
+        0.005,
+        outroot,
+        ha="center",
+        va="bottom",
+        transform=result["img_fig"].transFigure,
+        fontsize=8,
+    )
+
+    result["img_fig"].savefig(cube_file.replace(".fits", ".thumb.png"))
+    result["fig"].savefig(cube_file.replace(".fits", ".1d.png"))
+    result["stab"].write(
+        cube_file.replace(".fits", ".1d.fits"), overwrite=True
+    )
+
+    result["outroot"] = outroot
+    result["ptab"] = ptab
+    result["cubes"] = cubes
+    result['resp'] = resp
+
+    return result
