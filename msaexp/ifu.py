@@ -1966,6 +1966,132 @@ def pixel_table_dx_dy(ptab, ref_coords=None, wcs=None, **kwargs):
     return dx, dy
 
 
+def pixel_table_wave_step(ptab):
+    """
+    Get the gradient dlam / dx of the wavelength array in a pixel table needed for resampling models
+
+    Parameters
+    ----------
+    ptab : Table
+        Pixel table with at least ``wave``, ``xpix``, ``ypix`` columns.  If a "slice" column is found,
+        the gradient will be calculated by slice, e.g., for the IFU slices.
+
+    Returns
+    -------
+    wave_step : array-like
+        Wavelength gradient
+    """
+    # Put wavelength and slice arrays back into 2D "detector" arrays
+    wave = pixel_table_to_detector(
+        ptab, column="wave", split_exposures=True, as_hdu=False
+    )
+
+    wave[wave == 0] = np.nan
+    wave = np.nanmean(wave, axis=0)
+
+    dwave = np.gradient(wave, axis=1)
+
+    valid = np.isfinite(wave)
+    valid = nd.binary_erosion(valid, iterations=2)
+
+    if "slice" in ptab.colnames:
+        sli = pixel_table_to_detector(
+            ptab, column="slice", split_exposures=True, as_hdu=False
+        )
+        sli = np.nanmax(sli, axis=0)
+    else:
+        sli = np.zeros(valid.shape, dtype=int)
+
+    sli = sli[valid]
+    wave = wave[valid]
+    dwave = dwave[valid]
+
+    slices = utils.Unique(sli, verbose=False)
+    if "slice" in ptab.colnames:
+        ptab_slices = utils.Unique(ptab["slice"], verbose=False)
+    else:
+        ptab_slices = [np.isfinite(ptab["wave"])]
+
+    # Polynomial fit:
+    # dwave**dlp = P(wave**wp) works well for the prism
+    wp = -1
+    dlp = -1
+    degree = 11
+
+    wave_step = np.zeros_like(ptab['wave'])
+
+    for sli in slices.values:
+        c = np.polyfit(wave[slices[sli]]**wp, dwave[slices[sli]]**dlp, degree)
+
+        wave_step[ptab_slices[sli]] = np.polyval(
+            c, ptab['wave'][ptab_slices[sli]]**wp
+        )**dlp
+
+    return wave_step
+
+
+def pixel_table_xwave(ptab, wave_sample=1.05):
+    """
+    Get linear coordinate along "wave" axis
+
+    Parameters
+    ----------
+    ptab : Table
+        Pixel table with at least ``wave`` column and ``grating`` metadata entry.
+
+    Returns
+    -------
+    wave_grid : array-like
+        nominal grating wavelength grid from `~msaexp.utils.get_standard_wavelength_grid``
+
+    wave_xgrid : array-like
+        Normalized grid from (0, 1)
+
+    wx : array-like
+        Wavelength coordinate of ``ptab["wave"]`` relative to the nominal grating wavelength grid
+
+    """
+    wave_grid = msautils.get_standard_wavelength_grid(ptab.meta['grating'], sample=wave_sample)
+
+    NW = len(wave_grid)
+    wave_xgrid = np.linspace(0, 1, NW)
+
+    wx = np.interp(ptab["wave"], wave_grid, wave_xgrid, left=np.nan, right=np.nan)
+
+    return wave_grid, wave_xgrid, wx
+
+
+def pixel_table_sensitivity(
+    ptab, prefix="msaexp_sensitivity", version="001", **kwargs
+):
+    """
+    """
+    path_to_data = os.path.join(os.path.dirname(__file__), "data/extended_sensitivity")
+
+    grating = ptab.meta["grating"]
+    filter = ptab.meta["filter"]
+
+    file_template = "{prefix}_{grating}_{filter}_{version}.fits".lower()
+
+    sens_file = os.path.join(
+        path_to_data,
+        file_template.format(
+            prefix=prefix,
+            filter=filter,
+            grating=grating,
+            version=version,
+        ).lower(),
+    )
+
+    sens_data = utils.read_catalog(sens_file)
+
+    sens = np.interp(
+        ptab["wave"], sens_data["wavelength"], sens_data["sensitivity"]
+    )
+
+    return sens_data, sens
+
+
 def run_dja_pipeline(obsid="02659003001", gfilt="CLEAR_PRISM", **kwargs):
     """
     Run full pipeline for DJA
