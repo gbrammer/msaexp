@@ -1555,6 +1555,7 @@ def ifu_pipeline(
     make_drizzled=True,
     perform_saturation=False,
     cumulative_saturation=True,
+    exclude_self_saturation=True,
     recenter_cube=False,
     **kwargs,
 ):
@@ -1652,6 +1653,13 @@ def ifu_pipeline(
     for i, cube in enumerate(cubes):
         cube.ptab["exposure"] = i
 
+    msg = (
+        f"exposure_ramp_saturation: perform_saturation={perform_saturation} "
+        + f"cumulative_saturation={cumulative_saturation} "
+        + f"exclude_self_saturation={exclude_self_saturation}"
+    )
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
     # Saturated mask
     sat_files, sat_data = [], []
     for file in files:
@@ -1674,6 +1682,8 @@ def ifu_pipeline(
             sat_mask = this_sat
 
         ptab_sat = sat_mask[cube.ptab["ypix"], cube.ptab["xpix"]]
+        if exclude_self_saturation:
+            ptab_sat ^= this_sat[cube.ptab["ypix"], cube.ptab["xpix"]]
 
         # print("xxx", files[i], ptab_sat.sum())
 
@@ -2018,14 +2028,16 @@ def pixel_table_wave_step(ptab):
     dlp = -1
     degree = 11
 
-    wave_step = np.zeros_like(ptab['wave'])
+    wave_step = np.zeros_like(ptab["wave"])
 
     for sli in slices.values:
-        c = np.polyfit(wave[slices[sli]]**wp, dwave[slices[sli]]**dlp, degree)
+        c = np.polyfit(
+            wave[slices[sli]] ** wp, dwave[slices[sli]] ** dlp, degree
+        )
 
-        wave_step[ptab_slices[sli]] = np.polyval(
-            c, ptab['wave'][ptab_slices[sli]]**wp
-        )**dlp
+        wave_step[ptab_slices[sli]] = (
+            np.polyval(c, ptab["wave"][ptab_slices[sli]] ** wp) ** dlp
+        )
 
     return wave_step
 
@@ -2051,12 +2063,16 @@ def pixel_table_xwave(ptab, wave_sample=1.05):
         Wavelength coordinate of ``ptab["wave"]`` relative to the nominal grating wavelength grid
 
     """
-    wave_grid = msautils.get_standard_wavelength_grid(ptab.meta['grating'], sample=wave_sample)
+    wave_grid = msautils.get_standard_wavelength_grid(
+        ptab.meta["grating"], sample=wave_sample
+    )
 
     NW = len(wave_grid)
     wave_xgrid = np.linspace(0, 1, NW)
 
-    wx = np.interp(ptab["wave"], wave_grid, wave_xgrid, left=np.nan, right=np.nan)
+    wx = np.interp(
+        ptab["wave"], wave_grid, wave_xgrid, left=np.nan, right=np.nan
+    )
 
     return wave_grid, wave_xgrid, wx
 
@@ -2064,9 +2080,10 @@ def pixel_table_xwave(ptab, wave_sample=1.05):
 def pixel_table_sensitivity(
     ptab, prefix="msaexp_sensitivity", version="001", **kwargs
 ):
-    """
-    """
-    path_to_data = os.path.join(os.path.dirname(__file__), "data/extended_sensitivity")
+    """ """
+    path_to_data = os.path.join(
+        os.path.dirname(__file__), "data/extended_sensitivity"
+    )
 
     grating = ptab.meta["grating"]
     filter = ptab.meta["filter"]
@@ -2192,9 +2209,10 @@ def cube_integrate_filter(cube_hdu, f_number=377, background=0, **kwargs):
 def cube_load_sensitivity(
     cube_hdu, prefix="msaexp_sensitivity", version="001", **kwargs
 ):
-    """
-    """
-    path_to_data = os.path.join(os.path.dirname(__file__), "data/extended_sensitivity")
+    """ """
+    path_to_data = os.path.join(
+        os.path.dirname(__file__), "data/extended_sensitivity"
+    )
     stab = utils.GTable(cube_hdu["WCS-TAB"].data)
     stab["wave"] = stab["WAVELENGTH"] / 1.0e4
 
