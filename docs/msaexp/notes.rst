@@ -16,7 +16,7 @@ The wavelengths where the 2nd and 3rd order spectra begin to overlap with the fi
 
 All filter+grating combinations are shown below.
 
-Note that there is more dependence of the gap location on shutter row for the PRISM, the safest regions with complete spectra are `x > 90` in Q3, Q4 and `x < 180` in Q1, Q2.
+Note that there is more dependence of the gap location on shutter row for the PRISM.  The safest regions with complete spectra are `x > 90` in Q3, Q4 and `x < 180` in Q1, Q2.
 
 .. image :: figures/nirspec_detector_gap_clear_prism.png
   :width: 200
