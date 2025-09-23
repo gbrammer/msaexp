@@ -326,7 +326,7 @@ def run_one_products_ifu(
     rowid = row["rowid"][0]
     obsid = row["obsid"][0]
     gfilt = row["gfilt"][0]
-    
+
     if sync:
         now = time.time()
         db.execute(
@@ -336,13 +336,15 @@ def run_one_products_ifu(
     # Do it
     result = combine_ifu_pipeline(obsid=obsid, gfilt=gfilt, **kwargs)
 
-    outroot = result['outroot']
+    outroot = result["outroot"]
     result_files = glob.glob(f"{outroot}*")
 
     resp = result["resp"]
     for row in resp:
-        result_files += glob.glob("{fileSetName}_{detector}*".format(**row).lower())
-    
+        result_files += glob.glob(
+            "{fileSetName}_{detector}*".format(**row).lower()
+        )
+
     result_files.sort()
 
     if sync:
@@ -355,7 +357,7 @@ def run_one_products_ifu(
         s3_path = os.path.join(s3_prefix, "jw" + obsid) + "/"
         s3_path = s3_path.replace("//", "/").replace("s3:/", "s3://")
 
-        send_command = f"aws s3 sync ./ {s3_path} --exclude \"*\" --include \"{outroot}*\" --acl public-read"
+        send_command = f'aws s3 sync ./ {s3_path} --exclude "*" --include "{outroot}*" --acl public-read'
 
         print(send_command)
         sync_result = subprocess.run(
@@ -375,9 +377,28 @@ def combine_ifu_pipeline(
     gfilt="F170LP_G235M",
     scale=0.05,
     pixfrac=0.75,
+    recenter_cube=True,
+    perform_saturation=True,
+    run_cube_diagnostics=True,
+    write_cube_diagnostics=True,
     **kwargs,
 ):
-    """ """
+    """
+    Parameters
+    ---------
+    obsid : str
+        Observation ID (same as ``visit_id`` in the MAST query)
+
+    gfilt : str
+        Filter and grating combination
+
+    scale : float
+        Drizzle pixel scale
+
+    pixfrac : float
+        Pseudo-drizzle pixfrac
+
+    """
     from grizli.aws import db
 
     filter, grating = gfilt.split("_")
@@ -390,7 +411,7 @@ def combine_ifu_pipeline(
     """
     )
 
-    print(f"response: {len(resp)} rows")
+    print(f"DB: {len(resp)} exposures")
 
     s3_prefix = "s3://msaexp-nirspec/ifu_exposures"
 
@@ -410,81 +431,97 @@ def combine_ifu_pipeline(
         for row in resp
     ]
 
+    kwargs["files"] = files
+    kwargs["pixel_size"] = scale
+    kwargs["pixfrac"] = pixfrac
+    kwargs["filter"] = filter
+    kwargs["grating"] = grating
+    kwargs["obsid"] = obsid
+    kwargs["recenter_cube"] = recenter_cube
+    kwargs["perform_saturation"] = perform_saturation
+
     outroot, cubes, ptab, hdul = msaifu.ifu_pipeline(
-        outroot=None,
-        pixel_size=scale,
-        pixfrac=pixfrac,
-        side="auto",
-        wave_sample=1.05,
-        files=files,
-        obsid=obsid,
-        filter=filter,
-        grating=grating,
-        # download=False,
-        use_token=False,
-        sky_annulus=None,
-        exposure_type="rate",
-        do_flatfield=False,
-        do_photom=False,
-        extend_wavelengths=True,
-        use_first_center=True,
-        slice_wavelength_range=[0.5e-6, 5.6e-6],
-        make_drizzled=1,
-        bad_pixel_flag=(
-            msautils.BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
-        ),
-        # detectors=["nrs1", "nrs2"],
-        # BAD_PIXEL_FLAG=1, dilate_failed_open=False,
-        perform_saturation=True,
-        recenter_cube=True,
+        # # outroot=None,
+        # pixel_size=scale,
+        # pixfrac=pixfrac,
+        # side="auto",
+        # # wave_sample=1.05,
+        # files=files,
+        # obsid=obsid,
+        # filter=filter,
+        # grating=grating,
+        # # download=False,
+        # use_token=False,
+        # sky_annulus=None,
+        # exposure_type="rate",
+        # do_flatfield=False,
+        # do_photom=False,
+        # extend_wavelengths=True,
+        # use_first_center=True,
+        # slice_wavelength_range=[0.5e-6, 5.6e-6],
+        # # make_drizzled=1,
+        # bad_pixel_flag=(
+        #     msautils.BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
+        # ),
+        # # detectors=["nrs1", "nrs2"],
+        # # BAD_PIXEL_FLAG=1, dilate_failed_open=False,
+        # perform_saturation=True,
+        # recenter_cube=True,
         # drizzle_wave_limits=(4.5, 4.9),
+        **kwargs,
     )
 
     cube_file = outroot + ".fits"
 
     # cube products
-    cube_hdu = pyfits.open(cube_file)
+    if os.path.exists(cube_file) & run_cube_diagnostics:
+        cube_hdu = pyfits.open(cube_file)
 
-    result = msaifu.cube_make_diagnostics(
-        cube_hdu,
-        **kwargs,
-        # scale_func=np.arcsinh, figsize=(12, 4), wave_power=-1, erode_background=None,
-        # thresh_percentile=80, min_thresh=3, cmap=plt.cm.rainbow,
-    )
+        result = msaifu.cube_make_diagnostics(
+            cube_hdu,
+            **kwargs,
+            # scale_func=np.arcsinh, figsize=(12, 4), wave_power=-1, erode_background=None,
+            # thresh_percentile=80, min_thresh=3, cmap=plt.cm.rainbow,
+        )
 
-    utils.figure_timestamp(result["fig"])
+        utils.figure_timestamp(result["fig"])
 
-    result["fig"].text(
-        0.005,
-        0.005,
-        outroot,
-        ha="left",
-        va="bottom",
-        transform=result["fig"].transFigure,
-        fontsize=8,
-    )
+        result["fig"].text(
+            0.005,
+            0.005,
+            outroot,
+            ha="left",
+            va="bottom",
+            transform=result["fig"].transFigure,
+            fontsize=8,
+        )
 
-    utils.figure_timestamp(result["img_fig"])
+        utils.figure_timestamp(result["img_fig"])
 
-    result["img_fig"].text(
-        0.5,
-        0.005,
-        outroot,
-        ha="center",
-        va="bottom",
-        transform=result["img_fig"].transFigure,
-        fontsize=8,
-    )
+        result["img_fig"].text(
+            0.5,
+            0.005,
+            outroot,
+            ha="center",
+            va="bottom",
+            transform=result["img_fig"].transFigure,
+            fontsize=8,
+        )
 
-    result["img_fig"].savefig(cube_file.replace(".fits", ".thumb.png"))
-    result["fig"].savefig(cube_file.replace(".fits", ".1d.png"))
-    result["stab"].write(
-        cube_file.replace(".fits", ".1d.fits"), overwrite=True
-    )
+        if write_cube_diagnostics:
+            result["img_fig"].savefig(cube_file.replace(".fits", ".thumb.png"))
+
+            result["fig"].savefig(cube_file.replace(".fits", ".1d.png"))
+
+            result["stab"].write(
+                cube_file.replace(".fits", ".1d.fits"), overwrite=True
+            )
+    else:
+        result = {}
 
     result["outroot"] = outroot
     result["ptab"] = ptab
     result["cubes"] = cubes
-    result['resp'] = resp
+    result["resp"] = resp
 
     return result
