@@ -45,6 +45,11 @@ Run the RXJ2129 demo notebook directly on GitHub in a Codespace:
 .. toctree::
    :maxdepth: 2
 
+   msaexp/notes.rst
+
+.. toctree::
+   :maxdepth: 2
+
    msaexp/install.rst
 
 ~~~     

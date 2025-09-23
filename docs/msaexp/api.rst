@@ -27,3 +27,6 @@ Additional API
 .. automodapi:: msaexp.resample_numba
     :no-inheritance-diagram:
 
+.. automodapi:: msaexp.cloud
+    :no-inheritance-diagram:
+
