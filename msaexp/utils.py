@@ -2067,8 +2067,10 @@ def drizzled_hdu_figure(
 
             axes[1].fill_between(
                 [wx - dw, wx + dw],
-                [0, 0],
-                [100, 100],
+                # [0, 0],
+                # [100, 100],
+                [-0.1*ymax, -0.1*ymax],
+                [ymax, ymax],
                 color=c,
                 alpha=0.07,
                 zorder=-100,
