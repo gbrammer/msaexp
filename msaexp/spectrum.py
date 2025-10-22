@@ -414,10 +414,11 @@ class SpectrumSampler(object):
         """
 
         templ_wobs = template.wave.astype(np.float32) * (1 + z) / 1.0e4
-        if fnu:
-            templ_flux = template.flux_fnu(z=z).astype(np.float32)
-        else:
-            templ_flux = template.flux_flam(z=z).astype(np.float32)
+        # if fnu:
+        #     templ_flux = template.flux_fnu(z=z).astype(np.float32)
+        # else:
+        #     templ_flux = template.flux_flam(z=z).astype(np.float32)
+        templ_flux = template.flux_fnu(z=z).astype(np.float32)
 
         if with_igm:
             igmz = IGM_FUNC(z, templ_wobs * 1.0e4)
@@ -449,7 +450,7 @@ class SpectrumSampler(object):
             else:
                 res += res_i
 
-        return res
+        return res * self.spec["to_flam"]**(fnu is False)
 
     def emission_line(
         self,
@@ -506,6 +507,7 @@ class SpectrumSampler(object):
         orders=[1, 2, 3, 4],
         lorentz=False,
         verbose=False,
+        **kwargs,
     ):
         """
         Make an emission line template with numerically correct pixel
@@ -869,6 +871,7 @@ class SpectrumSampler(object):
         nsig=5,
         scale_disp=1.3,
         orders=[1, 2, 3, 4],
+        **kwargs,
     ):
         """
         Resample a `bagpipes` model to the wavelength grid of the spectrum.
@@ -1812,6 +1815,7 @@ def make_templates(
                     line_flux=lri / np.sum(lr[li]),
                     scale_disp=scale_disp,
                     velocity_sigma=vel_i,
+                    **kwargs,
                 )
                 if i == 0:
                     line_0 = line_i
@@ -1833,6 +1837,7 @@ def make_templates(
                         velocity_sigma=vel_width,
                         scale_disp=scale_disp,
                         fnu=False,
+                        **kwargs,
                     )
 
                     _A.append(tflam)
@@ -1880,6 +1885,7 @@ def make_templates(
                         line_flux=lri / np.sum(lr[li]),
                         scale_disp=scale_disp,
                         velocity_sigma=vel_i,
+                        **kwargs,
                     )
                     if line_0 is None:
                         line_0 = line_i
@@ -1911,6 +1917,7 @@ def make_templates(
                 velocity_sigma=vel_width,
                 scale_disp=scale_disp,
                 fnu=False,
+                **kwargs
             )
 
             _A = np.vstack([bspl * tflam])
@@ -1931,6 +1938,7 @@ def make_templates(
                     velocity_sigma=vel_width,
                     scale_disp=scale_disp,
                     fnu=False,
+                    **kwargs,
                 )
 
                 _A.append(tflam)
