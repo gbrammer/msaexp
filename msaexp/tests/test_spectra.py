@@ -112,7 +112,8 @@ def test_fit_redshift():
         assert np.allclose(
             zfit["coeffs"]["4590.fits"],
             # [127.2, 3.418],
-            [120.2, 2.5],  # With SpectrumSampler fits
+            # [120.2, 2.5],  # With SpectrumSampler fits
+            [2.293e+12, 8.078e+10], # With template refactor
             rtol=0.5,
         )
 
