@@ -1,0 +1,26 @@
+legend.scatterpoints : 1
+legend.fontsize : small
+axes.titlesize : medium
+
+image.interpolation : Nearest
+image.origin : lower
+
+grid.linestyle : :
+
+scatter.marker: .
+
+xtick.minor.size : 3.0
+xtick.major.size : 6.0
+xtick.minor.width : 1.0
+xtick.major.width : 1.0
+xtick.direction : in
+
+ytick.minor.size : 3.0
+ytick.major.size : 6.0
+ytick.minor.width : 1.0
+ytick.major.width : 1.0
+ytick.direction : in
+
+figure.figsize : 6.0, 6.0
+
+font.family : sans-serif

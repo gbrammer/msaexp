@@ -53,6 +53,22 @@ def _set_bad_pixel_flag():
 
 _set_bad_pixel_flag()
 
+
+def set_plot_style(style_file=None):
+    """
+    Load plot defaults with ``plt.style.use(style_file)``.  If Not specified, use the internal
+    file ``msaexp/data/msaexp.mplstyle``.
+    """
+    import matplotlib.pyplot as plt
+    if style_file is None:
+        style_file = os.path.join(
+            os.dirname(__file__),
+            "data",
+            "msaexp.mplstyle"
+        )
+        plt.style.use(style_file)
+
+
 VERBOSITY = True
 
 def rename_source(source_name):
