@@ -62,7 +62,7 @@ def set_plot_style(style_file=None):
     import matplotlib.pyplot as plt
     if style_file is None:
         style_file = os.path.join(
-            os.dirname(__file__),
+            os.path.dirname(__file__),
             "data",
             "msaexp.mplstyle"
         )
