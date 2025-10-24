@@ -2693,3 +2693,11 @@ def cube_make_diagnostics(
     }
 
     return result
+
+
+class ReducedCube():
+    def __init__(self, file="", redshift=0.):
+        """
+        Handler for reduced cubes
+        """
+        
