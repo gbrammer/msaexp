@@ -2414,7 +2414,7 @@ def get_nirspec_psf_fwhm(wave):
         in pixels.
 
     """
-    from .data.fwhm_data import fwhm_data
+    from ..data.fwhm_data import fwhm_data
 
     fwhm_table = grizli.utils.read_catalog(fwhm_data)
 

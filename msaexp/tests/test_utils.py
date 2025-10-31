@@ -6,7 +6,7 @@ from scipy.stats import uniform
 import jwst
 
 from .. import utils
-
+from ..utils import general as general_utils
 
 def test_import():
     """ """
@@ -303,11 +303,11 @@ def test_badpix():
     utils.cache_badpix_arrays()
 
     for detector in ["NRS1", "NRS2"]:
-        assert detector in utils.MSAEXP_BADPIX
+        assert detector in general_utils.MSAEXP_BADPIX
 
-        assert len(utils.MSAEXP_BADPIX[detector]) == 3
-        assert utils.MSAEXP_BADPIX[detector][0].shape == (2048, 2048)
-        assert "yaml" in utils.MSAEXP_BADPIX[detector][2]
+        assert len(general_utils.MSAEXP_BADPIX[detector]) == 3
+        assert general_utils.MSAEXP_BADPIX[detector][0].shape == (2048, 2048)
+        assert "yaml" in general_utils.MSAEXP_BADPIX[detector][2]
 
 
 def test_array_bins():
