@@ -525,7 +525,7 @@ def get_default_resolution_curve(
             wave = disp["WAVELENGTH"]
     else:
         disp = grizli.utils.read_catalog(
-            os.path.join(_data_path, f"jwst_nirspec_{grating.lower()}_disp.fits"
+            os.path.join(_data_path, f"jwst_nirspec_{grating.lower()}_disp.fits")
         )
 
     if wave is None:
@@ -3536,8 +3536,8 @@ def cache_badpix_arrays():
     for detector in ["NRS1", "NRS2"]:
         path_to_ref = os.path.join(
             os.path.dirname(__file__),
-            "data",
             "..",
+            "data",
             f"msaexp_badpix_{detector}.yaml".lower(),
         )
 
@@ -3771,8 +3771,8 @@ def get_normalization_correction(wavelengths, quadrant, xcen, ycen, grating="PRI
 
     path_to_ref = os.path.join(
         os.path.dirname(__file__),
-        "data",
         "..",
+        "data",
         f"{grating.lower()}_slit_renormalize.yaml",
     )
 
