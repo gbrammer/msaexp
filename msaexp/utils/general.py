@@ -7,11 +7,11 @@ import logging
 
 import numpy as np
 import astropy.io.fits as pyfits
+import matplotlib.colorizer
 
 import jwst.datamodels
 
 import grizli.utils
-
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
