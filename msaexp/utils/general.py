@@ -492,6 +492,43 @@ def get_miri_lrs_disp(
     return disp
 
 
+def get_muse_lsf(
+    wave=None, range=[0.47499375, 0.93500625], step=1.25e-4, **kwargs
+):
+    """
+    MUSE resolution curve from Guerou et al. (2017)
+
+    https://www.aanda.org/articles/aa/pdf/2017/12/aa30905-17.pdf
+
+    Parameters
+    ----------
+    wave : array-like
+        Wavelength grid, microns
+
+    range, step : (float, float), (float)
+        Default wavelength range and step to use if ``wave`` not provided, here in units of microns.
+
+    Returns
+    -------
+    disp : Table
+        Dispersion table
+    """
+
+    if wave is None:
+        wave = np.arange(*range, step)
+
+    lam = wave * 1.e4
+    muse_fwhm = 5.866e-8 * lam**2 - 9.187e-4 * lam + 6.040
+
+    disp = grizli.utils.GTable()
+    disp["WAVELENGTH"] = wave
+
+    disp["FWHM"] = (muse_fwhm * 1.e-4)
+    disp["R"] = disp["WAVELENGTH"] / disp["FWHM"]
+
+    return disp
+
+
 def get_default_resolution_curve(
     grating="PRISM", wave=None, grating_degree=2, **kwargs
 ):
@@ -521,6 +558,10 @@ def get_default_resolution_curve(
         disp = get_nircam_wfss_disp(wave=wave)
     elif "LRS" in grating.upper():
         disp = get_miri_lrs_disp(wave=wave)
+        if wave is None:
+            wave = disp["WAVELENGTH"]
+    elif "MUSE" in grating.upper():
+        disp = get_muse_lsf(wave=wave)
         if wave is None:
             wave = disp["WAVELENGTH"]
     else:
