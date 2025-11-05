@@ -1963,10 +1963,13 @@ class SlitGroup:
 
         return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
 
-    def set_background_spectra(self, path="", **kwargs):
+    def set_background_spectra(self, path="", skip_h_gratings=True, **kwargs):
         """
         Try to read global sky background spectra
         """
+
+        if skip_h_gratings & (self.grating.upper().endswith('H')):
+            return None
 
         bkg_files = []
         for j, slit in enumerate(self.slits):

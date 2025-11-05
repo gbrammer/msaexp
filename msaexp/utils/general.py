@@ -42,7 +42,7 @@ BAD_PIXEL_FLAG = 1 | 1024
 DETECTOR_EDGES = ((0, 2048), (0, 2038))
 
 
-def _set_bad_pixel_flag():
+def set_bad_pixel_flag():
     """
     Set the global ``BAD_PIXEL_FLAG`` variable"""
     global BAD_PIXEL_FLAG
@@ -51,7 +51,7 @@ def _set_bad_pixel_flag():
         BAD_PIXEL_FLAG |= jwst.datamodels.dqflags.pixel[_bp]
 
 
-_set_bad_pixel_flag()
+set_bad_pixel_flag()
 
 
 def set_plot_style(style_file=None):
@@ -63,15 +63,21 @@ def set_plot_style(style_file=None):
 
     if style_file is None:
         style_file = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "data",
+            module_data_path(),
             "msaexp.mplstyle"
         )
         plt.style.use(style_file)
 
 
 VERBOSITY = True
+
+
+def module_data_path():
+    """
+    Get the path to the ``data`` directory inside the module
+    """
+    return os.path.join(os.path.dirname(__file__), "..", "data")
+
 
 def rename_source(source_name):
     """
@@ -395,7 +401,7 @@ def get_standard_wavelength_grid(
     gr = grating_limits[grating.lower()]
 
     if (grating.lower() == "prism") & free_prism:
-        _path = os.path.join(os.path.dirname(__file__), "..", "data")        
+        _path = module_data_path()
         _disp_file = f"{_path}/jwst_nirspec_{grating.lower()}_disp.fits"
         disp = grizli.utils.read_catalog(_disp_file)
 
@@ -552,7 +558,7 @@ def get_default_resolution_curve(
         Tabulated resolution curve
 
     """
-    _data_path = os.path.join(os.path.dirname(__file__), "..", "data")
+    _data_path = module_data_path()
     if "GRISM" in grating.upper():
         # NIRCAM WFSS, assume 20 pix
         disp = get_nircam_wfss_disp(wave=wave)
@@ -2590,9 +2596,7 @@ def get_prism_bar_correction(
 
     if bar_data is None:
         path_to_ref = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "data",
+            module_data_path(),
             f"prism_{num_shutters}_bar_coeffs.yaml",
         )
 
@@ -2729,9 +2733,7 @@ def get_prism_wave_bar_correction(
 
     if bar_data is None:
         path_to_ref = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "data",
+            module_data_path(),
             f"prism_{num_shutters}_bar_coeffs_wave.yaml",
         )
 
@@ -3093,9 +3095,7 @@ def msa_slit_sflat(
 
     if flat_file is None:
         flat_file = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "data",
+            module_data_path(),
             "extended_sensitivity",
             "sflat_spl_coeffs_{0}_q{1}.fits".format("prism", quadrant),
             # "sflat_lamp_spl_coeffs_q{1}.fits".format("prism", quadrant),
@@ -3202,8 +3202,7 @@ def fixed_slit_flat_field(
         return None
 
     profile_file = os.path.join(
-        os.path.dirname(__file__),
-        "data",
+        module_data_path(),
         "extended_sensitivity",
         "fixed_slit_flat_profile_{0}.yaml".format(slit.name.lower()),
     )
@@ -3389,7 +3388,7 @@ def slit_extended_flux_calibration(
     # paths to search
     paths = [
         "",
-        os.path.join(os.path.dirname(__file__), "data", "extended_sensitivity"),
+        os.path.join(module_data_path(), "extended_sensitivity"),
     ]
 
     file_path = None
@@ -3576,9 +3575,7 @@ def cache_badpix_arrays():
 
     for detector in ["NRS1", "NRS2"]:
         path_to_ref = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "data",
+            module_data_path(),
             f"msaexp_badpix_{detector}.yaml".lower(),
         )
 
@@ -3811,9 +3808,7 @@ def get_normalization_correction(wavelengths, quadrant, xcen, ycen, grating="PRI
         return np.ones_like(wavelengths)
 
     path_to_ref = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "data",
+        module_data_path(),
         f"{grating.lower()}_slit_renormalize.yaml",
     )
 
@@ -4065,7 +4060,7 @@ def available_lookup_psf_files():
     """
     import glob
 
-    path_to_data = os.path.join(os.path.dirname(__file__), "..", "data", "psf")
+    path_to_data = os.path.join(module_data_path(), "psf")
     psf_files = glob.glob(os.path.join(path_to_data, "*lookup*.fits"))
     psf_files = [os.path.basename(f) for f in psf_files]
     psf_files.sort()
@@ -4152,7 +4147,7 @@ class LookupTablePSF:
         """
         Read the lookup table data in ``psf_file``
         """
-        path_to_data = os.path.join(os.path.dirname(__file__), "..", "data", "psf")
+        path_to_data = os.path.join(module_data_path(), "psf")
         for _path in ["", path_to_data]:
             psf_file = os.path.join(_path, self.psf_file)
             if os.path.exists(psf_file):

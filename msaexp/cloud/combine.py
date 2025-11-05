@@ -489,7 +489,7 @@ def combine_spectra_pipeline(
                 _ = msautils.BAD_PIXEL_NAMES.pop(
                     msautils.BAD_PIXEL_NAMES.index("MSA_FAILED_OPEN")
                 )
-                msautils._set_bad_pixel_flag()
+                msautils.set_bad_pixel_flag()
 
             for _bp in msautils.BAD_PIXEL_NAMES:
                 msautils.BAD_PIXEL_FLAG |= jwst.datamodels.dqflags.pixel[_bp]
