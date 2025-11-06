@@ -133,6 +133,7 @@ def split_visit_groups(
         test_field |= (un[k].sum() % 4 == 0) & ("jw01324" in files[0])
         test_field |= (un[k].sum() % 6 == 0) & ("jw01324" in files[0])
         test_field |= (un[k].sum() % 6 == 0) & ("jw06368" in files[0])
+        test_field |= (un[k].sum() % 6 == 0) & ("jw08204" in files[0])
         test_field &= split_uncover > 0
         test_field |= split_uncover == 16
 
@@ -150,6 +151,10 @@ def split_visit_groups(
                 # outer nods for spatial information
                 set1 = set1[1::3] + set1[2::3]
                 set2 = set2[1::3] + set2[2::3]
+            elif ("jw08204" in files[0]):
+                # Groups of three with spatial offset between them
+                set1 = all_files[un[k]][:3].tolist()
+                set2 = all_files[un[k]][3:].tolist()
             elif ("jw06368" in files[0]):
                 fk = all_files[un[k]].tolist()
                 set1 = []
