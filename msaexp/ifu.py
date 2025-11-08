@@ -2933,7 +2933,7 @@ class ReducedCube:
     def info(self):
         """ """
         info = f"{self.file} {self.shape}  {self.grating}_{self.filter}"
-        info += f"  ({self.header["CRVAL1"]:.6f}, {self.header["CRVAL2"]:.6f})  z={self.redshift:.4f}"
+        info += f'  ({self.header["CRVAL1"]:.6f}, {self.header["CRVAL2"]:.6f})  z={self.redshift:.4f}'
         return info
 
     def load_sensitivity(self, **kwargs):
