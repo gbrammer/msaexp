@@ -1603,7 +1603,10 @@ class SlitGroup:
         if msautils.BAD_PIXEL_FLAG > 0:
             bad = (dq & msautils.BAD_PIXEL_FLAG) > 0
             if (VERBOSE_LOG & 4):
-                msg = f'DEBUG mask: valid N={(~bad).sum():<6} BAD_PIXEL_FLAG = {BAD_PIXEL_FLAG}'
+                msg = (
+                    f'DEBUG mask: valid N={(~bad).sum():<6} '
+                    + f'BAD_PIXEL_FLAG = {msautils.BAD_PIXEL_FLAG}'
+                )
                 utils.log_comment(
                     utils.LOGFILE, msg, verbose=True
                 )
