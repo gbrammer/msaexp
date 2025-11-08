@@ -46,6 +46,8 @@ PRISM_MIN_VALID_SN = -3
 # RNOISE_THRESHOLD = 95 # version <= 3
 RNOISE_THRESHOLD = 99.5
 
+NEGATIVE_THRESHOLD = -5
+
 SPLINE_BAR_GRATINGS = [
     "PRISM",
     "G395M",
@@ -1374,7 +1376,7 @@ class SlitGroup:
         """
         import scipy.ndimage as nd
 
-        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN, RNOISE_THRESHOLD
+        global PRISM_MAX_VALID, PRISM_MIN_VALID_SN, RNOISE_THRESHOLD, NEGATIVE_THRESHOLD
 
         slits = self.slits
 
@@ -1601,7 +1603,7 @@ class SlitGroup:
         if msautils.BAD_PIXEL_FLAG > 0:
             bad = (dq & msautils.BAD_PIXEL_FLAG) > 0
             if (VERBOSE_LOG & 4):
-                msg = f'DEBUG mask: valid N={(~bad).sum():<6} BAD_PIXEL_FLAG'
+                msg = f'DEBUG mask: valid N={(~bad).sum():<6} BAD_PIXEL_FLAG = {BAD_PIXEL_FLAG}'
                 utils.log_comment(
                     utils.LOGFILE, msg, verbose=True
                 )
@@ -1670,14 +1672,13 @@ class SlitGroup:
 
         if (~bad).sum() > 0:
             # print('dq before threshold:', bad.sum())
-            bad |= sci < -5 * np.sqrt(
+            bad |= sci < NEGATIVE_THRESHOLD * np.sqrt(
                 np.nanmedian((var_rnoise + var_poisson)[~bad])
             )
 
             bad |= var_rnoise > 10 * np.nanpercentile(
                 var_rnoise[~bad], RNOISE_THRESHOLD
             )
-            # print('dq after threshold:', bad.sum())
 
             if (VERBOSE_LOG & 4):
                 msg = f'DEBUG mask: valid N={(~bad).sum():<6} rnoise {RNOISE_THRESHOLD}'
