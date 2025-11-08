@@ -324,7 +324,9 @@ def combine_spectra_pipeline(
             fit_type=1,
             fix_params=False,
             input_fix_sigma=None,
-            undo_barshadow=False,
+            undo_barshadow=2,
+            min_bar=0.4,
+            bar_corr_mode="wave",
             undo_pathloss=1,
             split_uncover=1,
             get_xobj=True,
@@ -387,11 +389,11 @@ def combine_spectra_pipeline(
             estimate_sky_kwargs["absolute_threshold"] = 0.1
             kwargs["pad_border"] = 2
 
-        kwargs["undo_barshadow"] = 2
-        kwargs["min_bar"] = 0.4
+        # kwargs["undo_barshadow"] = 2
+        # kwargs["min_bar"] = 0.4
 
         kwargs["fixed_offset"] = 0.0
-        kwargs["bar_corr_mode"] = "wave"
+        # kwargs["bar_corr_mode"] = "wave"
 
         if root.split("-v")[0] in ["macsj0647-hr"]:
             # kwargs['diffs'] = True
