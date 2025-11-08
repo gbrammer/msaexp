@@ -8,11 +8,16 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 
+from tqdm import tqdm
+
 import scipy.ndimage as nd
 import jwst.datamodels
 
 import astropy.table
 import astropy.io.fits as pyfits
+import astropy.wcs as pywcs
+import astropy.units as u
+from astropy.visualization import simple_norm
 
 import scipy.stats
 from scipy.optimize import minimize
@@ -27,6 +32,57 @@ from .version import __version__ as msaexp_version
 IFU_BAD_PIXEL_FLAG = BAD_PIXEL_FLAG & ~1024 | 4096 | 1073741824 | 16777216
 
 VERBOSITY = True
+
+LINE_LABELS_LATEX = {
+    "Ha": r"H$\alpha$",
+    "Hb": r"H$\beta$",
+    "Hg": r"H$\gamma$",
+    "Hd": r"H$\delta$",
+    "SII": r"[SII]$\lambda\lambda$6717,6731",
+    "SIII": r"[SIII]$\lambda\lambda$9068,9531",
+    "SIII-9531": r"[SIII]$\lambda$9531",
+    "NII": r"[NII]$\lambda\lambda$6548,6584",
+    "OII": r"[OII]$\lambda$3727",
+    "OIII": r"[OIII]$\lambda$5007",
+    "OIII-5007": r"[OIII]$\lambda$5007",
+    "OIII-4363": r"[OIII]$\lambda$4363",
+    "PaA": r"Pa$\alpha$",
+    "PaB": r"Pa$\beta$",
+    "PaG": r"Pa$\gamma$",
+    "PaD": r"Pa$\delta$",
+}
+
+LINE_WAVELENGTHS, LINE_RATIOS = utils.get_line_wavelengths()
+
+
+def linelist_velocity_offset(lines):
+    """
+    Get a list of velocity offsets for a list of emission line names
+    """
+
+    ref_wave = LINE_WAVELENGTHS[lines[0]][0]
+    rows = []
+    for li in lines:
+        for j, wj in enumerate(LINE_WAVELENGTHS[li]):
+            row = {
+                "name": li,
+                "index": j,
+                "wave": wj,
+                "dv": int(np.round((wj - ref_wave) / ref_wave * 3.0e5)),
+            }
+            rows.append(row)
+
+    tab = utils.GTable(rows=rows)
+    tab.meta["ref_wave"] = ref_wave
+    tab.meta["min_dv"] = tab["dv"].min()
+    tab.meta["max_dv"] = tab["dv"].max()
+
+    msg = "line_list_velocity_differences: {lines}  {min_dv}  {max_dv}".format(
+        lines=lines, **tab.meta
+    )
+    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    return tab
 
 
 def rotation_matrix(angle):
@@ -2695,9 +2751,2240 @@ def cube_make_diagnostics(
     return result
 
 
-class ReducedCube():
-    def __init__(self, file="", redshift=0.):
+class ReducedCube:
+
+    sensitivity_file = None
+    sensitivity = None
+    sens = 1.0
+    bwht = 0.0
+    spec = None
+
+    labels = None
+    label_image = None
+    label_counts = None
+    label_uni = None
+
+    def __init__(
+        self,
+        file="",
+        data=None,
+        redshift=0.0,
+        fits_scale_err=0.37,
+        slw=None,
+        slx=None,
+        sly=None,
+        negative_threshold=-5,
+    ):
         """
         Handler for reduced cubes
         """
-        
+
+        self.file = file
+        self.redshift = redshift
+
+        self.slw = slw
+        self.slx = slx
+        self.sly = sly
+
+        self.negative_threshold = negative_threshold
+
+        if data is not None:
+            self.wave, self.header, self.sci, self.wht = data
+        else:
+            with pyfits.open(file) as cube_hdu:
+                if "WCS-TAB" in cube_hdu:
+                    self.wave = (
+                        utils.GTable(cube_hdu["WCS-TAB"].data)[
+                            "WAVELENGTH"
+                        ].data
+                        / 1.0e4
+                    )
+                    self.header = cube_hdu[1].header.copy()
+                    self.sci = cube_hdu["SCI"].data * 1
+                    self.wht = cube_hdu["WHT"].data / fits_scale_err**2
+                else:
+                    # Load MUSE cube
+                    self.header = cube_hdu[1].header.copy()
+                    self.sci = cube_hdu["DATA"].data * 1
+                    self.wht = 1.0 / cube_hdu["STAT"].data
+
+                    self.header["GRATING"] = "MUSE"
+                    self.header["FILTER"] = "MUSE"
+
+                    wcs_ = pywcs.WCS(self.header)
+                    xpix = np.arange(self.sci.shape[0])
+                    _, _, wave_meters = wcs_.all_pix2world([0], [0], xpix, 0)
+                    self.wave = wave_meters * 1.0e6
+
+                    to_fnu = (
+                        1.0e-20 * u.erg / u.second / u.cm**2 / u.Angstrom
+                    ).to(
+                        u.microJansky,
+                        equivalencies=u.spectral_density(self.wave * u.micron),
+                    )
+                    self.sci = (self.sci.T * to_fnu.value).T
+                    self.wht = (self.wht.T / to_fnu.value**2).T
+
+            if slw is not None:
+                self.sci = self.sci[slw, :, :]
+                self.wht = self.wht[slw, :, :]
+                self.wave = self.wave[slw]
+
+            if sly is not None:
+                self.sci = self.sci[:, sly, :]
+                self.wht = self.wht[:, sly, :]
+
+            if slx is not None:
+                self.sci = self.sci[:, :, slx]
+                self.wht = self.wht[:, :, slx]
+
+        self.yp, self.xp = np.indices(self.sci.shape[1:])
+
+        try:
+            self.load_sensitivity()
+        except ValueError:
+            pass
+
+        self.pixbin = self.valid * 1
+        self.mask = self.pixbin.sum(axis=0) > 0
+
+    @property
+    def valid(self):
+        valid = np.isfinite(self.sci + self.wht) & (self.wht > 0)
+        valid &= self.sci - self.bkg > self.negative_threshold * np.sqrt(
+            self.wht
+        )
+        return valid
+
+    @property
+    def outroot(self):
+        return os.path.basename(self.file).split(".fits")[0]
+
+    @property
+    def path(self):
+        return os.path.dirname(self.file)
+
+    @property
+    def grating(self):
+        return self.header["GRATING"]
+
+    @property
+    def filter(self):
+        return self.header["FILTER"]
+
+    @property
+    def shape(self):
+        return self.sci.shape
+
+    @property
+    def aspect(self):
+        sh = self.shape
+        return sh[1] / sh[2]
+
+    @property
+    def gradient_dv(self):
+        """
+        Gradient of the wavelength grid ``dwave / wave * c``
+        """
+        return np.gradient(self.wave) / self.wave * 3.0e5
+
+    @property
+    def bkg(self):
+        """
+        Background in units of ``sci`` (without sensitivity)
+        """
+        if hasattr(self.bwht, "shape"):
+            return self.bwht / (self.wht.T * self.sens).T
+        else:
+            return 0
+
+    @property
+    def wcs_header(self):
+
+        wcsh, _ = utils.make_wcsheader(get_hdu=False)
+        for k in wcsh:
+            if k not in self.header:
+                print(k)
+            else:
+                wcsh[k] = self.header[k]
+
+        if (self.slx is not None) | (self.sly is not None):
+            if self.slx is None:
+                slx = slice(0, self.shape[2])
+            else:
+                slx = self.slx
+
+            if self.sly is None:
+                sly = slice(0, self.shape[1])
+            else:
+                sly = self.sly
+
+            wcs_ = pywcs.WCS(wcsh)
+            wcsh = utils.get_wcs_slice_header(wcs_, slx, sly)
+
+        return wcsh
+
+    def wcs2d(self):
+
+        wcs = pywcs.WCS(self.wcs_header)
+        wcs.pscale = utils.get_wcs_pscale(wcs)
+        return wcs
+
+    def info(self):
+        """ """
+        info = f"{self.file} {self.shape}  {self.grating}_{self.filter}"
+        info += f"  ({self.header["CRVAL1"]:.6f}, {self.header["CRVAL2"]:.6f})  z={self.redshift:.4f}"
+        return info
+
+    def load_sensitivity(self, **kwargs):
+        """
+        Load sensitivity curve
+        """
+        path_to_files = os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            "extended_sensitivity",
+            "ifu",
+            "msaexp_ifu_sens*{GRATING}_{FILTER}*fits".format(
+                **self.header
+            ).lower(),
+        )
+
+        sens_files = glob.glob(path_to_files)
+
+        if len(sens_files) == 0:
+            self.num = ((self.sci * self.wht).T).T
+            self.den = (self.wht.T).T
+
+            msg = f"load_sensitivity: no files found at {path_to_files}"
+            raise ValueError(msg)
+
+        sens_files.sort()
+
+        utils.log_comment(
+            utils.LOGFILE,
+            f"load_sensitivity {self.file}: {sens_files[-1]}",
+            verbose=(VERBOSITY & 2),
+        )
+
+        self.sensitivity_file = sens_files[-1]
+        self.sensitivity = utils.read_catalog(self.sensitivity_file)
+
+        self.sens = np.interp(
+            self.wave,
+            self.sensitivity["wavelength"],
+            self.sensitivity["sensitivity"],
+            left=0.0,
+            right=0.0,
+        )
+
+        # Precompute sensititivity-weighted arrays
+        self.num = ((self.sci * self.wht).T * self.sens).T
+        self.den = (self.wht.T * self.sens**2).T
+
+    @staticmethod
+    def make_rebin_labels(shape=None, factor=4, **kwargs):
+        """ """
+        bfactor = int(np.round(factor))
+        sh2 = (
+            shape[0],
+            shape[1] // bfactor + (shape[1] % bfactor > 0),
+            shape[2] // bfactor + (shape[1] % bfactor > 0),
+        )
+
+        fbin_image = np.zeros(shape[1:], dtype=int)
+
+        fbin_id = 0
+
+        for i in range(sh2[1]):
+            sli = slice(i * bfactor, (i + 1) * bfactor)
+            for j in range(sh2[2]):
+                slj = slice(j * bfactor, (j + 1) * bfactor)
+                fbin_id += 1
+                fbin_image[sli, slj] = fbin_id
+
+        return fbin_image
+
+    def rebin(self, factor=4, **kwargs):
+        """
+        Rebin cube data
+        """
+
+        label_image = self.make_rebin_labels(
+            shape=self.shape, factor=factor, **kwargs
+        )
+
+        cube = self.rebin_labels(label_image=label_image, **kwargs)
+
+        cube.file = self.file.replace(".fits", f".b{factor}.fits")
+
+        return cube
+
+    def rebin_labels(
+        self,
+        label_image=None,
+        nmad_npix=10000,
+        nmad_threshold=10,
+        weight_type="wht",
+        **kwargs,
+    ):
+        """ """
+        from tqdm import tqdm
+
+        uni = utils.Unique(label_image.flatten(), verbose=False)
+
+        sh = self.shape
+        sh2 = (sh[0], uni.N, 1)
+
+        sci = np.zeros(sh2, dtype=self.sci.dtype)
+        wht = np.zeros(sh2, dtype=self.sci.dtype)
+        npix = np.zeros(sh2, dtype=int)
+
+        xpf, ypf = self.xp.flatten(), self.yp.flatten()
+
+        if weight_type == "wht":
+            bnum_ = self.num - self.bwht
+
+        sbkg_ = self.sci - self.bkg
+
+        valid = self.valid & True
+        has_data = (valid.sum(axis=0) > 0).flatten()
+
+        for i, bin_i in tqdm(enumerate(uni.values)):
+            msk = uni[bin_i] & has_data
+            if msk.sum() == 0:
+                continue
+
+            scim = sbkg_[:, ypf[msk], xpf[msk]]
+            whtm = self.wht[:, ypf[msk], xpf[msk]]
+            validm = valid[:, ypf[msk], xpf[msk]]
+
+            if weight_type == "wht":
+                numm = bnum_[:, ypf[msk], xpf[msk]]
+                denm = self.den[:, ypf[msk], xpf[msk]]
+
+            if uni.counts[i] > nmad_npix:
+                med = np.nanmedian(scim, axis=1)
+                dmed = (scim.T - med).T
+                nmad = 1.48 * np.nanmedian(np.abs(dmed), axis=1)
+
+                ok = (np.abs(dmed).T < nmad_threshold * nmad).T & validm
+            else:
+                ok = validm
+
+            if weight_type == "wht":
+                # weighted average
+                wht[:, i, 0] = np.nansum(denm * np.nan ** (1 - ok), axis=1)
+                sci[:, i, 0] = (
+                    np.nansum(numm * np.nan ** (1 - ok), axis=1) / wht[:, i, 0]
+                )
+            else:
+                # simple average
+                npix = np.sum(ok, axis=1)
+                wht[:, i, 0] = (
+                    1.0
+                    / np.nansum(1.0 / whtm * np.nan ** (1 - ok), axis=1)
+                    * npix**2
+                )
+                sci[:, i, 0] = (
+                    np.nansum(scim * np.nan ** (1 - ok), axis=1) / npix
+                )
+
+        if weight_type == "wht":
+            # Put sensitivity back in
+            sci = (sci.T * self.sens).T
+            wht = (wht.T / self.sens**2).T
+
+        cube = ReducedCube(
+            file=self.file.replace(".fits", f".rebin.fits"),
+            redshift=self.redshift,
+            data=(self.wave, self.header, sci, wht),
+        )
+
+        cube.label_image = label_image
+        cube.labels = uni.values
+        cube.label_counts = uni.counts
+        cube.label_uni = uni
+
+        return cube
+
+    def mean_image(self, wave_range=None, **kwargs):
+        """
+        Weighted mean image with optional wavelength sub range
+        """
+        if wave_range is None:
+            wsub = np.isfinite(self.wave)
+        else:
+            wsub = (self.wave > wave_range[0]) & (self.wave < wave_range[1])
+
+        mean_weight = np.nansum(self.den[wsub, :, :], axis=0)
+
+        mean_image = (
+            np.nansum((self.num - self.bwht)[wsub, :, :], axis=0) / mean_weight
+        )
+
+        return mean_image, mean_weight
+
+    def make_2d_profile(
+        self,
+        x0="max",
+        niter=7,
+        min_weight=0.1,
+        center_radius=5,
+        norm_radius=12,
+        make_figure=True,
+        **kwargs,
+    ):
+        """ """
+
+        mean_image, mean_weight = self.mean_image(**kwargs)
+        weight_mask = mean_weight > min_weight * np.nanmedian(mean_weight)
+        weight_mask &= np.isfinite(mean_image)
+
+        norm_mask = weight_mask & True
+        center_mask = weight_mask & True
+
+        if x0 in ["max"]:
+            sn = mean_image * weight_mask * np.sqrt(mean_weight)
+            yc, xc = np.unravel_index(np.nanargmax(sn), mean_image.shape)
+            msg = f"make_2d_profile:  init max (xc, yc) = ({xc:.1f}, {yc:.1f})"
+            utils.log_comment(utils.LOGFILE, msg, verbose=(VERBOSITY & 2))
+
+        elif x0 is not None:
+            xc, yc = x0
+            msg = f"make_2d_profile:  init (xc, yc) = ({xc:.1f}, {yc:.1f})"
+            utils.log_comment(utils.LOGFILE, msg, verbose=(VERBOSITY & 2))
+        else:
+            xc = None
+            yc = None
+
+        if xc is not None:
+
+            Rp = np.sqrt((self.xp - xc) ** 2 + (self.yp - yc) ** 2)
+            norm_mask = (Rp < norm_radius) & weight_mask
+            center_mask = (Rp < center_radius) & weight_mask
+
+        xc0 = 0
+        yc0 = 0
+
+        for iter_ in range(niter):
+
+            yp, xp = np.indices(mean_image.shape)
+            xc = np.nansum((self.xp * mean_image)[center_mask]) / np.nansum(
+                mean_image[center_mask]
+            )
+            yc = np.nansum((self.yp * mean_image)[center_mask]) / np.nansum(
+                mean_image[center_mask]
+            )
+
+            Rp = np.sqrt((self.xp - xc) ** 2 + (self.yp - yc) ** 2)
+            norm_mask = (Rp < norm_radius) & weight_mask
+            center_mask = (Rp < center_radius) & weight_mask
+
+            msg = f"make_2d_profile:  iter {iter_:^3}  (xc, yc) = ({xc:.1f}, {yc:.1f})"
+            utils.log_comment(utils.LOGFILE, msg, verbose=(VERBOSITY & 2))
+
+            dx = (xc - xc0) ** 2 + (yc - yc0) ** 2
+            if np.sqrt(dx) < 0.1:
+                break
+
+            xc0, yc0 = xc, yc
+
+        if make_figure:
+            fig, axes = plt.subplots(
+                1, 3, figsize=(9, 3 * self.aspect), sharex=True, sharey=True
+            )
+            norm = np.nansum(mean_image[norm_mask])
+            axes[0].imshow(
+                np.log(mean_image * weight_mask / norm), vmin=-8, vmax=-5
+            )
+            axes[1].imshow(
+                np.log(mean_image * norm_mask / norm), vmin=-10, vmax=-3
+            )
+            axes[2].imshow(
+                np.log(mean_image * center_mask / norm), vmin=-10, vmax=-3
+            )
+            for ax in axes:
+                ax.grid()
+            fig.tight_layout(pad=1)
+        else:
+            fig = None
+
+        result = {
+            "mean_image": mean_image,
+            "mean_weight": mean_weight,
+            "norm_mask": norm_mask,
+            "center_mask": center_mask,
+            "profile2d": mean_image / norm,
+            "x0": (xc, yc),
+            "fig": fig,
+        }
+        return result
+
+    def get_background(
+        self, mean_image=None, norm_mask=None, bkg_mask=None, dilate_radius=16
+    ):
+        """ """
+        from skimage.morphology import isotropic_dilation
+
+        if bkg_mask is None:
+            bkg_mask = np.isfinite(mean_image) & (
+                ~isotropic_dilation(norm_mask, radius=8)
+            )
+
+        bnum1d = np.nansum(self.num * (bkg_mask), axis=(1, 2))
+        bden1d = np.nansum(self.den * (bkg_mask), axis=(1, 2))
+        bwht = ((bnum1d / bden1d * self.sens**2) * self.wht.T).T
+
+        return bnum1d, bden1d, bwht
+
+    def optimal_extraction(
+        self,
+        profile2d=1.0,
+        mask_percentile=50,
+        mask_threshold=0.1,
+        erode="auto",
+        **kwargs,
+    ):
+        """ """
+        num1d = np.nansum((self.num - self.bwht) * profile2d, axis=(1, 2))
+        den1d = np.nansum(self.den * profile2d**2, axis=(1, 2))
+
+        mask_level = np.nanpercentile(den1d, mask_percentile) * mask_threshold
+        mask1d = den1d > mask_level
+
+        if erode in ["auto"]:
+            if self.grating.endswith("H"):
+                erode_iters = 16
+            elif self.grating == "PRISM":
+                erode_iters = 4
+            else:
+                erode_iters = 8
+
+            mask1d = nd.binary_erosion(mask1d, iterations=erode_iters)
+
+        elif erode > 0:
+            mask1d = nd.binary_erosion(mask1d, iterations=erode)
+
+        return num1d, den1d, mask1d
+
+    def make_spec_hdu(
+        self, profile2d=1.0, x0=None, norm_mask=1.0, slit_width=2, **kwargs
+    ):
+        """ """
+        if x0 is None:
+            sh = self.shape
+            x0 = (sh[2] / 2.0, sh[1] / 2.0)
+
+        p2d = profile2d * norm_mask
+
+        num1d, den1d, mask1d = self.optimal_extraction(profile2d=p2d, **kwargs)
+        den1d[~mask1d] = np.nan
+        flux1d = num1d / den1d
+        err1d = 1.0 / np.sqrt(den1d)
+
+        tab = utils.GTable()
+
+        tab["wave"] = self.wave * u.micron
+        tab["flux"] = flux1d * u.microJansky
+        tab["err"] = err1d * u.microJansky
+        tab["escale"] = 1.0
+        tab["valid"] = np.isfinite(err1d) & (err1d > 0)
+
+        for k in self.header:
+            if k.startswith("NAX"):
+                continue
+            elif k in ["COMMENT", "BITPIX", "XTENSION"]:
+                continue
+
+            # print(k)
+            tab.meta[k.upper()] = self.header[k]
+
+        # Pseudo-slit 2D extraction
+        mask_slit = np.abs(self.xp - x0[0]) < slit_width
+        pnorm2d = np.nansum(p2d * mask_slit)
+
+        prof2 = np.nansum(p2d, axis=0)
+        prof2 *= 1.0 / prof2.sum()
+
+        num2d = np.nansum(
+            (self.num - self.bwht) * mask_slit * prof2, axis=(2)
+        ).T
+        den2d = np.nansum(self.den * mask_slit * (prof2) ** 2, axis=(2)).T
+
+        data2d = num2d / den2d
+        wht2d = 1 / (1.0 / den2d + (0.05 * data2d) ** 2)
+
+        msk = (wht2d > 0) & np.isfinite(wht2d + data2d)
+        data2d[~msk] = 0
+        wht2d[~msk] = 0
+
+        prof2d = data2d * 1.0  # / np.nansum(data2d, axis=0)
+        prof2d[~np.isfinite(prof2d) | (data2d < 0)] = 0
+        prof2d /= np.nansum(prof2d, axis=0)
+        prof2d[(prof2d**0 * tab["valid"][None, :]) == 0] = 0.0
+        prof2d[~np.isfinite(prof2d)] = 0
+
+        hdul = pyfits.HDUList(
+            [
+                pyfits.PrimaryHDU(),
+                pyfits.BinTableHDU(tab, name="SPEC1D"),
+                pyfits.ImageHDU(data=data2d, name="SCI"),
+                pyfits.ImageHDU(data=wht2d, name="WHT"),
+                pyfits.ImageHDU(data=prof2d, name="PROFILE"),
+            ]
+        )
+
+        hdul["SCI"].header["SRCNAME"] = self.outroot
+        hdul[1].header["YTRACE"] = x0[1] + 0.5
+        hdul[1].header["PROFCEN"] = 0.0
+        hdul[1].header["PROFSIG"] = -1.0
+
+        ptab = utils.GTable()
+        ptab["pfit"] = np.nansum(hdul["PROFILE"].data, axis=1)
+        ptab["profile"] = ptab["pfit"]
+        ptab.meta["PROFSTRT"] = 10
+        ptab.meta["PROFSTOP"] = len(tab) - 10
+        ptab.meta["PROFSIG"] = np.nan
+
+        hdul.append(pyfits.BinTableHDU(ptab, name="PROF1D"))
+
+        return hdul
+
+    def set_spec(self, **kwargs):
+        """ """
+        from .spectrum import SpectrumSampler
+
+        hdu = self.make_spec_hdu(**kwargs)
+        self.spec = SpectrumSampler(hdu, sens_file=self.sensitivity_file)
+
+    def fit_emission_lines(
+        self,
+        lines=["Ha"],
+        dv_slice=[-800, 800],
+        wave_slice=None,
+        dv_range=800,
+        velocity_sigma=150,
+        lorentz=False,
+        oversample=2.5,
+        scale_disp=1.8,
+        continuum_order=1,
+        get_covariance=True,
+        templates=None,
+        optimize="loss",
+        min_line_threshold=-4,
+        broad_component_sigma=None,
+        **kwargs,
+    ):
+        """ """
+        from tqdm import tqdm
+
+        if self.spec is None:
+            self.set_spec(**kwargs)
+
+        lwaves = [[w / 1.0e4 for w in LINE_WAVELENGTHS[li]] for li in lines]
+        lratios = [LINE_RATIOS[li] for li in lines]
+
+        line_wavelength = lwaves[0][0] * (1 + self.redshift)
+        ii = np.where(self.wave > line_wavelength)[0][0]
+
+        li = self.spec.fast_emission_line(
+            line_wavelength,
+            line_flux=1.0,
+            velocity_sigma=velocity_sigma,
+            scale_disp=scale_disp,
+            lorentz=lorentz,
+        )
+
+        dv_ii = np.gradient(self.wave)[ii] / self.wave[ii] * 3.0e5
+        nstep = np.maximum(int(np.ceil(dv_range / dv_ii)), 8)
+
+        if wave_slice is not None:
+            dv_slice = [
+                (wave_slice[0] - line_wavelength) / line_wavelength * 3.0e5,
+                (wave_slice[1] - line_wavelength) / line_wavelength * 3.0e5,
+            ]
+
+        dv_step = [
+            ii - int(np.ceil(np.maximum(-dv_slice[0], dv_range) / dv_ii)),
+            ii + int(np.ceil(np.maximum(dv_slice[1], dv_range) / dv_ii)),
+        ]
+
+        dv_step[0] = np.maximum(dv_step[0], 0)
+        dv_step[1] = np.minimum(dv_step[1], self.shape[0])
+
+        sl = slice(*dv_step)
+
+        # Precompute slices
+        sci_sl = (
+            ((self.num - self.bwht) / self.den)[sl, :, :].T
+            * self.spec["to_flam"][sl]
+        ).T
+        wht_sl = (self.den[sl, :, :].T / self.spec["to_flam"][sl] ** 2).T
+
+        nsl = len(self.wave[sl])
+
+        model = np.zeros_like(sci_sl)
+
+        yx = sci_sl * np.sqrt(wht_sl)
+        swht_sl = np.sqrt(wht_sl)
+
+        ok = np.isfinite(yx)
+
+        msk = self.mask & (np.nansum(sci_sl, axis=0) > 0)
+        xpm = self.xp[msk]
+        ypm = self.yp[msk]
+
+        dv_grid = np.arange(-nstep, nstep + 1, 1.0 / oversample) * dv_ii
+        # wave_grid = line_wavelength * (1 + dv_grid / 3.e5)
+        ngrid = len(dv_grid)
+
+        nlines = len(lines)
+
+        if templates is None:
+            ncoeffs = continuum_order + 1 + nlines
+            xx = np.linspace(-1, 1.0, nsl)
+            # c = np.polynomial.polynomial.polyvander(xx, continuum_order).T
+            c = np.polynomial.chebyshev.chebvander(xx, continuum_order).T
+        else:
+            ncoeffs = len(templates) + nlines
+
+            c = np.array(
+                [
+                    self.spec.resample_eazy_template(
+                        t,
+                        z=self.redshift,
+                        scale_disp=scale_disp,
+                        velocity_sigma=velocity_sigma,
+                        fnu=False,
+                    )[sl]
+                    for t in templates
+                ]
+            )
+
+            template_norm = np.median(c, axis=1)
+            # print("xxx templates", template_norm)
+
+        if broad_component_sigma is not None:
+            broad_lines = []
+            for i in range(len(lines)):
+                for wi in lwaves[i]:
+                    w_obs = wi * (1 + self.redshift)
+
+                    li = self.spec.fast_emission_line(
+                        w_obs,
+                        line_flux=1.0,
+                        velocity_sigma=broad_component_sigma,
+                        scale_disp=scale_disp,
+                        lorentz=True,
+                    )
+                    broad_lines.append(li[sl])
+
+            c = np.vstack([c, np.array(broad_lines)])
+
+            ncoeffs += len(broad_lines)
+
+        coeffs = np.zeros((ngrid, ncoeffs, *msk.shape))
+        vcoeffs = np.zeros((ngrid, ncoeffs, *msk.shape))
+        model = np.zeros((ngrid, nsl, *msk.shape))
+
+        nbins = msk.sum()
+
+        msg = (
+            f"fit_emission_line: {lines} {scale_disp:.1f} σ={velocity_sigma:.0f} "
+            f"z={self.redshift:.4f} nslice={nsl} dv={dv_ii:.1f} km/s  {nbins} bins  {ngrid} steps"
+        )
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        A = np.vstack([c, np.zeros((nlines, nsl))])
+        is_line = np.arange(len(coeffs)) > (nlines - 1)
+
+        for k, dv in tqdm(enumerate(dv_grid)):
+            if templates is not None:
+                zk = (1 + self.redshift) * (1 + dv / 3.0e5) - 1
+                for j, t in enumerate(templates):
+                    A[j, :] = (
+                        self.spec.resample_eazy_template(
+                            t,
+                            z=zk,
+                            scale_disp=scale_disp,
+                            velocity_sigma=velocity_sigma,
+                            fnu=False,
+                        )[sl]
+                        / template_norm[j]
+                    )
+
+            for j in range(nlines):
+                A[-nlines + j, :] = 0.0
+                for w0, r0 in zip(lwaves[j], lratios[j]):
+                    wi = w0 * (1 + self.redshift) * (1 + dv / 3.0e5)
+                    A[-nlines + j, :] += self.spec.fast_emission_line(
+                        wi,
+                        line_flux=r0,
+                        velocity_sigma=velocity_sigma,
+                        scale_disp=scale_disp,
+                        lorentz=lorentz,
+                    )[sl]
+
+            for j, i in zip(ypm, xpm):
+                oki = ok[:, j, i]
+
+                Ax = (A * swht_sl[:, j, i])[:, oki]
+                yxi = yx[:, j, i][oki]
+
+                lsq = np.linalg.lstsq(Ax.T, yxi, rcond=None)
+
+                c_ji = lsq[0] * 1.0
+
+                if get_covariance:
+                    try:
+                        v_ji = utils.safe_invert(Ax.dot(Ax.T)).diagonal()
+                        vcoeffs[k, :, j, i] = v_ji
+                        clip_line = is_line & (
+                            c_ji < min_line_threshold * np.sqrt(v_ji)
+                        )
+                        c_ji[clip_line] = 0.0
+                    except:
+                        pass
+
+                coeffs[k, :, j, i] = c_ji
+                m_ji = A.T.dot(c_ji)
+                model[k, :, j, i] = m_ji
+
+        sn_coeffs = coeffs / np.sqrt(vcoeffs)
+        sn_coeffs[~np.isfinite(sn_coeffs)] = 0
+
+        loss = np.nansum((sci_sl - model) ** 2 * wht_sl, axis=1)
+
+        if optimize == "loss":
+            imax = np.argmin(loss, axis=0)
+        else:
+            imax = np.nanargmax(sn_coeffs[:, -nlines, :, :], axis=0)
+
+        max_line_dv = dv_grid[imax]
+        max_line_dv[~msk] = np.nan
+
+        max_line_sn = np.zeros((nlines, *msk.shape))
+        max_line_flux = np.zeros((nlines, *msk.shape))
+        max_model = np.zeros((nsl, *msk.shape))
+
+        for j, i in zip(ypm, xpm):
+            k = imax[j, i]
+            max_line_sn[:, j, i] = sn_coeffs[k, -nlines:, j, i]
+            max_line_flux[:, j, i] = coeffs[k, -nlines:, j, i]
+            max_model[:, j, i] = model[k, :, j, i]
+
+        ldata = {
+            "lines": lines,
+            "redshift": self.redshift,
+            "dv_grid": dv_grid,
+            "sci": sci_sl,
+            "wht": wht_sl,
+            "sl": sl,
+            "coeffs": coeffs,
+            "vcoeffs": vcoeffs,
+            "model": model,
+            "loss": loss,
+            "imax": imax,
+            "max_line_sn": max_line_sn,
+            "max_line_flux": max_line_flux,
+            "max_line_dv": max_line_dv,
+            "max_model": max_model,
+            "get_covariance": get_covariance,
+        }
+
+        return ldata
+
+    def log_sigma_grid(
+        self, min_dv_factor=0.5, max_sigma=500, step_factor=2, **kwargs
+    ):
+        """ """
+        min_wave_dv = np.ceil(self.gradient_dv.min() * min_dv_factor / 25) * 25
+
+        sigmas = np.exp(
+            np.arange(
+                np.log(min_wave_dv), np.log(max_sigma), np.log(step_factor)
+            )
+        )
+
+        return sigmas
+
+    def line_fit_pipeline(
+        self,
+        max_bin_factor=2,
+        bin_sn_threshold=2.5,
+        sigma_kwargs={},
+        make_outputs=True,
+        label_kwargs=None,
+        **kwargs,
+    ):
+        """
+        Do line fit over a grid of velocity bins
+        """
+
+        full_line_dv = np.zeros(self.mask.shape, dtype=float)
+        full_line_dv_var = np.zeros(self.mask.shape, dtype=float)
+        full_line_sig = np.zeros(self.mask.shape, dtype=float) - 1.0
+        full_line_sig_var = np.zeros(self.mask.shape, dtype=float) - 1.0
+        full_line_bin = np.zeros(self.mask.shape, dtype=float)
+        full_line_bid = np.zeros(self.mask.shape, dtype=int)
+
+        full_line_model = None
+
+        full_sci = self.sci * 1
+        full_wht = self.wht * 1
+
+        if label_kwargs is not None:
+            max_bin_factor = 2
+
+        bfactor = max_bin_factor * 2
+        sh = self.shape
+
+        sigmas = self.log_sigma_grid(**sigma_kwargs)
+        msg = (
+            f"line_fit_pipeline: sigmas = {[int(np.round(s)) for s in sigmas]}"
+        )
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+        grids = []
+        bin_factors = []
+
+        self.initial_mask = self.mask & True
+
+        while bfactor > 1:
+            bfactor = int(bfactor / 2)
+
+            if bfactor > 1:
+                if label_kwargs is not None:
+                    msg = f"line_fit_pipeline: bin with label image"
+                    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+                    WITH_LABELS = 2
+                    bcube = self.rebin_labels(**label_kwargs)
+                    sh2 = bcube.shape
+
+                    msg = f"line_fit_pipeline: N={bcube.label_uni.N} labels"
+                    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+                else:
+
+                    WITH_LABELS = 1
+                    msg = f"line_fit_pipeline: bin factor {bfactor}"
+                    utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+                    bcube = self.rebin(factor=bfactor)
+                    sh2 = bcube.shape
+
+                    # sh2 = (sh[0], sh[1]//bfactor, sh[2]//bfactor)
+                    #
+                    # sci = np.zeros(sh2, dtype=bcube.sci.dtype)
+                    # var = np.zeros(sh2, dtype=bcube.sci.dtype)
+                    # for i in range(sh2[1]):
+                    #     for j in range(sh2[2]):
+                    #         sli = slice(i*bfactor, (i+1)*bfactor)
+                    #         slj = slice(j*bfactor, (j+1)*bfactor)
+                    #         bcube.mask[i,j] = np.nanmax(full_line_sig[sli, slj]) <= 0
+
+            else:
+                WITH_LABELS = False
+                bcube = self
+                self.mask &= full_line_sig <= 0
+
+            if self.mask.sum() == 0:
+                break
+
+            ldata_sig = {}
+
+            for sig in sigmas:
+                kwargs["velocity_sigma"] = sig
+                ldata_sig[sig] = bcube.fit_emission_lines(**kwargs)
+
+            grids.append(ldata_sig)
+            bin_factors.append(bfactor)
+
+            ######
+            # Merge over sigmas
+            # loss = np.array([ldata_sig[sig]['loss'] for sig in ldata_sig])
+            #
+            # lsh = loss.shape
+            # ks = np.zeros(lsh[2:], dtype=int)
+            # kv = np.zeros(lsh[2:], dtype=int)
+            # for i in range(lsh[2]):
+            #     for j in range(lsh[3]):
+            #         ks[i,j], kv[i,j] = np.unravel_index(np.nanargmin(loss[:,:,i,j]), lsh[:2])
+            #
+            # coeffs = np.array([ldata_sig[sig]['coeffs'] for sig in ldata_sig])
+            # vcoeffs = np.array([ldata_sig[sig]['vcoeffs'] for sig in ldata_sig])
+            # model = np.array([ldata_sig[sig]['model'] for sig in ldata_sig])
+            #
+            # shc = ldata_sig[sig]['coeffs'].shape
+            # ncoeffs = shc[1]
+            #
+            # shm = ldata_sig[sig]['model'].shape
+            #
+            # best_coeffs = coeffs[0,0,:,:,:]
+            # best_vcoeffs = vcoeffs[0,0,:,:,:]
+            # best_model = model[0,0,:,:,:]
+            # best_sig = best_coeffs[0,:,:] * 0.
+            # best_dv = best_coeffs[0,:,:] * 0.
+            # nsl = best_model.shape[0]
+            #
+            # ldata = ldata_sig[sigmas[0]]
+            # nlines = len(ldata["lines"])
+            #
+            # for ii in range(shc[2]):
+            #     for jj in range(shc[3]):
+            #         ksi = ks[ii,jj]
+            #         kvi = kv[ii,jj]
+            #         best_coeffs[:,ii,jj] = coeffs[ksi, kvi, :, ii, jj]
+            #         best_vcoeffs[:,ii,jj] = vcoeffs[ksi, kvi, :, ii, jj]
+            #         best_model[:,ii,jj] = model[ksi, kvi, :, ii, jj]
+            #         best_dv[ii,jj] = ldata['dv_grid'][kvi]
+            #         best_sig[ii,jj] = sigmas[ksi]
+            #
+
+            ldata = ldata_sig[sigmas[0]]
+            shc = ldata_sig[sig]["coeffs"].shape
+            ncoeffs = shc[1]
+            nlines = len(ldata["lines"])
+
+            # Marginalize fit parameters by lnp weight
+            mres = marginalize_line_fit_grid(grids[-1])
+
+            best_coeffs = mres["coeffs"]
+            if ldata["get_covariance"]:
+                best_vcoeffs = mres["vcoeffs"]
+            else:
+                best_vcoeffs = mres["coeffs_var"]
+
+            best_model = mres["model"]
+            best_dv = mres["dv"]
+            best_dv_var = mres["dv_var"]
+            best_sig = np.exp(mres["ln_sig"])
+            best_sig_var = mres["ln_sig_var"]
+            nsl = best_model.shape[0]
+
+            best_sn = best_coeffs / np.sqrt(best_vcoeffs)
+
+            pixbin = (
+                np.sum(bcube.pixbin[ldata["sl"], :, :], axis=0)
+                / ldata["model"].shape[1]
+            )
+
+            # Initialize full arrays
+            if full_line_model is None:
+                full_line_model = np.zeros((nsl, *self.shape[-2:]))
+                full_line_coeffs = np.zeros((ncoeffs, *self.shape[-2:]))
+                full_line_vcoeffs = np.zeros((ncoeffs, *self.shape[-2:]))
+
+            if bfactor > 1:
+                fill = pixbin > 0.3 * np.nanmax(pixbin)
+                for k in range(nlines):
+                    fill &= np.abs(
+                        best_sn[-nlines + k, :, :]
+                    ) < bin_sn_threshold * 2 / np.sqrt(pixbin / bfactor**2)
+
+                if WITH_LABELS:
+                    if WITH_LABELS > 1:
+                        fill = np.ones(bcube.shape[1:], dtype=bool)
+
+                    xpf = self.xp.flatten()
+                    ypf = self.yp.flatten()
+
+                label_i = np.min(full_line_bid) + 1
+
+                for i in range(sh2[1]):
+                    for j in range(sh2[2]):
+
+                        if not fill[i, j]:
+                            continue
+
+                        if WITH_LABELS:
+                            label_i = bcube.labels[i]
+                            if label_i == 0:
+                                continue
+
+                            is_label_i = bcube.label_uni[label_i]
+                            sli = ypf[is_label_i]
+                            slj = xpf[is_label_i]
+                        else:
+                            ii = slice(i * bfactor, (i + 1) * bfactor)
+                            jj = slice(j * bfactor, (j + 1) * bfactor)
+                            sli = self.yp[ii, jj].flatten()
+                            slj = self.xp[ii, jj].flatten()
+                            label_i += 1
+
+                        for i_, j_ in zip(sli, slj):
+                            if np.nanmax(full_line_sig[i_, j_]) <= 0:
+                                for k in range(ncoeffs):
+                                    full_line_coeffs[k, i_, j_] = best_coeffs[
+                                        k, i, j
+                                    ]
+                                    full_line_vcoeffs[k, i_, j_] = (
+                                        best_vcoeffs[k, i, j]
+                                    )
+
+                                full_sci[:, i_, j_] = bcube.sci[:, i, j]
+                                full_wht[:, i_, j_] = bcube.wht[:, i, j]
+
+                                full_line_model[:, i_, j_] = best_model[
+                                    :, i, j
+                                ]
+
+                                full_line_bin[i_, j_] = (
+                                    bfactor / 2**WITH_LABELS
+                                )
+
+                                full_line_dv[i_, j_] = best_dv[i, j]
+                                full_line_dv_var[i_, j_] = best_dv_var[i, j]
+
+                                full_line_sig[i_, j_] = best_sig[i, j]
+                                full_line_sig_var[i_, j_] = best_sig_var[i, j]
+
+                                full_line_bid[sli, slj] = label_i
+
+                if WITH_LABELS > 1:
+                    self.mask &= False
+
+            else:
+                sh2 = self.shape
+                fill = np.isfinite(best_sn[-nlines, :, :])
+                for k in range(nlines):
+                    fill &= np.isfinite(best_sn[-nlines + k, :, :])
+
+                for k in range(ncoeffs):
+                    for i in range(sh2[1]):
+                        for j in range(sh2[2]):
+                            if fill[i, j]:
+                                full_line_coeffs[k, i, j] = best_coeffs[
+                                    k, i, j
+                                ]
+                                full_line_vcoeffs[k, i, j] = best_vcoeffs[
+                                    k, i, j
+                                ]
+
+                for i in range(sh2[1]):
+                    for j in range(sh2[2]):
+                        if fill[i, j]:
+                            full_line_model[:, i, j] = best_model[:, i, j]
+
+                full_line_dv[fill] = best_dv[fill]
+                full_line_dv_var[fill] = best_dv_var[fill]
+
+                full_line_sig[fill] = best_sig[fill]
+                full_line_sig_var[fill] = best_sig_var[fill]
+
+                full_line_bin[fill] = 1.0
+
+        full_line_dv[full_line_sig <= 0] = np.nan
+        full_line_sig[full_line_sig <= 0] = np.nan
+
+        # Reset mask
+        self.mask = self.initial_mask & True
+
+        #####
+        # Done with bins
+        model_fnu = (
+            full_line_model
+            / (self.spec["to_flam"] / self.sens)[ldata["sl"]][:, None, None]
+        )
+        resid = (full_sci[ldata["sl"], :, :] - model_fnu) * np.sqrt(
+            full_wht[ldata["sl"], :, :]
+        )
+        err_scale = utils.nmad(
+            resid[(full_line_model != 0) & np.isfinite(resid)]
+        )
+        print("err_scale: ", err_scale)
+
+        result = {
+            "redshift": self.redshift,
+            "lines": ldata["lines"],
+            "sigmas": sigmas,
+            "slice": ldata["sl"],
+            "nlines": nlines,
+            "ncoeffs": ncoeffs,
+            "nsl": nsl,
+            "err_scale": err_scale,
+            "model": full_line_model,
+            "coeffs": full_line_coeffs,
+            "vcoeffs": full_line_vcoeffs,
+            "dv": full_line_dv,
+            "dv_var": full_line_dv_var,
+            "sig": full_line_sig,
+            "sig_var": full_line_sig_var,
+            "bin": full_line_bin,
+            "bid": full_line_bid,
+            "full_sci": full_sci,
+            "full_wht": full_wht,
+            "grids": grids,
+            "bin_factors": bin_factors,
+        }
+
+        if make_outputs:
+            lfit = LinefitData(self, result, **kwargs)
+
+            result["fig"] = []
+            for i in range(lfit.nlines):
+                result["fig"].append(
+                    lfit.line_figure_2d(line_index=i, **kwargs)
+                )
+
+            result["hdu"] = lfit.to_fits_hdu(**kwargs)
+
+        return result
+
+    def xline_fit_pipeline(
+        self,
+        line_wavelength=None,
+        line_name="PaA",
+        line_label=None,
+        x0=None,
+        velocity_range=100,
+        recenter_dv=True,
+        show_contours=True,
+        **kwargs,
+    ):
+        """ """
+        import scipy.ndimage as nd
+        from skimage.morphology import isotropic_dilation
+
+        if line_wavelength is None:
+            lw, lr = utils.get_line_wavelengths()
+            line_wavelength = lw[line_name][0] * (1 + self.redshift) / 1.0e4
+
+        mean_image, mean_weight = self.mean_image(**kwargs)
+        weight_mask = mean_weight > 0.1 * np.nanmedian(mean_weight)
+        mean_image[~weight_mask] = np.nan
+
+        ldata = self.fit_emission_line(
+            line_wavelength=line_wavelength, **kwargs
+        )
+
+        max_cont_flux = ldata["max_line_sn"]
+        max_line_flux = ldata["max_line_flux"]
+        max_line_sn = ldata["max_line_sn"]
+        max_line_dv = ldata["max_line_dv"]
+
+        gmask = max_line_sn > 4
+        gmask = nd.binary_opening(gmask, iterations=1)
+        gmask = isotropic_dilation(gmask, radius=4)
+
+        line_sn_mask = np.ones_like(max_line_sn)
+        line_sn_mask[nd.gaussian_filter(max_line_sn, 1) < 3] = np.nan
+        line_sn_mask[~gmask] = np.nan
+
+        sh = line_sn_mask.shape
+
+        line_sn_mask[
+            max_line_flux
+            > np.nanpercentile(max_line_flux[np.isfinite(line_sn_mask)], 98)
+            * 3
+        ] = np.nan
+
+        fig, axes = plt.subplots(
+            1, 3, figsize=(9, 3 * self.aspect), sharex=True, sharey=True
+        )
+
+        vmax = 1.0e-3
+
+        perc = np.nanpercentile(max_line_flux, [16, 50, 84])
+
+        norm = simple_norm(
+            max_line_flux,
+            "log",
+            vmin=perc[1] - 2 * (perc[1] - perc[0]),
+            vmax=np.minimum(
+                perc[1] + 30 * (perc[2] - perc[0]), np.nanmax(max_line_flux)
+            ),
+            # vmax=np.nanmax(line_flux)*10,
+            log_a=1.0e1,
+        )
+
+        mean_norm = np.nanpercentile(mean_image[np.isfinite(mean_image)], 99.5)
+        axes[0].imshow(
+            np.log10(mean_image / mean_norm), vmin=-3, vmax=0.1, cmap="RdGy"
+        )
+
+        axes[1].imshow(max_line_flux, norm=norm, cmap="bone_r")
+
+        levels = [3, 5, 10, 20, 40, 80, 160, 320]
+
+        if show_contours:
+            for j in [0, 1]:
+                axes[j].contour(
+                    nd.gaussian_filter(max_line_sn * gmask, 0.5),
+                    levels=levels[:1],
+                    # colors=['0.6'] * len(levels),
+                    colors=[
+                        "magenta" for v in np.linspace(0.2, 1, len(levels))
+                    ][:1],
+                    alpha=0.2,
+                )
+
+        ax = axes[2]
+
+        if recenter_dv:
+            dv_offset = np.nanmedian(max_line_dv * line_sn_mask)
+        else:
+            dv_offset = 0.0
+
+        imsh_dv = ax.imshow(
+            max_line_dv * line_sn_mask - dv_offset,
+            vmin=-velocity_range,
+            vmax=velocity_range,
+            cmap="RdYlBu_r",
+        )
+
+        ax.contour(
+            nd.gaussian_filter(max_line_sn * gmask, 0.5),
+            levels=levels,
+            # colors=['0.6'] * len(levels),
+            colors=[
+                plt.cm.gray_r(v) for v in np.linspace(0.2, 1, len(levels))
+            ],
+            alpha=0.8,
+        )
+
+        h = self.header
+        pscale = np.sqrt(h["CD1_1"] ** 2 + h["CD1_2"] ** 2) * 3600.0
+        dxt = 0.5
+        ticks = np.arange(-40, 41, dxt) / pscale
+
+        sh = self.shape[1:]
+
+        if x0 is None:
+            x0 = (sh[1] / 2, sh[0] / 2)
+
+        xt = ticks + x0[0]
+        xtv = (xt > 0.05 * dxt / pscale) & (xt < sh[1] - 0.05 * dxt / pscale)
+        yt = ticks + x0[1]
+        ytv = (yt > 0.05 * dxt / pscale) & (yt < sh[0] - 0.05 * dxt / pscale)
+
+        for ax in axes:
+            ax.grid()
+            ax.set_xticks(xt[xtv])
+            ax.set_yticks(yt[ytv])
+            ax.set_xticklabels([])  # ticks[xtv] * pscale)
+            ax.set_yticklabels([])  # (ticks[ytv] * pscale)
+
+        axes[0].text(
+            0.5,
+            0.98,
+            f"{self.outroot}\nz={self.redshift:.4f}",
+            fontsize=6,
+            ha="center",
+            va="top",
+            transform=axes[0].transAxes,
+            bbox={"fc": "w", "alpha": 0.7, "ec": "None"},
+        )
+
+        if line_label is None:
+            if line_name not in LINE_LABELS_LATEX:
+                print(f"use {line_name} as line label!")
+                line_label = line_name + " @ "
+            else:
+                line_label = LINE_LABELS_LATEX[line_name] + " @ "
+
+        axes[1].text(
+            0.5,
+            0.98,
+            (
+                line_label
+                + r"$\lambda_\mathrm{obs}~=~x~\mathrm{\mu m}$".replace(
+                    "x", f"{line_wavelength:.4f}"
+                )
+            ),
+            fontsize=6,
+            ha="center",
+            va="top",
+            transform=axes[1].transAxes,
+            bbox={"fc": "w", "alpha": 0.7, "ec": "None"},
+        )
+
+        fig.tight_layout(pad=0.5)
+        fig.tight_layout(pad=0.5)
+
+        if recenter_dv:
+            cb_label = r"$\Delta v - $ xx [km/s]".replace(
+                "xx", f"{dv_offset:.1f}"
+            )
+        else:
+            cb_label = r"$\Delta v$ [km/s]"
+
+        _ = msautils.tight_colorbar(
+            imsh_dv,
+            fig,
+            axes[2],
+            sx=0.75,
+            sy=0.02,
+            loc="uc",
+            pad=0.01,
+            label=cb_label,
+            bbox_kwargs={"fc": "w", "alpha": 0.8, "ec": "None"},
+            zorder=100,
+            label_format=None,
+            labelsize=7,
+            colorbar_alpha=None,
+        )
+
+        ldata["fig"] = fig
+        ldata["dv_offset"] = dv_offset
+        ldata["line_name"] = line_name
+        ldata["line_label"] = line_label
+
+        return ldata
+
+
+def marginalize_line_fit_grid(grid, force_chinu=False, **kwargs):
+    """ """
+
+    sigmas = np.array([sig for sig in grid])
+    dvs = grid[sigmas[0]]["dv_grid"]
+
+    # Weights for trapzezoid integration
+    shp = (len(sigmas), len(dvs))
+
+    h_dv = np.ones(shp) * utils.trapz_dx(dvs)[None, :]
+    val_dv = np.ones(shp) * dvs[None, :]
+
+    h_sig = np.ones(shp) * utils.trapz_dx(np.log(sigmas))[:, None]
+    val_sig = np.ones(shp) * np.log(sigmas)[:, None]
+
+    h2d = h_dv * h_sig
+
+    loss = np.array([grid[sig]["loss"] for sig in sigmas])
+    models = np.array([grid[sig]["model"] for sig in sigmas])
+
+    nsl = models.shape[2]
+
+    lmin = np.nanmin(loss, axis=(0, 1))
+    lnp = np.exp(-(loss - lmin) / 2 / (lmin / nsl) ** force_chinu)
+
+    lnp_wht = (lnp.T * h2d.T).T
+    lnp_norm = lnp_wht.sum(axis=(0, 1))
+    lnp_wht /= lnp_norm
+
+    nc = grid[sigmas[0]]["coeffs"].shape[1]
+
+    cc = np.array([grid[sig]["coeffs"] for sig in sigmas])
+    vc = np.array([grid[sig]["vcoeffs"] for sig in sigmas])
+
+    # 1st and second moments weighted by lnp
+    dv1 = (val_dv.T * lnp_wht.T).T.sum(axis=(0, 1))
+    dv2 = ((val_dv[:, :, None, None] - dv1) ** 2 * lnp_wht).sum(axis=(0, 1))
+    ds1 = (val_sig.T * lnp_wht.T).T.sum(axis=(0, 1))
+    ds2 = ((val_sig[:, :, None, None] - ds1) ** 2 * lnp_wht).sum(axis=(0, 1))
+
+    ccnum = np.array([(cc[:, :, k, :, :] * lnp_wht) for k in range(nc)])
+    coeffs1 = np.nansum(ccnum, axis=(1, 2))  # / lnp_wht.sum(axis=(0,1))
+    coeffs2 = np.nansum(
+        [
+            ((cc[:, :, k, :, :] - coeffs1[k, :, :]) ** 2 * lnp_wht)
+            for k in range(nc)
+        ],
+        axis=(1, 2),
+    )
+
+    cvnum = np.array([(vc[:, :, k, :, :] * lnp_wht**2) for k in range(nc)])
+    vcoeffs = np.nansum(cvnum, axis=(1, 2)) / (lnp_wht**2).sum(axis=(0, 1))
+
+    # model
+    mnum = np.array([(models[:, :, k, :, :] * lnp_wht) for k in range(nsl)])
+    model1 = np.nansum(mnum, axis=(1, 2))
+    model2 = np.nansum(
+        [
+            ((models[:, :, k, :, :] - model1[k, :, :]) ** 2 * lnp_wht)
+            for k in range(nsl)
+        ],
+        axis=(1, 2),
+    )
+
+    cmin = np.nanmin(grid[sigmas[0]]["coeffs"] ** 2, axis=(0, 1))
+    mask = cmin > 0
+
+    result = {
+        "lnp": lnp,
+        "h2d": h2d,
+        "lnp_wht": lnp_wht,
+        "dv": dv1,
+        "dv_var": dv2,
+        "ln_sig": ds1,
+        "ln_sig_var": ds2,
+        "coeffs": coeffs1,
+        "coeffs_var": coeffs2,
+        "vcoeffs": vcoeffs,
+        "model": model1,
+        "model_var": model2,
+        "mask": mask,
+        "sigma_grid": sigmas,
+        "dv_grid": dvs,
+    }
+
+    return result
+
+
+class LinefitData:
+
+    def __init__(self, cube, result, vrange=None, **kwargs):
+        self.cube = cube
+        self.result = result
+        self.vrange = vrange
+
+        if "sn_mask" not in self.result:
+            self.result["sn_mask"] = np.zeros((self.nlines, *self.shape[1:]))
+
+    @property
+    def shape(self):
+        return self.cube.shape
+
+    @property
+    def nlines(self):
+        return self.result["nlines"]
+
+    def to_fits_hdu(self, save=True, **kwargs):
+        """ """
+        h = self.cube.wcs_header
+
+        h["REDSHIFT"] = self.result["redshift"]
+
+        HDUL = pyfits.HDUList()
+
+        # White light
+        sl = self.result["slice"]
+        nw = len(self.cube.wave)
+        imin = np.maximum(0, sl.start - 512)
+        imax = np.minimum(nw - 1, sl.stop + 512)
+
+        wave_range = (self.cube.wave[imin], self.cube.wave[imax])
+
+        h["WLWMIN"] = (wave_range[0], "White light image min wave")
+        h["WLWMAX"] = (wave_range[1], "White light image min wave")
+        h["BUNIT"] = "microJansky"
+
+        mean_image, mean_weight = self.cube.mean_image(wave_range=wave_range)
+
+        HDUL.append(pyfits.ImageHDU(data=mean_image, header=h, name="WLSCI"))
+        HDUL.append(pyfits.ImageHDU(data=mean_weight, header=h, name="WLWHT"))
+
+        h.pop("BUNIT")
+        HDUL.append(
+            pyfits.ImageHDU(
+                data=self.result["bin"].astype(np.uint8), header=h, name="BIN"
+            )
+        )
+
+        h["BUNIT"] = "km/s"
+        HDUL.append(
+            pyfits.ImageHDU(
+                data=self.result["dv"].astype(np.int16), header=h, name="DV"
+            )
+        )
+
+        HDUL.append(
+            pyfits.ImageHDU(
+                data=self.result["sig"].astype(np.uint16),
+                header=h,
+                name="SIGMA",
+            )
+        )
+
+        nlines = self.result["nlines"]
+        ncoeffs = self.result["ncoeffs"]
+
+        h["BUNIT"] = "1e-20 cgs"
+        for i in range(nlines):
+            line_name = self.result["lines"][i]
+
+            HDUL.append(
+                pyfits.ImageHDU(
+                    data=self.result["coeffs"][-nlines + i, :, :],
+                    header=h,
+                    name=f"{line_name}_SCI".upper(),
+                )
+            )
+
+            HDUL.append(
+                pyfits.ImageHDU(
+                    data=self.result["vcoeffs"][-nlines + i, :, :],
+                    header=h,
+                    name=f"{line_name}_VAR".upper(),
+                )
+            )
+
+            if "sn_mask" in self.result:
+                HDUL.append(
+                    pyfits.ImageHDU(
+                        data=self.result["sn_mask"][i, :, :].astype(np.uint8),
+                        header=h,
+                        name=f"{line_name}_MASK".upper(),
+                    )
+                )
+
+        h.pop("BUNIT")
+        for i in range(ncoeffs - nlines):
+            HDUL.append(
+                pyfits.ImageHDU(
+                    data=self.result["coeffs"][i, :, :],
+                    header=h,
+                    name=f"C{i}_SCI",
+                )
+            )
+
+            HDUL.append(
+                pyfits.ImageHDU(
+                    data=self.result["vcoeffs"][i, :, :],
+                    header=h,
+                    name=f"C{i}_VAR",
+                )
+            )
+
+        line_name = self.result["lines"][0]
+
+        fits_file = (
+            f"{self.cube.outroot}.spec.{line_name.lower()}.fits".replace(
+                "oiii.png", "oiii-5007.fits"
+            )
+        )
+
+        if save:
+            msg = f"LinefitData: save {fits_file}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+            HDUL.writeto(fits_file, overwrite=True, output_verify="fix")
+
+        return HDUL
+
+    def line_figure_2d(
+        self,
+        x0=None,
+        line_index=0,
+        fig_xsize=12,
+        vrange=None,
+        recenter=False,
+        use_err_scale=False,
+        save=True,
+        sn_threshold=4,
+        discrete_sigma=True,
+        show_contours=True,
+        **kwargs,
+    ):
+        """ """
+        import scipy.ndimage as nd
+        from skimage.morphology import isotropic_dilation
+        from astropy.visualization import simple_norm
+
+        tight_colorbar = msautils.tight_colorbar
+
+        line_name = self.result["lines"][line_index]
+        nlines = self.result["nlines"]
+
+        full_line_sn = (
+            self.result["coeffs"] / np.sqrt(self.result["vcoeffs"])
+        )[-nlines:, :, :]
+
+        full_line_flux = self.result["coeffs"][-nlines:, :, :]
+        full_line_dv = self.result["dv"]
+        full_line_sig = self.result["sig"]
+        full_line_bin = self.result["bin"]
+
+        if use_err_scale:
+            err_scale = self.result["err_scale"]
+        else:
+            err_scale = 1.0
+
+        # weight_mask = prof['mean_weight'] > 0.1 * np.nanmedian(prof['mean_weight'])
+        sl = self.result["slice"]
+
+        nw = len(self.cube.wave)
+        imin = np.maximum(0, sl.start - 512)
+        imax = np.minimum(nw - 1, sl.stop + 512)
+        mean_image, mean_weight = self.cube.mean_image(
+            wave_range=(self.cube.wave[imin], self.cube.wave[imax])
+        )
+        weight_mask = mean_weight > 0.1 * np.nanmedian(mean_weight)
+        if weight_mask.sum() < 0.1 * weight_mask.size:
+            weight_mask = np.isfinite(mean_weight)
+
+        max_line_sn = full_line_sn[line_index, :, :] / err_scale * weight_mask
+        max_line_flux = full_line_flux[line_index, :, :] * weight_mask
+        max_line_dv = full_line_dv * weight_mask
+        max_line_err = max_line_flux / max_line_sn
+
+        max_line_sn[~np.isfinite(full_line_dv + full_line_sig)] = np.nan
+        max_line_flux[~np.isfinite(full_line_dv + full_line_sig)] = np.nan
+        max_line_err[~np.isfinite(full_line_dv + full_line_sig)] = np.nan
+
+        gmask = (max_line_sn > sn_threshold) & np.isfinite(
+            full_line_dv + full_line_sig
+        )
+
+        gmask = nd.binary_opening(gmask, iterations=1)
+        gmask = isotropic_dilation(gmask, radius=4)
+
+        sh = self.cube.shape[1:]
+
+        line_flux_err = max_line_flux / max_line_sn
+        # bad = prof['mean_weight'] < 0.1*np.nanmedian(prof['mean_weight'])
+        bad = line_flux_err > 5 * np.nanmedian(line_flux_err)
+        # max_line_flux[bad] = np.nan
+
+        line_sn_mask = np.ones_like(max_line_sn)
+        line_sn_mask[
+            nd.gaussian_filter(max_line_sn, 1) < sn_threshold * 3.0 / 4
+        ] = np.nan
+        line_sn_mask[~gmask] = np.nan
+        line_sn_mask[~weight_mask] = np.nan
+
+        print("xxx line_sn_mask", np.isfinite(line_sn_mask).sum())
+        if np.isfinite(line_sn_mask).sum() == 0:
+            if (full_line_sig > 0).sum() > 0:
+                line_sn_mask = np.nan ** (1 - (full_line_sig > 0))
+            else:
+                line_sn_mask = np.ones_like(line_sn_mask)
+
+        fig, axes = plt.subplots(
+            1,
+            4,
+            figsize=(fig_xsize, fig_xsize / 4 * self.cube.aspect),
+            sharex=True,
+            sharey=True,
+        )
+
+        vmax = 1.0e-3
+
+        perc = np.nanpercentile(max_line_flux * line_sn_mask, [16, 50, 84])
+
+        pixbin = (
+            np.sum(self.cube.pixbin[sl, :, :], axis=0) / self.result["nsl"]
+        )
+
+        mean_sn = (mean_image - np.nanmedian(mean_image) * 0) * np.nanmedian(
+            mean_weight
+        )
+
+        inorm = simple_norm(
+            mean_sn,
+            "log",
+            vmin=-20,
+            vmax=np.nanpercentile(mean_sn, 99),
+            # vmax=np.nanmax(line_flux)*10,
+            log_a=1.0e1,
+        )
+
+        axes[0].imshow(mean_sn, norm=inorm, cmap="RdGy")
+
+        try:
+            norm = simple_norm(
+                max_line_flux,
+                "log",
+                vmin=perc[1] - 2 * (perc[1] - perc[0]),
+                vmax=np.minimum(
+                    perc[1] + 30 * (perc[2] - perc[0]),
+                    np.nanmax(
+                        max_line_flux[
+                            (full_line_bin <= 1)
+                            & (max_line_sn > 4)
+                            & (pixbin > 0.95)
+                        ]
+                    ),
+                ),
+                log_a=1.0e1,
+            )
+        except:
+            norm = simple_norm(
+                max_line_flux,
+                "log",
+                vmin=-3 * np.nanmedian(max_line_err),
+                vmax=50 * np.nanmedian(max_line_err),
+                log_a=1.0e1,
+            )
+
+        axes[1].imshow(max_line_flux, norm=norm, cmap="bone_r")
+
+        levels = [3, 5, 10, 20, 40, 80, 160, 320]
+
+        if show_contours:
+            for j in [0, 1]:
+                axes[j].contour(
+                    nd.gaussian_filter(max_line_sn * gmask, 0.5),
+                    levels=levels[:1],
+                    colors=[
+                        "magenta" for v in np.linspace(0.2, 1, len(levels))
+                    ][:1],
+                    alpha=0.2,
+                )
+
+        max_line_dv_recenter = max_line_dv * 1
+        if recenter:
+            max_line_dv_recenter -= np.nanmedian(
+                max_line_dv[np.isfinite(line_sn_mask)]
+            )
+
+        if vrange is None:
+            vrange = self.vrange
+
+        if vrange is None:
+            perc = np.nanpercentile(
+                max_line_dv_recenter * line_sn_mask, [10, 90]
+            )
+            # print("xxx", perc)
+            vrange = [(np.ceil(np.max(np.abs(perc)) / 50) + 4) * 50] * 2
+            vrange[0] *= -1
+            self.vrange = vrange
+
+        imsh_dv = axes[2].imshow(
+            max_line_dv_recenter * line_sn_mask,
+            vmin=vrange[0],
+            vmax=vrange[1],
+            cmap="RdYlBu_r",
+        )
+
+        nsigmas = len(self.result["sigmas"])
+        sig_ix = np.interp(
+            full_line_sig, self.result["sigmas"], range(nsigmas)
+        )
+
+        imsh_sig = axes[3].imshow(
+            sig_ix * line_sn_mask,
+            vmin=-0.5,
+            vmax=nsigmas - 0.5,
+            cmap=(
+                plt.get_cmap("managua_r", nsigmas)
+                if discrete_sigma
+                else "managua_r"
+            ),
+        )
+
+        if show_contours:
+            for ax in axes[2:]:
+                ax.contour(
+                    nd.gaussian_filter(max_line_sn * gmask, 0.5),
+                    levels=levels,
+                    # colors=['0.6'] * len(levels),
+                    colors=[
+                        plt.cm.gray_r(v)
+                        for v in np.linspace(0.2, 1, len(levels))
+                    ],
+                    alpha=0.8,
+                )
+
+        h = self.cube.header  # cube_hdu['SCI'].header
+        pscale = np.sqrt(h["CD1_1"] ** 2 + h["CD1_2"] ** 2) * 3600.0
+        dxt = 0.5
+        ticks = np.arange(-40, 41, dxt) / pscale
+
+        if x0 is None:
+            xc = sh[1] / 2.0
+            yc = sh[0] / 2.0
+        else:
+            xc, yc = x0
+
+        xt = ticks + xc
+        xtv = (xt > 0.05 * dxt / pscale) & (xt < sh[1] - 0.95 * dxt / pscale)
+        yt = ticks + yc
+        ytv = (yt > 0.05 * dxt / pscale) & (yt < sh[0] - 0.95 * dxt / pscale)
+
+        for ax in axes:
+            ax.grid()
+            ax.set_xticks(xt[xtv])
+            ax.set_yticks(yt[ytv])
+            ax.set_xticklabels([])  # ticks[xtv] * pscale)
+            ax.set_yticklabels([])  # (ticks[ytv] * pscale)
+
+        axes[0].text(
+            0.5,
+            0.98,
+            f"{self.cube.outroot}\nz={self.result['redshift']:.4f}",
+            fontsize=6,
+            ha="center",
+            va="top",
+            transform=axes[0].transAxes,
+            bbox={"fc": "w", "alpha": 0.7, "ec": "None"},
+        )
+
+        if line_name not in LINE_LABELS_LATEX:
+            print(f"use {line_name} as line label!")
+            line_label = line_name + " @ "
+        else:
+            line_label = LINE_LABELS_LATEX[line_name] + " @ "
+
+        line_label += r"$\lambda_\mathrm{obs}~=~x~\mathrm{\mu m}$".replace(
+            "x",
+            f"{LINE_WAVELENGTHS[line_name][0] * (1 + self.result['redshift']) / 1.e4:.4f}",
+        )
+
+        axes[1].text(
+            0.5,
+            0.98,
+            line_label,
+            fontsize=6,
+            ha="center",
+            va="top",
+            transform=axes[1].transAxes,
+            bbox={"fc": "w", "alpha": 0.7, "ec": "None"},
+        )
+
+        fig.tight_layout(pad=0.5)
+        fig.tight_layout(pad=0.5)
+
+        (_, cb_dv) = tight_colorbar(
+            imsh_dv,
+            fig,
+            axes[2],
+            sx=0.85,
+            sy=0.02,
+            loc="uc",
+            pad=0.01,  # location=None,
+            label=r"$\Delta v$ [km/s]",
+            bbox_kwargs={"fc": "w", "alpha": 0.5, "ec": "None"},
+            zorder=100,
+            label_format=None,
+            labelsize=7,
+            colorbar_alpha=None,
+        )
+
+        (ax_cb_sig, cb_sig) = tight_colorbar(
+            imsh_sig,
+            fig,
+            axes[3],
+            sx=0.85,
+            sy=0.02,
+            loc="uc",
+            pad=0.01,  # location=None,
+            label=r"$\sigma$ [km/s]",
+            bbox_kwargs={"fc": "w", "alpha": 0.5, "ec": "None"},
+            zorder=100,
+            label_format=None,
+            labelsize=7,
+            colorbar_alpha=None,
+        )
+
+        cb_sig.set_ticks(range(nsigmas))
+        sig_labels = [f"{s:.0f}" for s in self.result["sigmas"]]
+        if len(sig_labels) > 6:
+            ax_cb_sig.tick_params(labelsize=6)
+
+        if len(sig_labels) > 11:
+            for i in range(len(sig_labels))[1::2]:
+                sig_labels[i] = ""
+
+        cb_sig.set_ticklabels(sig_labels)
+
+        fig_file = f"{self.cube.outroot}.spec.{line_name.lower()}.png".replace(
+            "oiii.png", "oiii-5007.png"
+        )
+
+        self.result["sn_mask"][line_index, :, :] = np.isfinite(line_sn_mask)
+
+        if save:
+            msg = f"LinefitData: save {fig_file}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+            fig.savefig(fig_file)
+
+        return fig
+
+    def get_line_pixels(
+        self, dx_list=[-2, 0, 2], dy_list=[-2, 0, 2], line_index=0, **kwargs
+    ):
+        """ """
+        nlines = self.result["nlines"]
+
+        line_sn = (self.result["coeffs"] / np.sqrt(self.result["vcoeffs"]))[
+            -nlines + line_index, :, :
+        ]
+
+        if "sn_mask" in self.result:
+            line_sn *= self.result["sn_mask"][line_index, :, :]
+
+        i, j = np.unravel_index(np.nanargmax(line_sn), line_sn.shape)
+        pix = []
+        for di in dy_list:
+            for dj in dx_list:
+                pix.append([i + di, j + dj])
+
+        return pix
+
+    def line_regions(self, line_index=0, **kwargs):
+        """
+        Label and compute properties of "islands" in the S/N mask for an emission line
+        """
+        from skimage.measure import label, regionprops
+
+        labels = label(nd.binary_opening(self.result["sn_mask"][0, :, :]))
+
+        nlines = self.result["nlines"]
+
+        line_sn = (self.result["coeffs"] / np.sqrt(self.result["vcoeffs"]))[
+            -nlines + line_index, :, :
+        ] * 1
+
+        line_sn[~np.isfinite(line_sn)] = 0
+        props = regionprops(labels, intensity_image=line_sn)
+        rows = []
+        for p in props:
+            row = {}
+            for k in [
+                "label",
+                "centroid",
+                "centroid_weighted",
+                "area",
+                "bbox",
+                "intensity_max",
+                "axis_major_length",
+                "axis_minor_length",
+                "orientation",
+            ]:
+                row[k] = getattr(p, k)
+            rows.append(row)
+
+        ptab = utils.GTable(rows=rows)
+        so = np.argsort(ptab["intensity_max"])[::-1]
+        ptab = ptab[so]
+        props = [props[j] for j in so]
+
+        return labels, props, ptab
+
+    def line_region_pix(
+        self,
+        region_index=0,
+        line_index=0,
+        asteps=[-0.3, 0, 0.3],
+        bsteps=[-0.3, 0, 0.3],
+        dilate_mask=1,
+        first_axis="major",
+        plus=False,
+        **kwargs,
+    ):
+        """
+        Get pixel list within a line region
+        """
+        from skimage.morphology import isotropic_dilation
+
+        labels, props, ptab = self.line_regions(
+            line_index=line_index, **kwargs
+        )
+        if labels is None:
+            return None, None
+
+        if region_index > len(ptab) - 1:
+            return None, None
+
+        row = ptab[region_index]
+
+        arr = []
+        arad = row["axis_major_length"] / 2.0
+        brad = row["axis_minor_length"] / 2.0
+
+        if first_axis == "major":
+            for i in bsteps:
+                for j in asteps:
+                    if plus & (j != 0) & (i != 0):
+                        continue
+                    arr.append([j * arad, i * brad])
+        else:
+            for j in asteps:
+                for i in bsteps:
+                    if plus & (j != 0) & (i != 0):
+                        continue
+                    arr.append([j * arad, i * brad])
+
+        mask = labels == row["label"]
+        if dilate_mask:
+            mask = isotropic_dilation(mask, radius=dilate_mask)
+
+        # print("xxx orientation: ", row['orientation'] / np.pi * 180 - 90)
+        orientation_angle = row["orientation"] / np.pi * 180 - 90
+        if orientation_angle < -90:
+            orientation_angle += 180
+
+        rot = rotation_matrix(orientation_angle)
+        coo = (
+            np.array(arr).dot(rot) + np.array(row["centroid_weighted"][::-1])
+        ).T
+        cpix = np.round(coo).astype(int)
+
+        in_mask = np.array([mask[*cp[::-1]] for cp in cpix.T])
+
+        coo = coo[:, in_mask].T
+        ind = np.round(coo).astype(int)[:, ::-1]
+
+        return coo, ind
+
+    def plot_pixel_spectra(
+        self,
+        figsize=(9, 4),
+        pix=None,
+        pad=32,
+        line_index=0,
+        renorm=True,
+        y_offset=1.2,
+        sorty=True,
+        cmap=msautils.ClippedColormap(plt.cm.Spectral, vmin=0, vmax=1),
+        **kwargs,
+    ):
+        """ """
+        if pix is None:
+            coo, pix = self.line_region_pix(line_index=line_index, **kwargs)
+            # if pix is not None:
+            #     sorty = False
+
+        if pix is None:
+            pix = self.get_line_pixels(line_index=line_index, **kwargs)
+
+        if sorty:
+            py = [p[0] for p in pix]
+            psort = np.argsort(py)
+            if y_offset < 0:
+                psort = psort[::-1]
+        else:
+            psort = np.arange(len(pix), dtype=int)
+
+        npix = len(pix)
+
+        sl = self.result["slice"]
+        imin = np.maximum(0, sl.start - pad)
+        imax = np.minimum(self.cube.shape[0] - 1, sl.stop + pad)
+        sl2 = slice(imin, imax)
+
+        nlines = self.result["nlines"]
+
+        line_sn = (self.result["coeffs"] / np.sqrt(self.result["vcoeffs"]))[
+            -nlines + line_index, :, :
+        ]
+
+        if "sn_mask" in self.result:
+            line_sn *= self.result["sn_mask"][line_index, :, :]
+
+        line_sn[line_sn == 0] = np.nan
+
+        sn_mask_im = np.isfinite(line_sn) & (line_sn > 0)
+        if sn_mask_im.sum() == 0:
+            sn_mask_im = np.nanmax(self.result["coeffs"] ** 0, axis=0) > 0
+
+        xpm = self.cube.xp[sn_mask_im]
+        ypm = self.cube.yp[sn_mask_im]
+        aspect = (ypm.max() - ypm.min()) / (xpm.max() - xpm.min())
+
+        fig, axes = plt.subplots(1, 2, figsize=figsize, width_ratios=[1, 2])
+
+        inorm = simple_norm(
+            line_sn,
+            "log",
+            vmin=-3,
+            vmax=np.nanpercentile(line_sn, 99),
+            # vmax=np.nanmax(line_flux)*10,
+            log_a=1.0e1,
+        )
+
+        axes[0].imshow(line_sn, norm=inorm, cmap="bone_r")
+
+        offset = 0.0
+
+        ax = axes[1]
+
+        w1 = self.cube.wave[sl]
+        w2 = self.cube.wave[sl2]
+
+        dw2 = w2.max() - w2.min()
+
+        for ki, k in enumerate(psort):
+            (i, j) = pix[k]
+            model_ij = self.result["model"][:, i, j] * 1.0
+            if renorm:
+                mmax = np.nanmax(model_ij)
+            else:
+                mmax = 1.0
+
+            fnu = (self.result["full_sci"][:, i, j] / self.cube.sens)[sl2]
+            flam = fnu * self.cube.spec["to_flam"][sl2]
+
+            # flam[flam < 0] = np.nan
+            # model_ij[model_ij < 0] = np.nan
+
+            pl = ax.plot(
+                w2, flam / mmax + offset, color="0.5", alpha=0.3, zorder=1
+            )
+
+            pl = ax.plot(
+                w1,
+                model_ij / mmax + offset,
+                alpha=0.3,
+                zorder=2,
+                color=cmap(ki / (npix - 1)),
+            )
+
+            axes[0].scatter(
+                [j], [i], marker="s", fc=pl[0].get_color(), ec="w", alpha=0.9
+            )
+
+            if np.abs(y_offset) > 0:
+
+                label = f"{i:>2}, {j:>2}"
+                label += f'  {self.result["dv"][i,j]:>4.0f}  {self.result["sig"][i,j]:>4.0f}'
+                ax.text(
+                    w2[0] - 0.23 * dw2,
+                    model_ij[0] / mmax + offset + 0.1 * y_offset,
+                    label,
+                    ha="left",
+                    va="center",
+                    fontsize=6,
+                    fontfamily="monospace",
+                    color=pl[0].get_color(),
+                    bbox={"fc": "w", "alpha": 0.8, "ec": "None"},
+                    # backgroundcolor='w',
+                )
+
+            offset += y_offset
+
+        ax = axes[0]
+        ax.set_ylim(ypm.min() - 4, ypm.max() + 4)
+        ax.set_xlim(xpm.min() - 4, xpm.max() + 4)
+        ax.tick_params(labelsize=6)
+
+        if renorm:
+            axes[1].set_yticklabels([])
+            if y_offset > 0:
+                axes[1].set_ylim(-0.5, (npix + 0.5) * y_offset)
+            else:
+                axes[1].set_ylim((npix - 0.5) * y_offset, 1.4)
+
+        if np.abs(y_offset) > 0:
+            axes[1].set_xlim(w2[0] - 0.25 * dw2, w2[-1] + 0.05 * dw2)
+
+        axes[1].set_xlabel(r"$\lambda_\mathrm{obs}$")
+
+        xref = []
+        for li in self.result["lines"]:
+            for lwx in LINE_WAVELENGTHS[li]:
+                xref.append(lwx / 1.0e4 * (1 + self.result["redshift"]))
+
+        ylim = axes[1].get_ylim()
+        axes[1].vlines(
+            [xref],
+            *ylim,
+            color="magenta",
+            linestyle="-",
+            alpha=0.1,
+            lw=3,
+            zorder=-1,
+        )
+        axes[1].set_ylim(*ylim)
+
+        if self.result["redshift"] > 0.02:
+
+            ax2 = axes[1].twiny()
+            ax2.set_xlim(
+                *(np.array(axes[1].get_xlim()) / (1 + self.result["redshift"]))
+            )
+            ax2.set_xlabel(
+                r"$\lambda_\mathrm{rest}~~z=xx$".replace(
+                    "xx", f"{self.result['redshift']:.4f}"
+                )
+            )
+
+        for ax in axes:
+            ax.grid()
+
+        fig.tight_layout(pad=1)
+
+        return fig
