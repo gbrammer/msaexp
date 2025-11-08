@@ -558,21 +558,28 @@ def get_default_resolution_curve(
         Tabulated resolution curve
 
     """
-    _data_path = module_data_path()
     if "GRISM" in grating.upper():
         # NIRCAM WFSS, assume 20 pix
         disp = get_nircam_wfss_disp(wave=wave)
+
     elif "LRS" in grating.upper():
         disp = get_miri_lrs_disp(wave=wave)
         if wave is None:
             wave = disp["WAVELENGTH"]
+
     elif "MUSE" in grating.upper():
         disp = get_muse_lsf(wave=wave)
         if wave is None:
             wave = disp["WAVELENGTH"]
+
     else:
+        _data_path = module_data_path()
+
         disp = grizli.utils.read_catalog(
-            os.path.join(_data_path, f"jwst_nirspec_{grating.lower()}_disp.fits")
+            os.path.join(
+                _data_path,
+                f"jwst_nirspec_{grating.lower()}_disp.fits"
+            )
         )
 
     if wave is None:
