@@ -4805,7 +4805,7 @@ class LinefitData:
         cpix = np.round(coo).astype(int)
 
         in_mask = np.array([
-            mask[*cp[::-1]]
+            mask[cp[1], cp[2]]
             for cp in cpix.T
         ])
 
