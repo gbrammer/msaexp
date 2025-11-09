@@ -13,7 +13,284 @@ from grizli import utils
 
 from .general import module_data_path
 
-__all__ = ["MolecularHydrogen"]
+__all__ = ["LineList", "MolecularHydrogen"]
+
+class LineList(object):
+
+    WHITE_BBOX = {
+        "fc": "w",
+        "ec":"None",
+        "alpha":1.0,
+        "boxstyle": "square,pad=0.3"
+    }
+
+    CLEAN_CENTER_KWARGS = {
+        "ha": "center",
+        "bbox": WHITE_BBOX,
+        "x_pad": 0.,
+    }
+
+    LEFT_OFFSET_KWARGS = {
+        "ha": "right",
+        "x_pad": -0.005,
+    }
+
+    RIGHT_OFFSET_KWARGS = {
+        "ha": "left",
+        "x_pad": 0.005,
+    }
+
+    def __init__(self):
+        self.load_data()
+    
+    def load_data(self, fill_color="0.2"):
+        
+        linelist_file = os.path.join(
+            module_data_path(),
+            "linelist.ecsv"
+        )
+        
+        self.data = utils.read_catalog(linelist_file, format="ascii.ecsv")
+        self.data["color"] = self.data["color"].filled(fill_color)
+        self.N = len(self.data)
+        
+    def select_lines(self, z=0, wave_range=[0, np.inf], prefixes=[], priorities=[4,5], floor=True, **kwargs):
+        """
+        Get selection of lines within a wavelength range
+        """
+        x_scale = (1 + z)
+        if wave_range[1] < 500:
+            # axis is in probably in microns
+            x_scale /= 1.e4
+
+        selected = np.zeros(self.N, dtype=bool)
+
+        for i, row in enumerate(self.data):
+            selected[i] = (
+                (row['wavelength'][0] > wave_range[0] / x_scale)
+                & (row['wavelength'][0] < wave_range[1] / x_scale)
+            )
+            if round:
+                selected[i] &= (np.floor(row['priority']) in priorities)
+            else:
+                selected[i] &= (row['priority'] in priorities)
+
+            if len(prefixes) > 0:
+                in_prefixes = False
+                for prefix in prefixes:
+                    if row['name'].startswith(prefix):
+                        in_prefixes = True
+                        break
+
+                selected[i] &= in_prefixes
+
+        return selected, x_scale
+
+    def add_to_axis(self, ax, bottom=0, top=1.0, x_pad=0, wfunc=np.min, y_label=0.98, priorities=[3,4,5], label_priorities=None, label_prefixes=[], y_normalized=True, rotation=90, ha="center", va="top", lw=1.5, ls="-", fontsize=7, alpha=0.8, bbox={"fc":"w", "ec":"None", "alpha":1.0}, zorder=1, label_zorder=2, **kwargs):
+        """
+        Add vlines and labels to axis
+        """
+
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+
+        if label_priorities is None:
+            label_priorities = priorities
+
+        selected, x_scale = self.select_lines(wave_range=xlim, priorities=priorities, **kwargs)
+
+        if selected.sum() == 0:
+            return None
+
+        is_xlog = ax.xaxis.get_scale() == "log"
+        is_ylog = ax.yaxis.get_scale() == "log"
+
+        for row in self.data[selected]:
+            wave_i = np.array(row["wavelength"]) * x_scale
+            if hasattr(bottom, "__len__"):
+                vlo = np.interp(wave_i, *bottom)
+            elif y_normalized:
+                if is_ylog:
+                    vlo = 10**np.interp(bottom, [0, 1], np.log10(ylim))
+                else:
+                    vlo = np.interp(bottom, [0, 1], ylim)
+            else:
+                vlo = bottom
+
+            if hasattr(top, "__len__"):
+                vhi = np.interp(wave_i, *top)
+            elif y_normalized:
+                if is_ylog:
+                    vhi = 10**np.interp(top, [0, 1], np.log10(ylim))
+                else:
+                    vhi = np.interp(top, [0, 1], ylim)
+            else:
+                vhi = top
+
+            ax.vlines(
+                wave_i, vlo, vhi,
+                color=row["color"],
+                ls=ls, lw=lw, alpha=alpha, zorder=zorder
+            )
+
+            if (y_label is not None) & (row["priority"] in label_priorities):
+                if len(label_prefixes) > 0:
+                    in_prefixes = False
+                    for prefix in label_prefixes:
+                        if row['name'].startswith(prefix):
+                            in_prefixes = True
+                            break
+                    if not in_prefixes:
+                        continue
+
+                wl = wfunc(wave_i)
+
+                if hasattr(y_label, "__len__"):
+                    yl = np.interp(wl, *y_label)
+                elif y_normalized:
+                    if is_ylog:
+                        yl = 10**np.interp(y_label, [0, 1], np.log10(ylim))
+                    else:
+                        yl = np.interp(y_label, [0, 1], ylim)
+                else:
+                    yl = y_label
+
+                if is_xlog:
+                    dx = wl * (np.exp(x_pad * np.log(xlim[1]/xlim[0])) - 1)
+                else:
+                    dx = x_pad * (xlim[1] - xlim[0])
+                    
+                ax.text(
+                    wl + dx,
+                    yl,
+                    row["tex"],
+                    color=row["color"],
+                    va=va,
+                    ha=ha,
+                    alpha=alpha,
+                    fontsize=fontsize,
+                    bbox=bbox,
+                    zorder=label_zorder,
+                    rotation=rotation,
+                )
+        
+        return self.data[selected]
+
+    def demo(self, xlim=[0.35, 0.51]):
+        """
+        Show a demonstration of various plot options
+        """
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(7, 1, figsize=(8, 8))
+        for ax in axes:
+            ax.set_ylim(-0.5, 2.5)
+        
+        kws = dict(
+            fontsize=8,
+            bbox=self.WHITE_BBOX,
+            ha='left', va='bottom'
+        )
+        lxy = (0.02, 0.09)
+        
+        axes[0].set_xlim(xlim[0] * 1.e4, xlim[1] * 1.e4)        
+        self.add_to_axis(axes[0])
+        axes[0].text(*lxy, "defaults", transform=axes[0].transAxes, **kws)
+        
+        for ax in axes[1:]:
+            ax.set_xlim(xlim)
+
+        self.add_to_axis(axes[1], prefixes=["O", "Pa"], va="bottom", y_normalized=False)
+        axes[1].text(*lxy, "prefixes=[\"O\",\"Pa\"], y_normalized=False", transform=axes[1].transAxes, **kws)
+
+        self.add_to_axis(axes[2], priorities=[3,4,5], label_prefixes=["Ne","H"], **self.LEFT_OFFSET_KWARGS)
+        axes[2].text(*lxy, "priorities=[3,4,5], label_prefixes=[\"Ne\",\"H\"], **LEFT_OFFSET_KWARGS", transform=axes[2].transAxes, **kws)
+
+        axes[3].set_ylim(0.1, 10)
+        axes[3].semilogy()
+        self.add_to_axis(axes[3], priorities=[2,3,4,5], label_priorities=[4,5])
+        axes[3].text(*lxy, "priorities=[2,3,4,5], label_priorities=[4,5], semilogy", transform=axes[3].transAxes, **kws)
+
+        axes[4].set_ylim(0.1, 10)
+        axes[4].loglog()
+        self.add_to_axis(axes[4], priorities=[3,4,5], y_label=0.5, va="center")
+        axes[4].text(*lxy, "loglog, y_label=0.5, va=\"center\"", transform=axes[4].transAxes, **kws)
+
+        xi = np.linspace(-1, 1, 128)
+        yi = np.cos(xi * 4 * np.pi)
+        xp = np.interp(xi, [-1, 1], xlim)
+        axes[5].plot(xp, yi-1, color='0.8')
+        axes[5].plot(xp, yi*0.2+1, color='0.8')
+        self.add_to_axis(axes[5], bottom=(xp, yi-1), top=(xp, yi * 0.2 + 1),  priorities=[3,4,5])
+        axes[5].text(*lxy, "interpolated bottom, top", transform=axes[5].transAxes, **kws)
+
+        axes[6].plot(xp, yi*0.2+1, color='0.8')
+        self.add_to_axis(axes[6], y_label=(xp, yi*0.2+1), priorities=[3,4,5], va="center", bbox=self.WHITE_BBOX, fontsize=5)
+        axes[6].text(*lxy, "interpolated y_label, va=\"center\", white bbox, fontsize=5", transform=axes[6].transAxes, **kws)
+
+        fig.tight_layout(pad=1)
+
+        return fig
+
+
+    def spectrum_line_models(self, spec, z=0, selected=None, fnu=True, **kwargs):
+        """
+        Make line models `msaexp.spectrum.SpectrumSampler.fast_emission_line`
+        
+        Parameters
+        ----------
+        spec : `~msaexp.spectrum.SpectrumSampler`
+            Spectrum object
+        
+        z : float
+            Redshift
+        
+        selected : None, array
+            Line selection array.  If not provided, will pull from
+            `LineList.select_lines`.
+        
+        fnu : bool
+            Return in fnu units
+        
+        kwargs : dict
+            Keyword arguments passed to `LineList.select_lines` and
+            `msaexp.spectrum.SpectrumSampler.fast_emission_line`
+        
+        Returns
+        -------
+        line_templates : array-like (Nlines, Nspec)
+            Sampled line models
+        
+        line_names : list
+            String line names
+
+        """
+    
+        if selected is None:
+            valid_wave = spec["wave"][spec["valid"]]
+            wave_range = [valid_wave.min(), valid_wave.max()]
+            selected, x_scale = self.select_lines(
+                wave_range=wave_range, z=z, **kwargs
+            )
+    
+        line_names = []
+        line_templates = []
+        for i, row in enumerate(self.data[selected]):
+            line_i = np.zeros_like(spec["flux"])
+            for lw, lr in zip(row["wavelength"], row["ratio"]):
+                line_i += spec.fast_emission_line(
+                    lw * (1 + z) / 1.e4,
+                    line_flux=lr,
+                    **kwargs,
+                )
+        
+            if fnu:
+                line_i /= spec["to_flam"]
+        
+            line_templates.append(line_i)
+            line_names.append(row["name"])
+        
+        return np.array(line_templates), line_names
 
 
 class MolecularHydrogen:
@@ -42,7 +319,7 @@ class MolecularHydrogen:
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
         """
         self.data = utils.read_catalog(
-            os.path.join(module_data_path(), "h2_lines.txt")
+            os.path.join(module_data_path(), "h2_linelist.txt")
         )
         self.initialize_flux_table()
         self.unv = utils.Unique(self.data["vib"], verbose=False)
