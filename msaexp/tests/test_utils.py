@@ -7,6 +7,7 @@ import jwst
 
 from .. import utils
 from ..utils import general as general_utils
+from ..utils import lines as line_utils
 
 def test_import():
     """ """
@@ -412,3 +413,19 @@ def test_glob_sorted():
     # Cleanup
     for f in files_by_size:
         os.remove(f)
+
+
+def test_molecular_hydrogen():
+    
+    H2 = line_utils.MolecularHydrogen()
+    
+
+def test_linelist():
+    """
+    Test LineList
+    """
+    import matplotlib.pyplot as plt
+
+    ll = line_utils.LineList()
+    fig = ll.demo()
+    plt.close(fig)

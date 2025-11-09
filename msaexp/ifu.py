@@ -4801,9 +4801,13 @@ class LinefitData:
         coo = (
             np.array(arr).dot(rot) + np.array(row["centroid_weighted"][::-1])
         ).T
+
         cpix = np.round(coo).astype(int)
 
-        in_mask = np.array([mask[*cp[::-1]] for cp in cpix.T])
+        in_mask = np.array([
+            mask[cp[1], cp[2]]
+            for cp in cpix.T
+        ])
 
         coo = coo[:, in_mask].T
         ind = np.round(coo).astype(int)[:, ::-1]
