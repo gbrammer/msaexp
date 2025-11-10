@@ -360,6 +360,7 @@ def combine_spectra_pipeline(
             with_extra_dq=True,
             include_full_pixtab=["PRISM"],
             do_multiple_mask=True,
+            protect_exception=True,
         )
 
         for k in kws:

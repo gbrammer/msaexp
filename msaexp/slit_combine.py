@@ -4599,6 +4599,9 @@ def drizzle_grating_group(
             with_pathloss=with_pathloss,
             # float_dtype=np.float32,
         )
+        if len(tab) == 0:
+            continue
+
         tabs.append(tab)
 
         _meta = obj.slit_metadata()

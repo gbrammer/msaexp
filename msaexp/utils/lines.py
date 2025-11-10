@@ -493,17 +493,17 @@ class MolecularHydrogen:
         
         .. math::
         
-            F_j = h \\nu A N_{j+2} \\Omega / (4 \pi)
+            F_j = h \\nu A N_{j+2} \\Omega / (4\\pi)
 
         Line flux F as a function of temperature, T (excitation diagram):
 
         .. math::
           
-            N_{j+2} = g_j / Z(T) e^{-E / kT}
+            N_{j+2} = \\frac{g_j}{Z(T)} e^{-E_j / kT}
             
-            Z(T) = \\sum g_j e^{-E / kT}
+            Z(T) = \\sum g_j e^{-E_j / kT}
         
-            F_j(T) \\propto N_{j+2} A / \\lambda
+            F_j \\propto \\frac{N_{j+2} A}{\\lambda}
 
         Total number, mass:
         
@@ -511,7 +511,7 @@ class MolecularHydrogen:
             
             n_\\mathrm{tot} &= N_\\mathrm{tot} \\Omega d^2 \\
             
-                           &= 4 \\pi d^2 \sum F_j / (h \\nu A)
+                           &= 4\\pi~d_L^2~\sum \\frac{F_j}{h \\nu A}
 
         Line data from the Gemini compilation at
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
@@ -652,7 +652,7 @@ class MolecularHydrogen:
 
     def line_flux(self, T=1000.0, **kwargs):
         """
-        Line flux :math:`F_j = h \nu A N_{j+2} \Omega / (4 \pi)`
+        Line flux :math:`F_j = h \nu A N_{j+2} \Omega / 4\\pi`
         """
         Nj = self.Nj(T) * u.cm**-2
 
@@ -739,3 +739,5 @@ class MolecularHydrogen:
         Ntot = line_flux / self.h_nu_A[ix] / Nj[ix+2] * dL.to(u.cm)**2
         
         Mtot = (Ntot * 2 * astropy.constants.m_p).to(u.Msun)
+
+        return Mtot
