@@ -481,7 +481,8 @@ class MolecularHydrogen:
     # Reference transition
     reference = ("1-0", "S(1)")
 
-    separate_ZT = False
+    # Do Z(T) sum separate by odd / even j
+    separate_ZT = True
 
     def __init__(self, **kwargs):
         """
@@ -492,7 +493,7 @@ class MolecularHydrogen:
         
         .. math::
         
-            F_j = h \nu A N_{j+2} \Omega / (4 \pi)
+            F_j = h \\nu A N_{j+2} \\Omega / (4 \pi)
 
         Line flux F as a function of temperature, T (excitation diagram):
 
@@ -500,17 +501,17 @@ class MolecularHydrogen:
           
             N_{j+2} = g_j / Z(T) e^{-E / kT}
             
-            Z(T) = \sum g_j \exp{-E / kT}
+            Z(T) = \\sum g_j e^{-E / kT}
         
-            F_j(T) \propto N_{j+2} A / \lambda
+            F_j(T) \\propto N_{j+2} A / \\lambda
 
         Total number, mass:
         
         .. math::
             
-            n_\mathrm{tot} &= N_\mathrm{tot} \Omega d^2 \\
+            n_\\mathrm{tot} &= N_\\mathrm{tot} \\Omega d^2 \\
             
-                           &= 4 \pi d^2 \sum F_j / (h \\nu A)
+                           &= 4 \\pi d^2 \sum F_j / (h \\nu A)
 
         Line data from the Gemini compilation at
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
@@ -602,26 +603,10 @@ class MolecularHydrogen:
 
     def ZT(self, T=1000.0):
         """
-        Compute :math:`Z(T) = \sum g_j \exp{-E / kT}`
+        Compute :math:`Z(T) = \sum g_j~e^{-E / kT}`
         """
-        # ZT = np.zeros(self.N)
-        # for v in self.unv.values:
-        #     un_i = self.unv[v]
-        #     ZT[un_i] = np.sum(
-        #         (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[un_i]
-        #     )
-
-        # ZT = np.zeros_like(self.data["wave"])
-        # for v in self.unv.values:
-        #     un_i = self.unv[v]
-        #     for i in [0,1]:
-        #         sub = un_i & (self.data["j"] % 2 == i)
-        #
-        #         ZT[sub] = np.sum(
-        #             (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
-        #         )
-
         if self.separate_ZT:
+            # Seems like it should be this
             ZT = np.zeros_like(self.data["wave"])
             for i in [0,1]:
                 sub = self.data["j"] % 2 == i
@@ -629,6 +614,7 @@ class MolecularHydrogen:
                     (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
                 )
         else:
+            # But this needed to make the ratios agree with the gemini table
             ZT = np.sum(
                 (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))
             )
@@ -637,7 +623,7 @@ class MolecularHydrogen:
 
     def Nj(self, T=1000.0):
         """
-        Compute number density: :math:`N_j = g_j / Z(T) \exp{-E / kT}`
+        Compute number density: :math:`N_j = \\frac{g_j}{Z(T)}~e^{-E / kT}`
         """
         if hasattr(T, "__len__"):
             # Temperature distribution
