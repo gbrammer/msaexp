@@ -500,7 +500,7 @@ class MolecularHydrogen:
           
             N_{j+2} = g_j / Z(T) \exp{-E / kT}
             
-            Z(T) = \Sum g_j \exp{-E / kT}
+            Z(T) = \sum g_j \exp{-E / kT}
         
             F_j(T) \propto N_{j+2} A / \lambda
 
@@ -510,7 +510,7 @@ class MolecularHydrogen:
             
             n_\mathrm{tot} &= N_\mathrm{tot} \Omega d^2 \\
             
-                           &= 4 \pi d^2 \Sum F_j / (h \nu A)
+                           &= 4 \pi d^2 \sum F_j / (h \nu A)
 
         Line data from the Gemini compilation at
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
@@ -602,7 +602,7 @@ class MolecularHydrogen:
 
     def ZT(self, T=1000.0):
         """
-        Compute :math:`Z(T) = \Sum g_j \exp{-E / kT}`
+        Compute :math:`Z(T) = \sum g_j \exp{-E / kT}`
         """
         # ZT = np.zeros(self.N)
         # for v in self.unv.values:
@@ -666,7 +666,7 @@ class MolecularHydrogen:
 
     def line_flux(self, T=1000.0, **kwargs):
         """
-        Line flux :math:``F_j = h \nu A N_{j+2} \Omega / (4 \pi)``
+        Line flux :math:`F_j = h \nu A N_{j+2} \Omega / (4 \pi)`
         """
         Nj = self.Nj(T) * u.cm**-2
 
