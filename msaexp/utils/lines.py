@@ -15,16 +15,20 @@ from .general import module_data_path
 
 __all__ = ["LineList", "MolecularHydrogen", "line_flam_to_fnu"]
 
-def line_flam_to_fnu(wave=2.12 * (1 + 1.0132)):
+
+def line_flam_to_fnu(
+    wave=2.12 * (1 + 1.0132),
+    flam_unit=1.0e-20 * u.erg / u.second / u.cm**2 / u.Angstrom,
+):
     """
     Convert from flambda cgs to microJansky
     """
-    flam_unit = 1.0e-20 * u.erg / u.second / u.cm**2 / u.Angstrom
 
-    to_fnu = (1 * flam_unit).to(
-            u.microJansky,
-            equivalencies=u.spectral_density(wave * u.micron)
-    ).value
+    to_fnu = (
+        (1 * flam_unit)
+        .to(u.microJansky, equivalencies=u.spectral_density(wave * u.micron))
+        .value
+    )
 
     return to_fnu
 
@@ -480,13 +484,15 @@ class LineList(object):
                     **kwargs,
                 )
 
-            if fnu:
-                line_i *= line_flam_to_fnu(lw * (1 + z) / 1.0e4) * 1.e-4
-
             line_templates.append(line_i)
             line_names.append(row["name"])
 
-        return np.array(line_templates), line_names
+        line_templates = np.array(line_templates)
+
+        if fnu:
+            line_templates *= 1.0e-4 / spec["to_flam"]
+
+        return line_templates, line_names
 
 
 class MolecularHydrogen:
@@ -503,25 +509,25 @@ class MolecularHydrogen:
         relations from Aditya Togi and J. D. T. Smith 2016 ApJ, 830, 18
 
         Optically thin flux:
-        
+
         .. math::
-        
+
             F_j = h \\nu A N_{j+2} \\Omega / 4\\pi
 
         Line flux F as a function of temperature, T (excitation diagram):
 
         .. math::
-          
+
             N_{j+2} = \\frac{g_{j+2}}{Z(T)} e^{-E_\mathrm{upper} / kT}
-            
+
             Z(T) = \\sum g_j e^{-E_j / kT}
-        
+
             F_j \\propto \\frac{N_{j+2} A}{\\lambda}
 
         Line data from the Gemini compilation at
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
         """
-        
+
         self.load_data()
 
         self.initialize_flux_table()
@@ -536,7 +542,7 @@ class MolecularHydrogen:
         )
 
         self.data["wave"].unit = u.micron
-        self.data["A"].unit = 1.e-7 * u.second**-1
+        self.data["A"].unit = 1.0e-7 * u.second**-1
         self.data["j"] = [int(r[2:-1]) for r in self.data["rot"]]
         self.data["OSQ"] = [r[0] for r in self.data["rot"]]
 
@@ -575,9 +581,9 @@ class MolecularHydrogen:
         """
         precompute :math:`h \\cdot \\nu \\cdot A` (erg / second)
         """
-        return (
-            astropy.constants.h * self.nu * self.data["A"]
-        ).to(u.erg / u.second)
+        return (astropy.constants.h * self.nu * self.data["A"]).to(
+            u.erg / u.second
+        )
 
     @property
     def N(self):
@@ -603,7 +609,7 @@ class MolecularHydrogen:
         Generate a powerlaw temperature distribution :math:`dN = T^{-n} dT`
         """
         tgrid = np.linspace(Tl, Tu, nsteps)
-        Nt = tgrid**-n * (n-1) / (Tl**(1-n) - Tu**(1-n))
+        Nt = tgrid**-n * (n - 1) / (Tl ** (1 - n) - Tu ** (1 - n))
         return tgrid, Nt
 
     def ZT(self, T=1000.0):
@@ -613,16 +619,14 @@ class MolecularHydrogen:
         if self.separate_ZT:
             # Seems like it should be this
             ZT = np.zeros_like(self.data["wave"])
-            for i in [0,1]:
+            for i in [0, 1]:
                 sub = self.data["j"] % 2 == i
                 ZT[sub] = np.sum(
                     (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
                 )
         else:
             # But this needed to make the ratios agree with the gemini table
-            ZT = np.sum(
-                (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))
-            )
+            ZT = np.sum((self.data["gJ"] * np.exp(-self.data["Eupper"] / T)))
 
         return ZT
 
@@ -664,7 +668,6 @@ class MolecularHydrogen:
         Fj = self.h_nu_A * Nj
 
         return Nj, Fj.to(u.erg / u.second / u.cm**2)
-
 
     def update_flux_table(
         self, T=1000.0, min_line_fraction=0.05, wave_range=(1.6, 2.6), **kwargs
@@ -718,11 +721,12 @@ class MolecularHydrogen:
         else:
             models = []
 
+        if fnu:
+            scale = 1.0e-4 / spec["to_flam"]
+        else:
+            scale = 1.0
+
         for row in self.flux[self.flux["mask"]]:
-            if fnu:
-                scale = line_flam_to_fnu(row["wave"] * (1 + z)) * 1.e-4
-            else:
-                scale = 1.0
 
             if single:
                 flux_i = row["flux"] / self.flux.meta["ref_flux"]
@@ -733,19 +737,25 @@ class MolecularHydrogen:
                 row["wave"] * (1 + z),
                 line_flux=flux_i,
                 **kwargs,
-            ) * scale
+            )
 
             if single:
                 model += model_i
             else:
                 models.append(model_i)
-        
-        if single:
-            return model
-        else:
-            return np.array(models)
 
-    def h2_mass(self, line_flux=1.0e-20 * u.erg / u.second / u.cm**2, transition=('1-0', 'S(1)'), z=1.01, **kwargs):
+        if single:
+            return model * scale
+        else:
+            return np.array(models) * scale
+
+    def h2_mass(
+        self,
+        line_flux=1.0e-20 * u.erg / u.second / u.cm**2,
+        transition=("1-0", "S(1)"),
+        z=1.01,
+        **kwargs,
+    ):
         """
         Still figuring out unit conversions....
         """
@@ -763,7 +773,7 @@ class MolecularHydrogen:
         else:
             ix = np.where(
                 (self.data["vib"] == transition[0])
-              & (self.data["rot"] == transition[1])
+                & (self.data["rot"] == transition[1])
             )[0][0]
 
             transition = (
@@ -771,13 +781,13 @@ class MolecularHydrogen:
                 self.data["rot"][ix],
             )
 
-        Ntot = line_flux / self.h_nu_A[ix] / Nj[ix] * dL.to(u.cm)**2
+        Ntot = line_flux / self.h_nu_A[ix] / Nj[ix] * dL.to(u.cm) ** 2
         Mtot = (Ntot * 2 * astropy.constants.m_p).to(u.Msun)
 
         result = {
             "line_flux": line_flux,
             "z": z,
-            "dL": dL, 
+            "dL": dL,
             "transition": transition,
             "ix": ix,
             "wave": self.flux["wave"][ix],
