@@ -481,6 +481,8 @@ class MolecularHydrogen:
     # Reference transition
     reference = ("1-0", "S(1)")
 
+    separate_ZT = False
+
     def __init__(self, **kwargs):
         """
         Tools for working with molecular hydrogen lines using the helpful
@@ -506,9 +508,9 @@ class MolecularHydrogen:
         
         .. math::
             
-            n_\mathrm{tot} = N_\mathrm{tot} \Omega d^2
+            n_\mathrm{tot} &= N_\mathrm{tot} \Omega d^2 \\
             
-            = 4 \pi d^2 \Sum F_j / (h \nu A)
+                           &= 4 \pi d^2 \Sum F_j / (h \nu A)
 
         Line data from the Gemini compilation at
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
@@ -520,6 +522,9 @@ class MolecularHydrogen:
         self.unv = utils.Unique(self.data["vib"], verbose=False)
 
     def load_data(self):
+        """
+        Read the data table and set the units on some columns
+        """
         self.data = utils.read_catalog(
             os.path.join(module_data_path(), "h2_linelist.txt")
         )
@@ -562,7 +567,7 @@ class MolecularHydrogen:
     @property
     def h_nu_A(self):
         """
-        precompute :math: `h \nu  A` (erg / second)
+        precompute :math:`h \nu  A` (erg / second)
         """
         return (
             astropy.constants.h * self.nu * self.data["A"]
@@ -589,7 +594,7 @@ class MolecularHydrogen:
     @staticmethod
     def temperature_powerlaw(n=4.5, Tl=50, Tu=2000, nsteps=16):
         """
-        Generate a powerlaw temperature distribution :math: `dN = T^{-n} dT`
+        Generate a powerlaw temperature distribution :math:`dN = T^{-n} dT`
         """
         tgrid = np.linspace(Tl, Tu, nsteps)
         Nt = tgrid**-n * (n-1) / (Tl**(1-n) - Tu**(1-n))
@@ -597,7 +602,7 @@ class MolecularHydrogen:
 
     def ZT(self, T=1000.0):
         """
-        Compute :math: `Z(T) = \Sum g_j \exp{-E / kT}`
+        Compute :math:`Z(T) = \Sum g_j \exp{-E / kT}`
         """
         # ZT = np.zeros(self.N)
         # for v in self.unv.values:
@@ -616,22 +621,23 @@ class MolecularHydrogen:
         #             (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
         #         )
 
-        # ZT = np.zeros_like(self.data["wave"])
-        # for i in [0,1]:
-        #     sub = self.data["j"] % 2 == i
-        #     ZT[sub] = np.sum(
-        #         (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
-        #     )
-
-        ZT = np.sum(
-            (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))
-        )
+        if self.separate_ZT:
+            ZT = np.zeros_like(self.data["wave"])
+            for i in [0,1]:
+                sub = self.data["j"] % 2 == i
+                ZT[sub] = np.sum(
+                    (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
+                )
+        else:
+            ZT = np.sum(
+                (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))
+            )
 
         return ZT
 
     def Nj(self, T=1000.0):
         """
-        Compute number density: :math: `N_j = g_j / Z(T) \exp{-E / kT}`
+        Compute number density: :math:`N_j = g_j / Z(T) \exp{-E / kT}`
         """
         if hasattr(T, "__len__"):
             # Temperature distribution
@@ -660,7 +666,7 @@ class MolecularHydrogen:
 
     def line_flux(self, T=1000.0, **kwargs):
         """
-        :math: `F_j = h \nu A N_{j+2} \Omega / (4 \pi)`
+        Line flux :math:``F_j = h \nu A N_{j+2} \Omega / (4 \pi)``
         """
         Nj = self.Nj(T) * u.cm**-2
 
