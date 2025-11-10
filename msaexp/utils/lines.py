@@ -13,7 +13,20 @@ from grizli import utils
 
 from .general import module_data_path
 
-__all__ = ["LineList", "MolecularHydrogen"]
+__all__ = ["LineList", "MolecularHydrogen", "line_flam_to_fnu"]
+
+def line_flam_to_fnu(wave=2.12 * (1 + 1.0132)):
+    """
+    Convert from flambda cgs to microJansky
+    """
+    flam_unit = 1.0e-20 * u.erg / u.second / u.cm**2 / u.Angstrom
+
+    to_fnu = (1 * flam_unit).to(
+            u.microJansky,
+            equivalencies=u.spectral_density(wave * u.micron)
+    ).value
+
+    return to_fnu
 
 
 class LineList(object):
@@ -468,7 +481,7 @@ class LineList(object):
                 )
 
             if fnu:
-                line_i /= spec["to_flam"]
+                line_i *= line_flam_to_fnu(lw * (1 + z) / 1.0e4) * 1.e-4
 
             line_templates.append(line_i)
             line_names.append(row["name"])
@@ -493,25 +506,17 @@ class MolecularHydrogen:
         
         .. math::
         
-            F_j = h \\nu A N_{j+2} \\Omega / (4\\pi)
+            F_j = h \\nu A N_{j+2} \\Omega / 4\\pi
 
         Line flux F as a function of temperature, T (excitation diagram):
 
         .. math::
           
-            N_{j+2} = \\frac{g_j}{Z(T)} e^{-E_j / kT}
+            N_{j+2} = \\frac{g_{j+2}}{Z(T)} e^{-E_\mathrm{upper} / kT}
             
             Z(T) = \\sum g_j e^{-E_j / kT}
         
             F_j \\propto \\frac{N_{j+2} A}{\\lambda}
-
-        Total number, mass:
-        
-        .. math::
-            
-            n_\\mathrm{tot} &= N_\\mathrm{tot} \\Omega d^2 \\
-            
-                           &= 4\\pi~d_L^2~\sum \\frac{F_j}{h \\nu A}
 
         Line data from the Gemini compilation at
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
@@ -568,7 +573,7 @@ class MolecularHydrogen:
     @property
     def h_nu_A(self):
         """
-        precompute :math:`h \nu  A` (erg / second)
+        precompute :math:`h \\cdot \\nu \\cdot A` (erg / second)
         """
         return (
             astropy.constants.h * self.nu * self.data["A"]
@@ -603,7 +608,7 @@ class MolecularHydrogen:
 
     def ZT(self, T=1000.0):
         """
-        Compute :math:`Z(T) = \sum g_j~e^{-E / kT}`
+        Compute :math:`Z(T) = \sum g_j e^{-E_j / kT}`
         """
         if self.separate_ZT:
             # Seems like it should be this
@@ -623,7 +628,7 @@ class MolecularHydrogen:
 
     def Nj(self, T=1000.0):
         """
-        Compute number density: :math:`N_j = \\frac{g_j}{Z(T)}~e^{-E / kT}`
+        Compute number density: :math:`N_j = \\frac{g_j}{Z(T)}~e^{-E_j / kT}`
         """
         if hasattr(T, "__len__"):
             # Temperature distribution
@@ -652,7 +657,7 @@ class MolecularHydrogen:
 
     def line_flux(self, T=1000.0, **kwargs):
         """
-        Line flux :math:`F_j = h \nu A N_{j+2} \Omega / 4\\pi`
+        Line flux :math:`F_j = h \\nu A N_{j+2} \Omega / 4\\pi`
         """
         Nj = self.Nj(T) * u.cm**-2
 
@@ -691,6 +696,7 @@ class MolecularHydrogen:
         update_flux=True,
         wave_range=None,
         fnu=True,
+        single=True,
         **kwargs,
     ):
         """
@@ -707,37 +713,77 @@ class MolecularHydrogen:
 
             self.update_flux_table(wave_range=wave_range, **kwargs)
 
-        model = np.zeros_like(spec["flux"])
+        if single:
+            model = np.zeros_like(spec["flux"])
+        else:
+            models = []
 
         for row in self.flux[self.flux["mask"]]:
-            model += spec.fast_emission_line(
+            if fnu:
+                scale = line_flam_to_fnu(row["wave"] * (1 + z)) * 1.e-4
+            else:
+                scale = 1.0
+
+            if single:
+                flux_i = row["flux"] / self.flux.meta["ref_flux"]
+            else:
+                flux_i = 1.0
+
+            model_i = spec.fast_emission_line(
                 row["wave"] * (1 + z),
-                line_flux=row["flux"] / self.flux.meta["ref_flux"],
+                line_flux=flux_i,
                 **kwargs,
-            )
+            ) * scale
 
-        if fnu:
-            model /= spec["to_flam"]
+            if single:
+                model += model_i
+            else:
+                models.append(model_i)
+        
+        if single:
+            return model
+        else:
+            return np.array(models)
 
-        return model
-
-    def h2_mass(self, line_flux=1.0e-20 * u.erg / u.second / u.cm**2, ix=None, z=1.01, n=4.5, Tl=50, Tu=4000):
+    def h2_mass(self, line_flux=1.0e-20 * u.erg / u.second / u.cm**2, transition=('1-0', 'S(1)'), z=1.01, **kwargs):
         """
         Still figuring out unit conversions....
         """
         from astropy.cosmology import WMAP9
 
-        dL = WMAP9.luminosity_distance(z)  # .to(u.cm)
+        dL = WMAP9.luminosity_distance(z).to(u.cm)
 
-        tgrid, Nt = self.temperature_powerlaw(n=n, Tl=Tl, Tu=Tu, nsteps=512)
+        # tgrid, Nt = self.temperature_powerlaw(n=n, Tl=Tl, Tu=Tu, nsteps=512)
 
-        Nj = self.Nj(T=(tgrid, Nt))
-        
-        if ix is None:
+        # Nj = self.Nj(T=(tgrid, Nt))
+        Nj = self.flux["Nj"]
+
+        if transition is None:
             ix = self.ix
-        
-        Ntot = line_flux / self.h_nu_A[ix] / Nj[ix+2] * dL.to(u.cm)**2
-        
+        else:
+            ix = np.where(
+                (self.data["vib"] == transition[0])
+              & (self.data["rot"] == transition[1])
+            )[0][0]
+
+            transition = (
+                self.data["vib"][ix],
+                self.data["rot"][ix],
+            )
+
+        Ntot = line_flux / self.h_nu_A[ix] / Nj[ix] * dL.to(u.cm)**2
         Mtot = (Ntot * 2 * astropy.constants.m_p).to(u.Msun)
 
-        return Mtot
+        result = {
+            "line_flux": line_flux,
+            "z": z,
+            "dL": dL, 
+            "transition": transition,
+            "ix": ix,
+            "wave": self.flux["wave"][ix],
+            "name": self.line_names()[ix],
+            "mass": Mtot,
+            "log_mass": np.log10(Mtot.value),
+        }
+
+        return result
