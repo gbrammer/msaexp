@@ -17,7 +17,7 @@ priority name tex wavelength ratio color
 4           CIV-1549                   "C IV"   [1549.48]    [1.0]   silver
 4          HeII-1640                     HeII   [1640.4]     [1.0]   darkolivegreen
 4          OIII-1663                     OIII   [1665.85]    [1.0]   darkgoldenrod
-2         AlIII-1857                    AlIII   [1857.4]     [1.0]   lightsteelblue
+2         AlIII-1857                    AlIII   [1857.4]     [1.0]   silver
 3          NIII-1750                     NIII   [1750.0]     [1.0]   deeppink
 4          CIII-1906                    CIII]   [1906.683]   [1.0]   gray
 2         CIII-1906x                    CIII]   [1906.683,1908.734]   [1.5,1.0]   gray
@@ -123,8 +123,10 @@ priority name tex wavelength ratio color
 2        SiVII-24833                    SiVII   [24833.4]    [1.0]   darkgreen
 3         SiIX-25842                     SiIX   [25842.3]    [1.0]   darkgreen
 4                BrB                Br$\beta$   [26258.8]    [1.0]   royalblue
-2          AlV-29051                      AlV   [29051.9]    [1.0]   lightsteelblue
+2          AlV-29051                      AlV   [29051.9]    [1.0]   silver
+3.1              Pf8                      Pf8   [28730.1]    [1.0]   darkblue
 3.1              PfE             Pf$\epsilon$   [30392.1]    [1.0]   darkblue
+3               CaIV                     CaIV   [32067.1]    [1.0]   peru
 3                PfD               Pf$\delta$   [32970.0]    [1.0]   darkblue
 3                PfG               Pf$\gamma$   [37405.7]    [1.0]   darkblue
 4                BrA               Br$\alpha$   [40522.8]    [1.0]   royalblue

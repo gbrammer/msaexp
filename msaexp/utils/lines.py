@@ -478,6 +478,7 @@ class LineList(object):
 
 class MolecularHydrogen:
 
+    # Reference transition
     reference = ("1-0", "S(1)")
 
     def __init__(self, **kwargs):
@@ -486,26 +487,47 @@ class MolecularHydrogen:
         relations from Aditya Togi and J. D. T. Smith 2016 ApJ, 830, 18
 
         Optically thin flux:
-          $F_j = h \nu A N_{j+2} \Omega / (4 \pi)$
+        
+        .. math::
+        
+            F_j = h \nu A N_{j+2} \Omega / (4 \pi)$
 
         Line flux F as a function of temperature, T (excitation diagram):
 
-          $N_{j+2} = g_j / Z(T) \exp{-E / kT}$
-          $Z(T) = \Sum g_j \exp{-E / kT}$
-          $F_j(T) \propto N_{j+2} A / \lambda$
+        .. math::
+          
+            N_{j+2} = g_j / Z(T) \exp{-E / kT}
+            
+            Z(T) = \Sum g_j \exp{-E / kT}
+        
+            F_j(T) \propto N_{j+2} A / \lambda
 
         Total number, mass:
-            $n_\mathrm{tot} = N_\mathrm{tot} \Omega d^2$
-            $     = 4 \pi d^2 \Sum F_j / (h \nu A)$
+        
+        .. math::
+            
+            n_\mathrm{tot} = N_\mathrm{tot} \Omega d^2
+            
+            = 4 \pi d^2 \Sum F_j / (h \nu A)
 
         Line data from the Gemini compilation at
         https://www.gemini.edu/observing/resources/near-ir-resources/spectroscopy/important-h2-lines
         """
+        
+        self.load_data()
+
+        self.initialize_flux_table()
+        self.unv = utils.Unique(self.data["vib"], verbose=False)
+
+    def load_data(self):
         self.data = utils.read_catalog(
             os.path.join(module_data_path(), "h2_linelist.txt")
         )
-        self.initialize_flux_table()
-        self.unv = utils.Unique(self.data["vib"], verbose=False)
+
+        self.data["wave"].unit = u.micron
+        self.data["A"].unit = 1.e-7 * u.second**-1
+        self.data["j"] = [int(r[2:-1]) for r in self.data["rot"]]
+        self.data["OSQ"] = [r[0] for r in self.data["rot"]]
 
     def initialize_flux_table(self):
         """
@@ -517,8 +539,12 @@ class MolecularHydrogen:
         self.flux["Nj"] = 0.0
         self.flux["mask"] = True
         self.flux.meta["T"] = (0, "Temperature")
+        self.Tflux = None
 
     def line_names(self, prefix=r"H$_2$"):
+        """
+        LaTeX line names
+        """
         return np.array(
             [
                 prefix + f'{row["vib"]:^5} {row["rot"]}'
@@ -527,23 +553,19 @@ class MolecularHydrogen:
         )
 
     @property
-    def wave(self):
-        return self.data["wave"] * u.micron
-
-    @property
     def nu(self):
         """
-        Frequency
+        Transition frequency
         """
-        return (astropy.constants.c / self.wave).to(u.Hz)
+        return (astropy.constants.c / self.data["wave"]).to(u.Hz)
 
     @property
     def h_nu_A(self):
         """
-        $h * \nu * A$
+        precompute :math: `h \nu  A` (erg / second)
         """
         return (
-            astropy.constants.h * self.nu * self.data["A"] * u.second**-1
+            astropy.constants.h * self.nu * self.data["A"]
         ).to(u.erg / u.second)
 
     @property
@@ -564,9 +586,18 @@ class MolecularHydrogen:
             & (self.data["rot"] == self.reference[1])
         )[0][0]
 
+    @staticmethod
+    def temperature_powerlaw(n=4.5, Tl=50, Tu=2000, nsteps=16):
+        """
+        Generate a powerlaw temperature distribution :math: `dN = T^{-n} dT`
+        """
+        tgrid = np.linspace(Tl, Tu, nsteps)
+        Nt = tgrid**-n * (n-1) / (Tl**(1-n) - Tu**(1-n))
+        return tgrid, Nt
+
     def ZT(self, T=1000.0):
         """
-        $Z(T) = \Sum g_j \exp{-E / kT}$
+        Compute :math: `Z(T) = \Sum g_j \exp{-E / kT}`
         """
         # ZT = np.zeros(self.N)
         # for v in self.unv.values:
@@ -574,13 +605,33 @@ class MolecularHydrogen:
         #     ZT[un_i] = np.sum(
         #         (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[un_i]
         #     )
-        ZT = np.sum((self.data["gJ"] * np.exp(-self.data["Eupper"] / T)))
+
+        # ZT = np.zeros_like(self.data["wave"])
+        # for v in self.unv.values:
+        #     un_i = self.unv[v]
+        #     for i in [0,1]:
+        #         sub = un_i & (self.data["j"] % 2 == i)
+        #
+        #         ZT[sub] = np.sum(
+        #             (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
+        #         )
+
+        # ZT = np.zeros_like(self.data["wave"])
+        # for i in [0,1]:
+        #     sub = self.data["j"] % 2 == i
+        #     ZT[sub] = np.sum(
+        #         (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))[sub]
+        #     )
+
+        ZT = np.sum(
+            (self.data["gJ"] * np.exp(-self.data["Eupper"] / T))
+        )
 
         return ZT
 
     def Nj(self, T=1000.0):
         """
-        Compute number density $N_{j+2} = g_j / Z(T) \exp{-E / kT}$
+        Compute number density: :math: `N_j = g_j / Z(T) \exp{-E / kT}`
         """
         if hasattr(T, "__len__"):
             # Temperature distribution
@@ -609,15 +660,14 @@ class MolecularHydrogen:
 
     def line_flux(self, T=1000.0, **kwargs):
         """
-        $F_j = h \nu A N_{j+2} \Omega / (4 \pi)$
+        :math: `F_j = h \nu A N_{j+2} \Omega / (4 \pi)`
         """
         Nj = self.Nj(T) * u.cm**-2
 
-        Fj = (
-            astropy.constants.h * self.nu * self.data["A"] * u.second**-1 * Nj
-        )  # / (4 * np.pi * u.sr)
+        Fj = self.h_nu_A * Nj
 
         return Nj, Fj.to(u.erg / u.second / u.cm**2)
+
 
     def update_flux_table(
         self, T=1000.0, min_line_fraction=0.05, wave_range=(1.6, 2.6), **kwargs
@@ -639,6 +689,8 @@ class MolecularHydrogen:
         self.flux["mask"] = keep
 
         self.flux.meta["ref_flux"] = Fj[self.ix]
+
+        self.Tflux = T
 
     def msaexp_model(
         self,
@@ -677,7 +729,7 @@ class MolecularHydrogen:
 
         return model
 
-    def h2_mass(self, ref_flux=1.0e-20 * u.erg / u.second / u.cm**2, z=1.01):
+    def h2_mass(self, line_flux=1.0e-20 * u.erg / u.second / u.cm**2, ix=None, z=1.01, n=4.5, Tl=50, Tu=4000):
         """
         Still figuring out unit conversions....
         """
@@ -685,13 +737,13 @@ class MolecularHydrogen:
 
         dL = WMAP9.luminosity_distance(z)  # .to(u.cm)
 
-        Ntot = (
-            4
-            * np.pi
-            * dL**2
-            * ref_flux  # / self.flux["flux"][self.ix]
-            # * self.flux["flux"][self.ix]
-            / self.h_nu_A[self.ix]
-        )
+        tgrid, Nt = self.temperature_powerlaw(n=n, Tl=Tl, Tu=Tu, nsteps=512)
 
+        Nj = self.Nj(T=(tgrid, Nt))
+        
+        if ix is None:
+            ix = self.ix
+        
+        Ntot = line_flux / self.h_nu_A[ix] / Nj[ix+2] * dL.to(u.cm)**2
+        
         Mtot = (Ntot * 2 * astropy.constants.m_p).to(u.Msun)
