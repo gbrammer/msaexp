@@ -589,7 +589,7 @@ def set_bin_arrays(data, ybin=np.arange(-2.5, 2.5, 0.045), **kwargs):
 #
 #     return final
 
-CALSPEC_FILE = os.path.join(msautils.module_data_path(), "lrs", "calspec_correction_jw06620-obs13.fits"))
+CALSPEC_FILE = os.path.join(msautils.module_data_path(), "lrs", "calspec_correction_jw06620-obs13.fits")
 
 def process_2d_products(
     data,
