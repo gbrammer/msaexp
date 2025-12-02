@@ -304,11 +304,21 @@ def pixtab_from_dms(dms, sys_err=0.02, **kwargs):
         grad = np.gradient(data["err"][test][so]) / data["err"][test][so]
 
         bad = grad > 0.04
+        
+        if bad.sum() > 100:
+            continue
 
-        bp_thresh = data["err"][test][so][bad].min()
-        badpix[une[exp]] = data["err"][une[exp]] >= bp_thresh
-        msg = f"Exposure {exp} bad pixels: {badpix[une[exp]].sum()}, threshold = {bp_thresh:.3f}"
-        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        try:
+            bp_thresh = data["err"][test][so][bad].min()
+            bpix_i = data["err"][une[exp]] >= bp_thresh
+            if bpix_i.sum() > 100:
+                continue
+
+            badpix[une[exp]] = bpix_i
+            msg = f"Exposure {exp} bad pixels: {badpix[une[exp]].sum()}, threshold = {bp_thresh:.3f}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        except ValueError:
+            continue
 
     mask &= ~badpix
     for k in data:
@@ -408,22 +418,26 @@ def optimal_extraction(
     data["meta"]["weight_type"] = weight_type
     data["meta"]["err_data"] = err_data
 
+    valid = np.isfinite(
+        data["wave"] + data["dx"] + data["data"] + data[err_data] + data_wht
+    )
+
     num, vnum, den, ntot = pseudo_drizzle(
-        data["wave"],
-        data["dx"],
-        data["data"],
-        data[err_data] ** 2,
-        data_wht,
+        data["wave"][valid],
+        data["dx"][valid],
+        data["data"][valid],
+        data[err_data][valid] ** 2,
+        data_wht[valid],
         data["wbin_edge"],
         data["ybin"],
     )
 
     pnum, pvnum, pden, pntot = pseudo_drizzle(
-        data["wave"],
-        data["dx"],
-        data["profile"],
-        data[err_data] ** 2,
-        data_wht,
+        data["wave"][valid],
+        data["dx"][valid],
+        data["profile"][valid],
+        data[err_data][valid] ** 2,
+        data_wht[valid],
         data["wbin_edge"],
         data["ybin"],
     )
@@ -466,6 +480,7 @@ def set_bin_arrays(data, ybin=np.arange(-2.5, 2.5, 0.045), **kwargs):
     wpix = np.arange(data["yp"].min(), data["yp"].max(), 1.0)
     wbin = np.interp(wpix, data["yp"][so], data["wave"][so])
     wbin = wbin[np.argsort(wbin)]
+    wbin = wbin[np.isfinite(wbin)]
 
     wbin_edge = msautils.array_to_bin_edges(wbin)
 
