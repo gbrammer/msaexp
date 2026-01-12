@@ -18,7 +18,7 @@ All filter+grating combinations are shown below.
 
 Note that there is more dependence of the gap location on shutter row for the PRISM.  The safest regions with complete spectra are `x > 90` in Q3, Q4 and `x < 180` in Q1, Q2.
 
-A function is provided in `msaexp.msa.get_shutter_wavelength_limits` to programatically calculate the wavelength limits for PRISM and M-grating shutters.
+A function is provided in `msaexp.msa.get_shutter_wavelength_limits` to programatically calculate the wavelength limits for PRISM and M-grating shutters.  See the notes on [PR98](https://github.com/gbrammer/msaexp/pull/98) where the function was implemented for information on using it with the APT export products.
 
 .. image :: figures/nirspec_detector_gap_clear_prism.png
   :width: 200
