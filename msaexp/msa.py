@@ -2679,18 +2679,27 @@ def get_shutter_wavelength_limits(col, row, quadrant, grating='prism', filter='c
         (1,2,3,4)
 
     grating, filter : str
-        Grating and filter names.  Currently only the PRISM is implemented.
+        Grating and filter names.  Currently the PRISM and M grating dispersers
+        are implemented.
 
     Returns
     -------
     tab : table
         Table with wavelength limits by detector
         ``[nrs1/nrs2]_wave_[min/max]``.  The chip gap is the range between
-        ``nrs1_wave_max`` and ``nrs2_wave_min``.  The shutter dependence
-        is calculated from the spectra extracted with msaexp itself.  If a
-        specified shutter is outside of the convex hull of the "training" data
-        used to derive the mapping, the value in the output table is set to
-        NaN.
+        ``nrs1_wave_max`` and ``nrs2_wave_min``.
+        
+        The shutter dependence is calculated from the spectra extracted with
+        msaexp itself. This function is tested to be consistent with the "MSA
+        Target Info" table that can be exported with APT for the PRISM and
+        G395M gratings. However, for the other M gratings this function
+        includes the full wavelength range that can be extracted extending into
+        where the spectral orders can overlap.
+        
+        If a specified shutter is outside of the convex hull of the "training"
+        data used to derive the mapping, the value in the output table is set
+        to NaN.
+
     """
     import yaml
     import grizli.utils
