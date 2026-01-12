@@ -158,3 +158,36 @@ def test_pad():
 
     assert os.path.exists(output_file)
     os.remove(output_file)
+
+
+def test_wavelength_limits():
+    
+    import grizli.utils
+    
+    cols, rows, quadrants = [], [], []
+    for q in [1,2,3,4]:
+        for c in np.arange(50, 360, 50, dtype=int):
+            for r in np.arange(50, 170, 50, dtype=int):
+                quadrants.append(q)
+                rows.append(r)
+                cols.append(c)
+    
+    tab = msa.get_shutter_wavelength_limits(
+        cols, rows, quadrants, grating='prism', filter='clear'
+    )
+
+    # Check
+    ref = grizli.utils.read_catalog(
+        os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            "wavelength_range_coeffs_prism_clear_check.csv"
+        )
+    )
+
+    for c in tab.colnames:
+        if "wave" in c:
+            v1 = np.isfinite(tab[c])
+            v2 = np.isfinite(ref[c])
+            assert(v1.sum() == v2.sum())
+            assert(np.allclose(tab[c][v1 & v2], ref[c][v1 & v2], rtol=1.e-2))

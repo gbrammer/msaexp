@@ -6,6 +6,8 @@ import os
 import numpy as np
 import astropy.io.fits as pyfits
 
+from . import utils as msautils
+
 __all__ = [
     "regions_from_metafile",
     "regions_from_fits",
@@ -77,13 +79,13 @@ def pad_msa_metafile(
             six = np.in1d(msa.shutter_table["slitlet_id"], slitlet_ids)
 
             if six.sum() == 0:
-                msg = f"msaexp.utils.pad_msa_metafile: {slitlet_ids} not found"
+                msg = f"msaexp.msa.pad_msa_metafile: {slitlet_ids} not found"
                 msg += " in {metafile} slitlet_id"
                 raise ValueError(msg)
 
             source_ids = np.unique(msa.shutter_table["source_id"][six])
 
-            msg = "msaexp.utils.pad_msa_metafile: Trim slitlet_ids in "
+            msg = "msaexp.msa.pad_msa_metafile: Trim slitlet_ids in "
             msg += f"{metafile} to "
             msg += f"{list(slitlet_ids)} (N={len(source_ids)} source_ids)\n"
             grizli.utils.log_comment(
@@ -101,13 +103,13 @@ def pad_msa_metafile(
                 six &= msa.shutter_table["primary_source"] == "Y"
 
             if six.sum() == 0:
-                msg = f"msaexp.utils.pad_msa_metafile: {source_ids} not found"
+                msg = f"msaexp.msa.pad_msa_metafile: {source_ids} not found"
                 msg += f" in {metafile}.  Available ids are {list(all_ids)}"
                 raise ValueError(msg)
     else:
         six = np.in1d(msa.shutter_table["source_id"], source_ids)
         if six.sum() == 0:
-            msg = f"msaexp.utils.pad_msa_metafile: {source_ids} not found"
+            msg = f"msaexp.msa.pad_msa_metafile: {source_ids} not found"
             msg += f" in {metafile}.  Available ids are {list(all_ids)}"
             raise ValueError(msg)
 
@@ -189,10 +191,10 @@ def pad_msa_metafile(
 
     if verbose:
         msg = (
-            f"msaexp.utils.pad_msa_metafile: Trim source_id in {metafile} to "
+            f"msaexp.msa.pad_msa_metafile: Trim source_id in {metafile} to "
         )
         msg += f"{list(this_source_ids)}\n"
-        msg += f"msaexp.utils.pad_msa_metafile: pad = {pad}"
+        msg += f"msaexp.msa.pad_msa_metafile: pad = {pad}"
         grizli.utils.log_comment(
             grizli.utils.LOGFILE, msg, verbose=True, show_date=True
         )
@@ -1481,6 +1483,7 @@ class MSAMetafile:
         dec_ref=None,
         roll_ref=None,
         use_ref_columns=True,
+        apername="NRS_FULL_MSA",
         **kwargs,
     ):
         """
@@ -1521,7 +1524,7 @@ class MSAMetafile:
         instrument = "NIRSPEC"
 
         siaf = pysiaf.siaf.Siaf(instrument)
-        ap = siaf["NRS_FULL_MSA"]
+        ap = siaf[apername]
 
         # Input is fully specified
         # -------------------------
@@ -1941,6 +1944,15 @@ class MSAMetafile:
             v3 = ij_to_v3(row[i] + sx, col[i] + sy)
 
             sra, sdec = ap.tel_to_sky(v2, v3)
+
+            if 0:
+                ij_to_v2, ij_to_v3 = coeffs[se["shutter_quadrant"][i]]
+                v2_ = ij_to_v2(row[i] + sx, col[i] + sy - 1)
+                v3_ = ij_to_v3(row[i] + sx, col[i] + sy - 1)
+                sra_, sdec_ = ap.tel_to_sky(v2_, v3_)
+                dra = (sra_ - sra) * np.cos(sdec / 180 * np.pi)
+                dde = sdec_ - sdec
+                slit_pa = np.arctan2(dra, dde)
 
             # sra = pra(row[i] + sx, col[i]+sy)
             # sdec = pdec(row[i] + sx, col[i]+sy)
@@ -2654,3 +2666,94 @@ def read_apt_shutter_csv(file):
     otab["shutter_column"] = col[~closed]
 
     return tab, otab
+
+
+def get_shutter_wavelength_limits(col, row, quadrant, grating='prism', filter='clear'):
+    """
+    Compute wavelength limits for specific slitlets by MSA row, col, quadrant
+
+    Parameters
+    ----------
+    row, col, quadrant : scalar, array-like
+        Shutter definition by MSA column (1-370), row (1-170) and quadrant
+        (1,2,3,4)
+
+    grating, filter : str
+        Grating and filter names.  Currently only the PRISM is implemented.
+
+    Returns
+    -------
+    tab : table
+        Table with wavelength limits by detector
+        ``[nrs1/nrs2]_wave_[min/max]``.  The chip gap is the range between
+        ``nrs1_wave_max`` and ``nrs2_wave_min``.  The shutter dependence
+        is calculated from the spectra extracted with msaexp itself.  If a
+        specified shutter is outside of the convex hull of the "training" data
+        used to derive the mapping, the value in the output table is set to
+        NaN.
+    """
+    import yaml
+    import grizli.utils
+
+    tab = grizli.utils.GTable()
+    tab["col"] = np.atleast_1d(col)
+    tab["row"] = row
+    tab["quadrant"] = quadrant
+
+    coo = np.array([tab["col"], tab["row"]]).T
+
+    coeffs_file = os.path.join(
+        msautils.module_data_path(),
+        "detector_gap",
+        f"wavelength_range_coeffs_{grating}_{filter}.yaml"
+    )
+
+    with open(coeffs_file) as fp:
+        coeffs = yaml.load(fp, Loader=yaml.Loader)
+
+    # print(coeffs.keys())
+
+    for det_i in ['NRS1','NRS2']:
+        for val in ['wave_min','wave_max']:
+            col = f'{det_i}_{val}'.lower()
+            tab[col] = -1.0
+
+    for q in [1,2,3,4]:
+        qsub = tab["quadrant"] == q
+        if qsub.sum() == 0:
+            continue
+
+        for det_i in ['NRS1','NRS2']:
+            for val in ['wave_min','wave_max']:
+                col = f'{det_i}_{val}'.lower()
+                key = f'{q}-{det_i}-{val}'
+                if key not in coeffs:
+                    continue
+
+                ck = coeffs[key]
+
+                sr = grizli.utils.SRegion(np.array(ck['hull']), wrap=False)
+                #######
+                px = grizli.utils.bspline_templates(
+                    tab["col"][qsub],
+                    minmax=(0, 380),
+                    df=ck['df_x'],
+                    get_matrix=True
+                )
+
+                py = grizli.utils.bspline_templates(
+                    tab["row"][qsub],
+                    minmax=(0, 180),
+                    df=ck['df_y'],
+                    get_matrix=True
+                )
+
+                pp = []
+                for py_i in py.T:
+                    pp.append((px.T * py_i).T)
+
+                tab[col][qsub] = np.hstack(pp).dot(ck['coeffs'])
+                in_hull = sr.path[0].contains_points(coo)
+                tab[col][qsub & ~in_hull] = np.nan
+
+    return tab
