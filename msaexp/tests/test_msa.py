@@ -191,3 +191,48 @@ def test_wavelength_limits():
             v2 = np.isfinite(ref[c])
             assert(v1.sum() == v2.sum())
             assert(np.allclose(tab[c][v1 & v2], ref[c][v1 & v2], rtol=1.e-2))
+
+    # Compare to "MSA Target Info" table export from APT
+    apt = grizli.utils.read_catalog(
+        os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            "4233-obs2-exp1-c1_uds_obs2az_prism_bkge1n1-PRISM-CLEAR.csv"
+        )
+    )
+
+    tab = msa.get_shutter_wavelength_limits(
+        apt['Column (Disp)'],
+        apt['Row (Spat)'],
+        apt['Quadrant'],
+        grating='prism', filter='clear'
+    )
+
+    for det in ['NRS1','NRS2']:
+        for limit in ['Min', 'Max']:
+            this_col = f'{det}_wave_{limit}'.lower()
+            apt_col = f'{det} {limit} Wave'
+            # plt.scatter(
+            #     apt[apt_col], tab[this_col],
+            #     c=tab['quadrant'],
+            #     alpha=0.5
+            # )
+            # apt_ll = apt[apt_col] == -2.0
+            # tab[apt_col] = apt[apt_col]
+
+            test = np.isfinite(tab[this_col] + apt[apt_col])
+            test &= apt[apt_col] > 0
+
+            if test.sum() > 0:
+                assert np.allclose(
+                    tab[this_col][test],
+                    apt[apt_col][test],
+                    atol=0.15
+                )
+
+                #
+                # plt.scatter(
+                #     apt[apt_col][test],
+                #     (tab[this_col] - apt[apt_col])[test],
+                #     c=tab['quadrant'][test],
+                # )
