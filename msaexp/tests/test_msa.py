@@ -158,3 +158,94 @@ def test_pad():
 
     assert os.path.exists(output_file)
     os.remove(output_file)
+
+
+def test_wavelength_limits():
+    import matplotlib.pyplot as plt
+    import grizli.utils
+    
+    cols, rows, quadrants = [], [], []
+    for q in [1,2,3,4]:
+        for c in np.arange(50, 360, 50, dtype=int):
+            for r in np.arange(50, 170, 50, dtype=int):
+                quadrants.append(q)
+                rows.append(r)
+                cols.append(c)
+    
+    tab = msa.get_shutter_wavelength_limits(
+        cols, rows, quadrants, grating='prism', filter='clear'
+    )
+
+    # Check
+    ref = grizli.utils.read_catalog(
+        os.path.join(
+            os.path.dirname(__file__),
+            "data",
+            "wavelength_range_coeffs_prism_clear_check.csv"
+        )
+    )
+
+    for c in tab.colnames:
+        if "wave" in c:
+            v1 = np.isfinite(tab[c])
+            v2 = np.isfinite(ref[c])
+            assert(v1.sum() == v2.sum())
+            assert(np.allclose(tab[c][v1 & v2], ref[c][v1 & v2], rtol=1.e-2))
+
+    # Compare to "MSA Target Info" table export from APT
+    MAKE_PLOT = False
+
+    for APT_FILE in [
+        "4233-obs2-exp1-c1_uds_obs2az_prism_bkge1n1-PRISM-CLEAR.csv",
+        "4233-obs2-exp2-c1_uds_obs2az_g395me2n1-G395M-F290LP.csv",
+    ]:
+        apt = grizli.utils.read_catalog(
+            os.path.join(
+                os.path.dirname(__file__),
+                "data",
+                APT_FILE
+            )
+        )
+
+        grating = os.path.basename(APT_FILE).split('-')[-2].lower()
+        filter = os.path.basename(APT_FILE).split('-')[-1].lower().split('.')[0]
+
+        tab = msa.get_shutter_wavelength_limits(
+            apt['Column (Disp)'],
+            apt['Row (Spat)'],
+            apt['Quadrant'],
+            grating=grating, filter=filter,
+        )
+
+        if MAKE_PLOT:
+            fig, ax = plt.subplots(1,1)
+
+        for det in ['NRS1','NRS2']:
+            for limit in ['Min', 'Max']:
+                this_col = f'{det}_wave_{limit}'.lower()
+                apt_col = f'{det} {limit} Wave'
+                # plt.scatter(
+                #     apt[apt_col], tab[this_col],
+                #     c=tab['quadrant'],
+                #     alpha=0.5
+                # )
+                # apt_ll = apt[apt_col] == -2.0
+                # tab[apt_col] = apt[apt_col]
+
+                test = np.isfinite(tab[this_col] + apt[apt_col])
+                test &= apt[apt_col] > 0
+
+                if test.sum() > 0:
+                    if MAKE_PLOT:
+                        plt.scatter(
+                            apt[apt_col][test],
+                            (tab[this_col] - apt[apt_col])[test],
+                            c=tab['quadrant'][test],
+                        )
+                    else:
+                        assert np.allclose(
+                            tab[this_col][test],
+                            apt[apt_col][test],
+                            atol=0.15
+                        )
+
