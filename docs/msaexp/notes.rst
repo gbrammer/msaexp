@@ -17,6 +17,7 @@ The wavelengths where the 2nd and 3rd order spectra begin to overlap with the fi
 All filter+grating combinations are shown below.
 
 Note that there is more dependence of the gap location on shutter row for the PRISM.  The safest regions with complete spectra are `x > 90` in Q3, Q4 and `x < 180` in Q1, Q2.
+A function is provided in `msaexp.msa.get_shutter_wavelength_limits` to programatically calculate the wavelength limits for PRISM shutters.
 
 .. image :: figures/nirspec_detector_gap_clear_prism.png
   :width: 200
