@@ -1910,6 +1910,21 @@ def drizzled_hdu_figure(
 
         ap_corr = 1
 
+    if hdul[1].header["GRATING"] == "LRS":
+
+        xt_limits = [3, 20.]
+
+        if xlim is None:
+            xlim = [3, 17]
+
+        if tick_steps is None:
+            tick_steps = [1, 0.5]
+
+        if ny is None:
+            ny = 21
+    else:
+        xt_limits = [0.5, 5.72]
+
     equiv = u.spectral_density(sp["wave"].data * u.micron)
     flam_unit = 10**flam_scale * u.erg / u.second / u.cm**2 / u.Angstrom
     to_flam = (1 * u.microJansky).to(flam_unit, equivalencies=equiv).value
@@ -1924,9 +1939,11 @@ def drizzled_hdu_figure(
             ymax = 1.0
         else:
             ymax = np.nanpercentile(flux[_msk], ymax_percentile) * ymax_scale
-            ymax = np.maximum(ymax, ymax_sigma_scale * np.nanmedian(err[_msk]))
+            ymax = np.maximum(
+                ymax, ymax_sigma_scale * np.nanmedian(err[_msk])
+            )
 
-    yscl = hdul["PROFILE"].data.max() * ap_corr
+    yscl = np.nanmax(hdul["PROFILE"].data * ap_corr)
     if unit == "flam":
         yscl = yscl / to_flam  # (sp['wave']/2.)**2
 
@@ -2067,8 +2084,8 @@ def drizzled_hdu_figure(
     else:
         major, minor = tick_steps
 
-    xt = np.arange(0.5, 5.72, major)
-    xtm = np.arange(0.5, 5.72, minor)
+    xt = np.arange(*xt_limits, major)
+    xtm = np.arange(*xt_limits, minor)
 
     if hdul[1].header["GRATING"] == "PRISM":
         xt = np.append([0.7], xt)
@@ -2151,28 +2168,48 @@ def drizzled_hdu_figure(
         # Rest ticks on top
         wrest = np.arange(0.1, 1.91, 0.05)
         wrest = np.append(wrest, np.arange(2.0, 5.33, 0.1))
+
         mrest = np.arange(0.1, 1.91, 0.01)
         mrest = np.append(mrest, np.arange(2.0, 5.33, 0.05))
 
         xtr = wrest * (1 + z)
         in_range = (xtr > sp["wave"].min()) & (xtr < sp["wave"].max())
+
         if in_range.sum() > 9:
             wrest = np.arange(0.1, 1.91, 0.1)
             wrest = np.append(wrest, np.arange(2.0, 5.33, 0.2))
+            wrest = np.append(wrest, np.arange(5.5, 14.1, 0.5))
+
             xtr = wrest * (1 + z)
             in_range = (xtr > sp["wave"].min()) & (xtr < sp["wave"].max())
 
             mrest = np.arange(0.1, 1.91, 0.05)
             mrest = np.append(mrest, np.arange(2.0, 5.33, 0.1))
+            mrest = np.append(mrest, np.arange(5.5, 14.1, 0.25))
 
         if in_range.sum() > 12:
             wrest = np.arange(0.2, 1.81, 0.2)
             wrest = np.append(wrest, np.arange(2.0, 5.33, 0.2))
+            wrest = np.append(wrest, np.arange(6, 14.1, 1))
+
             xtr = wrest * (1 + z)
             in_range = (xtr > sp["wave"].min()) & (xtr < sp["wave"].max())
 
             mrest = np.arange(0.1, 1.91, 0.05)
             mrest = np.append(mrest, np.arange(2.0, 5.33, 0.1))
+            mrest = np.append(mrest, np.arange(5.5, 14.1, 0.1))
+
+        if hdul[1].header["GRATING"] == "LRS":
+            wrest = np.arange(0.3, 1.01, 0.1)
+            wrest = np.append(wrest, np.arange(1, 4.6, 0.5))
+            wrest = np.append(wrest, np.arange(5, 14.1, 1))
+
+            mrest = np.arange(0.3, 1.01, 0.05)
+            mrest = np.append(mrest, np.arange(1, 4.01, 0.1))
+            mrest = np.append(mrest, np.arange(4.25, 14.1, 0.25))
+
+            xtr = wrest * (1 + z)
+            in_range = (xtr > sp["wave"].min()) & (xtr < sp["wave"].max())
 
         xtr = xtr[in_range]
         xvr = np.interp(xtr, sp["wave"], np.arange(len(sp)))
