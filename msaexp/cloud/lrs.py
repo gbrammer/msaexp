@@ -251,10 +251,13 @@ def pixtab_from_dms(dms, sys_err=0.02, **kwargs):
     Make pixel tables
     """
 
-    ptabs = []
-    for dm in dms:
-        if "_x02101" not in dm.meta.filename:
-            ptabs.append(lrs_pixel_table(dm))
+    if isinstance(dms[0], dict):
+        ptabs = dms
+    else:
+        ptabs = []
+        for dm in dms:
+            if "_x02101" not in dm.meta.filename:
+                ptabs.append(lrs_pixel_table(dm))
 
     data = {
         "exposure": [],
@@ -471,21 +474,26 @@ def optimal_extraction(
     data["spec_var"] = spec_var
 
 
-def set_bin_arrays(data, ybin=np.arange(-2.5, 2.5, 0.045), **kwargs):
+def set_bin_arrays(data, ybin=np.arange(-2.5, 2.5, 0.045), wbin=None, **kwargs):
     """ """
     data["ybin"] = ybin
 
     so = np.argsort(data["yp"])
 
-    wpix = np.arange(data["yp"].min(), data["yp"].max(), 1.0)
-    wbin = np.interp(wpix, data["yp"][so], data["wave"][so])
-    wbin = wbin[np.argsort(wbin)]
-    wbin = wbin[np.isfinite(wbin)]
+    # wpix = np.arange(data["yp"].min(), data["yp"].max(), 1.0)
+    if wbin is None:
+        wpix = np.arange(data["yp"].min(), data["yp"].max(), 1.0)
+        wbin = np.interp(wpix, data["yp"][so], data["wave"][so])
+        wbin = wbin[np.argsort(wbin)]
+        wbin = wbin[np.isfinite(wbin)]
 
     wbin_edge = msautils.array_to_bin_edges(wbin)
 
     data["ybin"] = ybin
-    data["wpix"] = wpix
+
+    data["wpix"] = np.interp(data["wave"], wbin, np.arange(len(wbin)))
+    data["wpix_norm"] = data["wpix"] * 2 / len(wbin) - 1
+
     data["wbin"] = wbin
     data["wbin_edge"] = wbin_edge
 
@@ -1119,10 +1127,7 @@ def evaluate_model_psf(
     else:
         psf_mu, psf_width = psf_data
 
-    if "wave_scale" not in data:
-        data["wave_scale"] = data["wave"] / np.nanmedian(data["wave"])
-
-    trace_offset = np.polyval(theta[:-1], data["wave_scale"])
+    trace_offset = np.polyval(theta[:-1], data["wpix_norm"])
     mu = psf_mu + trace_offset / CROSS_PSCALE
 
     src_width = theta[-1]
@@ -1152,7 +1157,7 @@ def evaluate_model_psf(
     if extended_psf_data is None:
         data_path = msautils.module_data_path()
         ctab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_extended_shift.fits"))
-        
+
         sigma_scales = ctab["psf_scale"][0]
         if "psf_w" in ctab.colnames:
             sigma_widths = ctab["psf_w"][0]
@@ -1197,6 +1202,103 @@ def evaluate_model_psf(
         data["meta"]["theta"] = theta
 
         optimal_extraction(data, **kwargs)
+
+    return result
+
+
+def profile_pathloss(
+    data,
+    theta,
+    psf_data=None,
+    simple_psf=False,
+    extended_psf_data=None,
+    do_optimal_extraction=False,
+    slit_width=0.51,
+    **kwargs,
+):
+    """ """
+    from scipy.stats import norm
+
+    if psf_data is None:
+        data_path = msautils.module_data_path()
+        psf_tab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_jw06620-obs13.fits"))
+
+        psf_mu = np.interp(data["wave"], psf_tab["wave"], psf_tab["x0"])
+        psf_width = np.interp(data["wave"], psf_tab["wave"], psf_tab["sigma"])
+    else:
+        psf_mu, psf_width = psf_data
+
+    if "wave_scale" not in data:
+        data["wave_scale"] = data["wave"] / np.nanmedian(data["wave"])
+
+    trace_offset = np.polyval(theta[:-1], data["wave_scale"])
+    mu = psf_mu + trace_offset / CROSS_PSCALE
+
+    src_width = theta[-1]
+
+    result = {
+        "theta": theta,
+        "psf_mu": psf_mu,
+        "psf_width": psf_width,
+        "trace_offset": trace_offset,
+        "src_width": src_width,
+        "sigma_scales": None,
+        "sigma_coeffs": None,
+    }
+
+    # Wavelength-dependent PSF components
+    if extended_psf_data is None:
+        data_path = msautils.module_data_path()
+        ctab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_extended_shift.fits"))
+
+        sigma_scales = ctab["psf_scale"][0]
+        if "psf_w" in ctab.colnames:
+            sigma_widths = ctab["psf_w"][0]
+            psf_shifts = ctab["psf_x"][0]
+        else:
+            sigma_widths = sigma_scales * 0.0
+            psf_shifts = sigma_scales * 0.0
+
+        nc = len(sigma_scales)
+        sigma_coeffs = np.array(
+            [
+                np.interp(data["wave"], ctab["wcoeffs"], ctab["coeffs"][:, i])
+                for i in range(nc)
+            ]
+        )
+    else:
+        (sigma_scales, sigma_widths, psf_shifts, sigma_coeffs) = extended_psf_data
+
+    result["sigma_scales"] = sigma_scales
+    result["sigma_coeffs"] = sigma_coeffs
+    result["sigma_widths"] = sigma_widths
+    result["psf_shifts"] = psf_shifts
+
+    # result["profile"] = np.zeros_like(data["dx"])
+
+    psf_sum = np.zeros_like(data["dx"])
+    src_sum = np.zeros_like(data["dx"])
+
+    for i, scl in enumerate(sigma_scales):
+        sig = np.sqrt(
+            (psf_width * scl + sigma_widths[i]) ** 2 + (src_width / CROSS_PSCALE) ** 2
+        )
+
+        gau_psf = norm(
+            loc=psf_shifts[i] * CROSS_PSCALE,
+            scale=np.sqrt((psf_width * scl + sigma_widths[i]) ** 2) * CROSS_PSCALE,
+        )
+
+        psf_sum += (gau_psf.cdf(slit_width / 2.) - gau_psf.cdf(-slit_width / 2.)) * sigma_coeffs[i,:]
+
+        gau_src = norm(
+            loc=psf_shifts[i] * CROSS_PSCALE,
+            scale=sig * CROSS_PSCALE,
+        )
+
+        src_sum += (gau_src.cdf(slit_width / 2.) - gau_src.cdf(-slit_width / 2.)) * sigma_coeffs[i,:]
+
+    result["pathloss"] = src_sum / psf_sum
 
     return result
 
@@ -1475,8 +1577,6 @@ def decompose_psf(data):
     psf_mu = np.interp(data["wave"], psf_tab["wave"], psf_tab["x0"])
     psf_width = np.interp(data["wave"], psf_tab["wave"], psf_tab["sigma"])
 
-    CROSS_PSCALE = 0.11057
-
     mu = psf_mu + trace_offset / CROSS_PSCALE
 
     sig = np.sqrt(psf_width**2 + (0.0 / CROSS_PSCALE) ** 2)
@@ -1702,3 +1802,95 @@ def decompose_psf(data):
 
     plt.scatter((data["dx"])[wsub], m, alpha=0.1, color="r")
     plt.scatter((data["dx"])[wsub], full_model[wsub], alpha=0.1, color="magenta")
+
+
+####### Tools for slitless extractions
+
+def lrs_slitless_cutout_offset(xpix, ypix):
+    """
+    Trace offset as a function of detector pixel position
+    """
+    from astropy.modeling.models import Polynomial2D
+
+    h = pyfits.Header.fromtextfile(
+        os.path.join(msautils.module_data_path(), "lrs", "lrs_wfss_offset_coeffs.txt")
+    )
+
+    if xpix < 250:
+        prefix = 'DXL'
+    else:
+        prefix = 'DXR'
+
+    dxpoly = Polynomial2D(degree=h[f'{prefix}deg'])
+    dxpoly.parameters = np.array([h[f'{prefix}{i}'] for i in range(h[f'{prefix}N'])])
+
+    prefix = 'DYR'
+    dypoly = Polynomial2D(degree=h[f'{prefix}deg'])
+    dypoly.parameters = np.array([h[f'{prefix}{i}'] for i in range(h[f'{prefix}N'])])
+
+    dx = dxpoly(xpix, ypix) - dxpoly(h['REFXPIX'], h['REFYPIX'])
+    dy = dypoly(xpix, ypix) - dypoly(h['REFXPIX'], h['REFYPIX'])
+
+    return dx, dy
+
+
+def lrs_slitless_data_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad=512, slit_model=None):
+    """
+    """
+
+    if slit_model is None:
+        slit_model = pyfits.open(
+            os.path.join(msautils.module_data_path(), "lrs", "lrs_slit_model.fits")
+        )
+
+    h = slit_model[0].header
+
+    if ra is not None:
+        wcs_pix = np.squeeze(wcs.all_world2pix([ra], [dec], 0))
+
+        rdx = np.array(wcs.all_pix2world([wcs_pix[0], wcs_pix[0] + 1], [wcs_pix[1], wcs_pix[1]], 0))
+        local_pscale = np.sqrt(((np.diff(rdx, axis=1).T * np.array([np.cos(dec/180*np.pi), 1.]))**2).sum()) * 3600
+
+        corner_dx, corner_dy = lrs_slitless_cutout_offset(*wcs_pix)
+        if verbose:
+            print(f'corner offset: {corner_dx:6.2f} {corner_dy:6.2f}')
+
+        x_slice_offset = wcs_pix[0] - h['REFXPIX'] + corner_dx # + 1
+        y_slice_offset = wcs_pix[1] - h['REFYPIX'] + corner_dy # + 1
+    else:
+        local_pscale = CROSS_PSCALE
+        if xoffset is None:
+            x_slice_offset = 0.0
+            y_slice_offset = 0.0
+        else:
+            x_slice_offset = xoffset / CROSS_PSCALE
+            y_slice_offset = 0.0
+
+    x_slice_offset_int = int(np.floor(x_slice_offset))
+    y_slice_offset_int = int(np.floor(y_slice_offset))
+
+    if verbose:
+        print(f'pixel offset: {x_slice_offset:6.2f} {y_slice_offset:6.2f}')
+
+    slx = slice(h['SLX0'] + x_slice_offset_int + pad, h['SLX1'] + x_slice_offset_int + pad)
+    sly = slice(h['SLY0'] + y_slice_offset_int + pad, h['SLY1'] + y_slice_offset_int + pad)
+    dx = slit_model['DX'].data + (x_slice_offset - x_slice_offset_int) * local_pscale
+
+    dcut = np.pad(data, pad, constant_values=0)[sly, slx]
+    yp, xp = np.indices(dcut.shape)
+
+    cutout = {
+        'dx': dx,
+        'data': dcut,
+        'wave': slit_model['wave'].data,
+        'slices': (slx, sly),
+        'yp': yp,
+        'xp': xp,
+        'ra': ra,
+        'dec': dec,
+        'local_pscale': local_pscale
+    }
+
+    return cutout
+    
+# x_slice_offset, y_slice_offset
