@@ -606,7 +606,10 @@ class SpectrumSampler(object):
         """
         if by_wavelength:
             if step_size is not None:
-                nspline = np.log(self.spec_wobs.max() / self.spec_wobs.min()) * 3.e5 / dv
+                nspline = np.log(
+                    self.spec_wobs.max() / self.spec_wobs.min()
+                ) * 3.e5 / step_size
+
                 nspline = int(np.maximum(np.round(nspline), 5))
 
             bspl = utils.bspline_templates(
