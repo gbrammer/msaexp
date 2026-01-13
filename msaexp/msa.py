@@ -13,6 +13,10 @@ __all__ = [
     "regions_from_fits",
     "MSAMetafile",
     "slit_best_source_alias",
+    "plot_msa_shutters",
+    "set_msa_axis_ticks",
+    "read_apt_shutter_csv",
+    "get_shutter_wavelength_limits",
 ]
 
 
@@ -2483,50 +2487,73 @@ def msa_shutter_catalog(ra, dec, pointing=None, ap=None, inv=None):
 
 
 # Offsets for MSA shutter quadrants
-DXCEN = 450
-DYCEN = 231.7
+DCOL = 450
+DROW = 231.7
 
-
-def set_msa_axis_ticks(ax=None, which="xy", dxcen=450, dycen=231.7):
+def set_msa_axis_ticks(ax=None, which="xy"):
     """
     Draw axis ticks for a plot of the MSA shutters
     """
     import matplotlib.pyplot as plt
 
-    global DXCEN, DYCEN
+    global DCOL, DROW
 
     if ax is None:
         ax = plt.gca()
 
-    xlim = (377 + DXCEN + 20, -20)
-    ylim = (171 + DYCEN + 10, -10)
+    xlim = (377 + DCOL + 20, -20)
+    ylim = (171 + DROW + 10, -10)
 
     if "x" in which:
         xt = [1, 90, 180, 270, 377]
-        xtv = xt + [xi + DXCEN for xi in xt]
+        xtv = xt + [xi + DCOL for xi in xt]
         ax.set_xticks(xtv)
         ax.set_xticklabels(xt * 2)
-        ax.set_xlabel("xcen")
+        ax.set_xlabel("MSA Column")
         ax.set_xlim(*xlim)
 
     if "y" in which:
-        xt = [1, 60, 120, 171]
-        xtv = xt + [xi + DYCEN for xi in xt]
-        ax.set_yticks(xtv)
-        ax.set_yticklabels(xt * 2)
-        ax.set_ylabel("ycen")
+        yt = [1, 60, 120, 171]
+        ytv = yt + [yi + DROW for yi in yt]
+        ax.set_yticks(ytv)
+        ax.set_yticklabels(yt * 2)
+        ax.set_ylabel("MSA Row")
         ax.set_ylim(*ylim)
 
     return ax
 
-
-def plot_msa_shutters(xcen, ycen, quadrant, c=None, ax=None, **kwargs):
+def plot_msa_shutters(col, row, quadrant, c=None, ax=None, **kwargs):
     """
     Make a plot of a list of MSA shutters
+
+    Parameters
+    ----------
+    col, row, quadrant : array-like
+        List of shutter columns ("x", dispersion), rows ("y", spatial),
+        quadrants
+
+    c : array-like
+        Optional array to color the points.  If not provided, will color by
+        ``quadrant``.
+
+    ax : axis
+        Plot axis to draw the shutter positions.  If not specified, generate
+        a new figure + axis
+
+    kwargs : dict
+        Keyword arguments passed to `matplotlib.pyplot.scatter`
+
+    Returns
+    -------
+    fig : figure, None
+        Plot figure.  If ``ax`` was provided as input, will be empty.
+
+    ax : axis
+        Plot axis
     """
     import matplotlib.pyplot as plt
 
-    global DXCEN, DYCEN
+    global DCOL, DROW
 
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(8, 8))
@@ -2538,8 +2565,8 @@ def plot_msa_shutters(xcen, ycen, quadrant, c=None, ax=None, **kwargs):
         c = quadrant
 
     ax.scatter(
-        xcen + np.isin(quadrant, [3, 4]) * DXCEN,
-        ycen + np.isin(quadrant, [2, 4]) * DYCEN,
+        col + np.isin(quadrant, [3, 4]) * DCOL,
+        row + np.isin(quadrant, [2, 4]) * DROW,
         c=c,
         **kwargs,
     )
@@ -2700,6 +2727,102 @@ def get_shutter_wavelength_limits(col, row, quadrant, grating='prism', filter='c
         data used to derive the mapping, the value in the output table is set
         to NaN.
 
+    Examples
+    --------
+
+    .. plot::
+        :include-source:
+
+        ### Make a plot showing wavelength limits
+
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        from grizli import utils
+
+        from msaexp import msa
+        import msaexp.utils
+
+        # APT: Export -> MSA Target Info
+        apt = utils.read_catalog("https://github.com/gbrammer/msaexp/raw/refs/heads/main/msaexp/tests/data/4233-obs2-exp2-c1_uds_obs2az_g395me2n1-G395M-F290LP.csv")
+
+        # Compute wavelength limits by shutter
+
+        limits = msa.get_shutter_wavelength_limits(
+            apt['Column (Disp)'],
+            apt['Row (Spat)'],
+            apt['Quadrant'],
+            grating='g395m',
+            filter='f290lp',
+        )
+
+        fig, axes = plt.subplots(1, 2, figsize=(8,4), sharex=True, sharey=True)
+
+        msa.set_msa_axis_ticks(axes[0], "xy")
+        msa.set_msa_axis_ticks(axes[1], "x")
+
+        fig.tight_layout(pad=1)
+
+        kws = dict(
+            cmap=plt.cm.RdYlBu_r,
+            vmin=2.7,
+            vmax=5.6,
+        )
+
+        # Plot the MSA layout colored by "wave_max"
+
+        # offset columns, rows for plotting
+        px = apt['Column (Disp)'] + np.isin(apt['Quadrant'], [3, 4]) * msa.DCOL
+        py = apt['Row (Spat)'] + np.isin(apt['Quadrant'], [2, 4]) * msa.DROW
+
+        for i in [1,2]:
+            ax = axes[i-1]
+
+            no_gap = limits[f'nrs{i}_wave_min'] < 2.7
+            no_gap &= limits[f'nrs{i}_wave_max'] > 5.6
+
+            ax.scatter(
+                px[no_gap],
+                py[no_gap],
+                ec='magenta',
+                fc='None',
+                marker='s',
+                s=50,
+                label=f'Fully on NRS{i}',
+            )
+
+            _ = msa.plot_msa_shutters(
+                apt['Column (Disp)'],
+                apt['Row (Spat)'],
+                apt['Quadrant'],
+                c=limits[f'nrs{i}_wave_max'],
+                ec='None',
+                ax=ax,
+                marker='s',
+                s=20,
+                **kws,
+            )
+
+            sc = ax.scatter(-99, -99, c=[5], **kws)
+            _ = msaexp.utils.tight_colorbar(
+                sc, fig, ax, loc='cc', sy=0.02, labelsize=6,
+                label=f"nrs{i}_wave_max",
+            )
+
+            leg = ax.legend(
+                loc='center ' + ['left', 'right'][i-1],
+                fontsize=7,
+            )
+
+            for q in [1,2,3,4]:
+                ax.text(
+                    180 + (q in [3,4]) * msa.DCOL,
+                    85 + (q in [2,4]) * msa.DROW,
+                    f'Q{q}',
+                    ha='center', va='center',
+                    bbox={'fc':'w', 'ec': 'None', 'alpha': 0.8},
+                )
+
     """
     import yaml
     import grizli.utils
@@ -2714,8 +2837,12 @@ def get_shutter_wavelength_limits(col, row, quadrant, grating='prism', filter='c
     coeffs_file = os.path.join(
         msautils.module_data_path(),
         "detector_gap",
-        f"wavelength_range_coeffs_{grating}_{filter}.yaml"
+        f"wavelength_range_coeffs_{grating}_{filter}.yaml".lower()
     )
+
+    tab.meta["grating"] = grating
+    tab.meta["filter"] = filter
+    tab.meta["coeffs"] = os.path.basename(coeffs_file)
 
     with open(coeffs_file) as fp:
         coeffs = yaml.load(fp, Loader=yaml.Loader)
