@@ -29,6 +29,26 @@ class ClippedColormap(matplotlib.colorizer.Colorizer):
 
         self.max_lightness = max_lightness
 
+
+    @staticmethod
+    def get_color_lightness(rgba, **kwargs):
+        """
+        Get color Lightness
+        """
+        import numpy as np
+        from colorspacious import cspace_converter
+
+        arr = np.array(rgba)
+        ndim = arr.ndim * 1
+
+        if ndim == 1:
+            arr = arr[np.newaxis, np.newaxis, :]
+        elif ndim == 2:
+            arr = arr[np.newaxis, :, :]
+
+        lab = cspace_converter("sRGB1", "CAM02-UCS")(arr[:, :, :3])
+        return lab[:, :, 0]
+
     @staticmethod
     def clip_color_lightness(rgba, max_lightness=85, **kwargs):
         """
@@ -49,7 +69,10 @@ class ClippedColormap(matplotlib.colorizer.Colorizer):
             arr = arr[np.newaxis, :, :]
             
         lab = cspace_converter("sRGB1", "CAM02-UCS")(arr[:, :, :3])
-        lab[:, :, 0] = np.minimum(lab[:, :, 0], max_lightness)
+        if max_lightness > 0:
+            lab[:, :, 0] = np.minimum(lab[:, :, 0], max_lightness)
+        else:
+            lab[:, :, 0] = -max_lightness
 
         # Transform back
         arr[:, :, :3] = cspace_converter("CAM02-UCS", "sRGB1")(lab) #), rgba[-1])
