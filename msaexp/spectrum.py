@@ -105,6 +105,9 @@ __all__ = [
     "calc_uncertainty_scale",
     "resample_bagpipes_model",
     "SpectrumSampler",
+    "multiplot_spectra",
+    "integrate_spectrum_filter",
+    "do_integrate_filters",
 ]
 
 
@@ -569,6 +572,7 @@ class SpectrumSampler(object):
     def bspline_array(
         self,
         nspline=13,
+        step_size=None,
         remap_arrays=None,
         minmax=None,
         log=False,
@@ -601,6 +605,10 @@ class SpectrumSampler(object):
 
         """
         if by_wavelength:
+            if step_size is not None:
+                nspline = np.log(self.spec_wobs.max() / self.spec_wobs.min()) * 3.e5 / dv
+                nspline = int(np.maximum(np.round(nspline), 5))
+
             bspl = utils.bspline_templates(
                 wave=self.spec_wobs * 1.0e4,
                 degree=3,
@@ -616,6 +624,10 @@ class SpectrumSampler(object):
                 xvalue = np.interp(
                     self.spec_wobs, *remap_arrays, left=0.0, right=0.0
                 )
+
+            if step_size is not None:
+                nspline = (xvalue.max() - xvalue.min()) / step_size
+                nspline = int(np.maximum(np.round(nspline), 5))
 
             bspl = utils.bspline_templates(
                 wave=xvalue,
@@ -1050,6 +1062,430 @@ class SpectrumSampler(object):
 
             else:
                 self.sensitivity[order] = None
+
+    def multiplot(self, sx=10, sy=2.5, z=0, ny=5, xpad=0.05, wave_limits=None, xgrid=None, fig=None, ymax=None, sharey=False, flam=0, okws=None, bkg=0., data=None, show_bkg=True, verbose=True, show_sn=False, **kwargs):
+        """
+        Make a plot of the spectrum split into wavelength intervals
+
+        Parameters
+        ----------
+        sx, sy : float
+            x and y size of the separate figure axes
+
+        z : float
+            If provided, plot in rest-frame intervals
+
+        ny : int
+            Number of wavelength intervals
+
+        xpad : float
+            Fractional overlap of wavelength intervals
+
+        wave_limits : [float, float], None
+            Override limits from min / max wavelength of the spectrum
+
+        xgrid : list
+            Explicit list of wavelength steps.  If not provided, will split
+            the spectrum wavelength array into ``ny`` intervals
+
+        fig : figure
+            If not provided, initialize a new figure
+
+        Returns
+        -------
+        fig : figure
+            Figure object
+
+        axes : list
+            List of axis objects
+
+        Examples
+        --------
+        .. plot::
+            :include-source:
+
+            from msaexp import spectrum
+            import msaexp.utils
+
+            sp = spectrum.SpectrumSampler("https://s3.amazonaws.com/msaexp-nirspec/extractions/smacs0723-ero-v4/smacs0723-ero-v4_g395m-f290lp_2736_6355.spec.fits")
+
+            z = 7.665
+
+            fig, axes = sp.multiplot(
+                ny=4,
+                sx=8, sy=2,
+                z=z,
+                color='k', alpha=0.5
+            )
+
+            # Overplot line list
+            li = msaexp.utils.lines.LineList()
+            for ax in axes:
+                li.add_to_axis(ax, alpha=0.5)
+
+            axes[-1].set_xlabel(f'rest wavelength, z={z:.3f}')
+            fig.tight_layout(pad=1)
+
+        """
+        w = self.spec["wave"] / (1 + z)
+
+        if xgrid is None:
+            if wave_limits is None:
+                wave_limits = (
+                    w[self.spec["valid"]].min(), w[self.spec["valid"]].max()
+                )
+
+            xgrid = np.linspace(*wave_limits, ny+1)
+            xgrid_ = np.array([xgrid[i:i+2] for i in range(ny)])
+        else:
+            # ny = len(xgrid) - 1
+            if hasattr(xgrid, 'ndim'):
+                if xgrid.ndim == 1:
+                    xgrid_ = np.array(
+                        [xgrid[i:i+2] for i in range(len(xgrid)-1)]
+                    )
+                else:
+                    xgrid_ = xgrid
+            else:
+                xgrid_ = xgrid
+
+            ny = len(xgrid_)
+
+        if fig is None:
+            fig, axes = plt.subplots(ny,1,figsize=(sx, sy * ny), sharey=sharey)
+        else:
+            axes = fig.axes
+            fig = None
+
+        valid = (
+            self.spec["valid"]
+            & np.isfinite((self.spec["flux"] - bkg) / self.spec["full_err"])
+        )
+
+        low_sensitivity = (
+            self.sensitivity[1] < 0.1 * np.nanmax(self.sensitivity[1])
+        )
+
+        low_sensitivity &= (
+            self.spec["wave"] < np.nanmedian(self.spec["wave"][valid])
+        )
+
+        valid &= ~low_sensitivity
+
+        msg = f"{os.path.basename(self.file)}  z={z:.3f}  "
+        msg += f"{w[valid].min():.2f} – {w[valid].max():.2f} µm"
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+        msk = np.nan**(1 - valid)
+
+        fsub = ((self.spec["flux"] - bkg) * self.spec["to_flam"]**flam * msk)
+        esub = (self.spec["full_err"] * self.spec["to_flam"]**flam * msk)
+        fbkg = ((self.spec["flux"]*0. - bkg) * self.spec["to_flam"]**flam * msk)
+
+        if data is not None:
+            fsub, esub = data[0] * 1, data[1] * 1.
+            show_sn = False
+
+        emed = np.nanmedian(esub)
+
+        if show_sn:
+            fsub = fsub / esub
+            fbkg = fbkg / esub
+            esub = esub**0 * msk
+
+        for i, ax in enumerate(axes):
+            if fig is None:
+                xl = ax.get_xlim()
+            else:
+                dx = xgrid_[i][1] - xgrid_[i][0]
+                xl = (xgrid_[i][0] - xpad * dx, xgrid_[i][1] + xpad * dx)
+                ax.set_xlim(*xl)
+
+            sub = (w > xl[0]) & (w < xl[1])
+            subm = sub & np.isfinite(msk)
+            if subm.sum() == 0:
+                continue
+
+            pl = ax.plot(w[sub], fsub[sub], **kwargs)
+
+            if hasattr(bkg, 'size'):
+                if show_bkg:
+                    ax.fill_between(
+                        w[sub], fbkg[sub], fsub[sub],
+                        color=pl[0].get_color(), alpha=0.05
+                    )
+
+            if (ymax is not None) & (sub.sum() > 3):
+                yl = (
+                    np.nanmedian(fsub[sub] - ymax[0] * emed),
+                    np.nanmedian(fsub[sub] + ymax[1] * emed)
+                )
+
+                if ymax[0] < 0:
+                    ym = np.nanmedian(fsub[sub] + ymax[1] * emed)
+                    yl = (ymax[0] * ym, ym)
+
+                ax.set_ylim(*yl)
+            else:
+                yl = ax.get_ylim()
+
+            if okws is not None:
+                for k in self.sensitivity:
+                    if k == 1:
+                        continue
+
+                    try:
+                        s_i = np.interp(
+                            self["wave"] * k,
+                            self["wave"],
+                            self.sensitivity[k],
+                            left=1, right=1
+                        )
+                    except ValueError:
+                        continue
+
+                    subk = (w * k > xl[0]) & (w * k < xl[1])
+                    subk &= (w * k < w.max())
+
+                    oflux = fsub * s_i
+
+                    ax.plot(w[subk] * k, oflux[subk], **okws)
+
+            ax.set_xlim(*xl)
+            ax.set_ylim(*yl)
+
+        return fig, axes
+
+GRATING_COLORS = {
+    "PRISM": "purple",
+    "G395M": "tomato",
+    "G235M": "goldenrod",
+    "G140M": "steelblue"
+}
+
+def multiplot_spectra(file="smacs0723-ero-v4_g395m-f290lp_2736_6355.spec.fits", ny=8, log_steps=True, wave_limits=None, renorm=True, extra="", spline_step=64, gratings=[], trim_empty_axes=True, grating_colors=GRATING_COLORS, **kwargs):
+    """
+    Query and plot overlapping spectra
+
+    Parameters
+    ----------
+    file : str
+        Parent DJA spectrum filename
+
+    spline_step : int, None
+        Number of spline components to use for continuum fit
+
+    Returns
+    -------
+    result : dict
+        Output figure and spectrum objects from the query
+
+    Examples
+    --------
+    .. plot::
+        :include-source:
+
+        from msaexp import spectrum
+        import msaexp.utils
+
+        result = spectrum.multiplot_spectra(
+            file="smacs0723-ero-v4_g395m-f290lp_2736_6355.spec.fits",
+            sx=8, sy=2,
+            ny=4,
+        )
+
+        # Overplot line list
+        li = msaexp.utils.lines.LineList()
+        for ax in result['axes']:
+            li.add_to_axis(ax, alpha=0.5)
+
+        result['axes'][-1].set_xlabel(
+            f"rest wavelength, z={result['z']:.3f}"
+        )
+
+        result['fig'].tight_layout(pad=1)
+
+
+    """
+    import eazy.filters
+
+    query_url = (
+        "https://grizli-cutout.herokuapp.com/nirspec_extractions?file=" + file + "&output=csv" + extra
+    )
+    print(query_url)
+
+    spec_list = utils.read_catalog(query_url, format="csv")
+
+    if len(gratings) > 0:
+        gr = [g.split("_")[0] for g in spec_list["grating"]]
+        keep = np.isin(gr, gratings)
+    else:
+        keep = np.ones(len(spec_list), dtype=bool)
+
+    z = spec_list["z"][(spec_list["grade"] > 2.5) & (keep)].mean()
+
+    for i, row in enumerate(spec_list):
+        print(
+            "{file} ({keep}) {z:.4f}  grade={grade}".format(
+                keep=keep[i], **row
+            )
+        )
+
+    FILE_URL = "https://s3.amazonaws.com/msaexp-nirspec/extractions/{root}/{file}"
+
+    specs = [
+        SpectrumSampler(
+            FILE_URL.format(**row)
+        )
+        for row in spec_list[keep]
+    ]
+
+    if spline_step is not None:
+        for spe in specs:
+            bspl = spe.bspline_array(by_wavelength=False, step_size=spline_step)
+
+            fmask = spe['flux'] * np.nan**(1 - spe['valid'])
+            fmed = np.squeeze(
+                utils.safe_nanmedian_filter(
+                    fmask[None,:],
+                    filter_footprint=np.ones(
+                        spline_step // 2), axis=1, cval=np.nan
+                    )[0]
+            )
+
+            fmed[spe['flux'] - fmed > 20 * spe["full_err"]] = np.nan
+
+            ok = spe["valid"] & (np.isfinite(fmed / spe["full_err"]))
+            c_ = np.linalg.lstsq(
+                (bspl / spe["full_err"])[:, ok].T,
+                (fmed / spe["full_err"])[ok],
+                rcond=None
+            )
+            spe.bkg = bspl.T.dot(c_[0])
+    else:
+        for spe in specs:
+            spe.bkg = 0.
+
+    if renorm:
+        RES = eazy.filters.FilterFile()
+        filter_numbers = [364, 365, 366, 375, 376, 377]
+
+        cols = ["npix", "frac", "flux", "err", "full_err"]
+        res = {}
+        for c in cols:
+            res[c] = []
+
+        for spe in specs:
+            rows = []
+            for fn in filter_numbers:
+                fdata = integrate_spectrum_filter(
+                    spe.spec, RES[fn]
+                )
+                rows.append(fdata)
+
+            rows = np.array(rows)
+            for i, c in enumerate(cols):
+                res[c].append(rows[:, i])
+
+        for c in cols:
+            res[c] = np.array(res[c])
+
+        ok = (res["full_err"] > 0) & (res["frac"] > 0.3)
+        res["full_err"][~ok] = np.nan
+        res["flux"][~ok] = np.nan
+
+        scales = np.ones_like(res["flux"])
+
+        fw = np.array([RES[fn].pivot for fn in filter_numbers]) / 1.e4
+        cpoly = [np.array([0., 1.])] * len(specs)
+
+        nok = ok.sum(axis=1)
+        iref = np.argmax(nok)
+
+        for iter_ in range(3):
+            fscl = res["flux"] / scales
+
+            avg = np.nansum(fscl / res["full_err"]**2, axis=0)
+            avg /= np.nansum(1. / res["full_err"]**2, axis=0)
+
+            for i in range(len(specs)):
+                ok_i = ok[i,:]
+                w_i = 1./res["full_err"][i,ok_i]
+
+                c_i = np.polyfit(fw[ok_i], fscl[i, ok_i] / avg[ok_i], 1, w=w_i)
+
+                scales[i,:] *= np.polyval(c_i, fw)
+
+        for i, spe in enumerate(specs):
+            c_i = np.polyfit(fw, scales[i,:], 1)
+            scl = np.polyval(c_i, spe["wave"])
+            spe.meta["rescale0"] = c_i[0]
+            spe.meta["rescale1"] = c_i[1]
+
+            print("renorm: ", os.path.basename(spe.file), c_i)
+
+            spe.bkg /= scl
+
+            for c in ["flux", "err", "full_err"]:
+                spe.spec[c] /= scl
+
+    w = np.hstack([s["wave"][s["valid"]] / (1+z) for s in specs])
+
+    if wave_limits is None:
+        wave_limits = (w.min(), w.max())
+
+    if log_steps:
+        xgrid = np.logspace(*np.log10(wave_limits), ny+1)
+    else:
+        xgrid = np.linspace(*wave_limits, ny+1)
+
+    if trim_empty_axes:
+        first = int(
+            np.floor(np.interp(w.min(), xgrid, np.arange(ny+1), left=0))
+        )
+
+        last = int(
+            np.floor(np.interp(w.max(), xgrid, np.arange(ny+1), right=ny+1))
+        ) + 2
+
+        xgrid = xgrid[first:last]
+        ny = len(xgrid) - 1
+
+    fig = None
+
+    for i, spe in enumerate(specs):
+        if grating_colors is not None:
+            kwargs["color"] = grating_colors[spe.meta['GRATING']]
+
+        fig_, axes = spe.multiplot(
+            fig=fig,
+            z=z,
+            ny=ny,
+            wave_limits=wave_limits,
+            xgrid=xgrid,
+            bkg=spe.bkg,
+            **kwargs
+        )
+
+        if fig_ is not None:
+            fig = fig_
+
+    for ax in axes:
+        yl = ax.get_ylim()
+        xl = ax.get_xlim()
+        ax.hlines([0], *xl, color='0.5', linestyle='--', alpha=0.3, zorder=-1)
+        ax.set_xlim(*xl)
+        ax.set_ylim(*yl)
+
+    result = {
+        "query_url": query_url,
+        "fig": fig,
+        "axes": axes,
+        "specs": specs,
+        "z": z,
+    }
+
+    return result
 
 
 def smooth_template_disp_eazy(
