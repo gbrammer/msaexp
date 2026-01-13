@@ -3,123 +3,154 @@
 # datatype:
 # - {name: priority, datatype: float16}
 # - {name: name, datatype: string}
-# - {name: tex, datatype: string}
+# - {name: label, datatype: string}
 # - {name: wavelength, unit: Angstrom, datatype: string, subtype: json}
 # - {name: ratio, datatype: string, subtype: json}
 # - {name: color, datatype: string}
 # schema: astropy-2.0
-priority name tex wavelength ratio color
+priority name label wavelength ratio color
 5                Lya               Ly$\alpha$   [1215.2]    [1.0]   purple
-0            Lya+CIV      "Ly$\alpha$ + C IV"   [1215.2,1549.49]   [1.0,0.1]   purple
-3            NV-1240                    "N V"   [1240.81]    [1.0]   deeppink
-3      SiIV+OIV-1398           "Si IV + O IV"   [1397.6,1399.8]     [1.0,1.0]   darkgreen
-3           NIV-1487                   "N IV"   [1487.0]     [1.0]   deeppink
-4           CIV-1549                   "C IV"   [1549.48]    [1.0]   silver
-4          HeII-1640                     HeII   [1640.4]     [1.0]   darkolivegreen
-4          OIII-1663                     OIII   [1665.85]    [1.0]   darkgoldenrod
+0            Lya+CIV       "Ly$\alpha$ + CIV"   [1215.2,1549.49]   [1.0,0.1]   purple
+3            NV-1240                       NV   [1240.81]    [1.0]   deeppink
+3            OI-1304                       OI   [1302.168,1304.858,1306.029] [1.0,0.6,0.2] forestgreen
+3      SiIV+OIV-1398               "SiIV+OIV"   [1397.6,1399.8]     [1.0,1.0]   darkgreen
+3           NIV-1487                      NIV   [1483.321,1486.496]     [1.0,0.68]   deeppink
+4           CIV-1549                      CIV   [1548.187,1550.772]    [1.0,0.51]   silver
+4          HeII-1640                     HeII   [1640.388]     [1.0]   goldenrod
+4          OIII-1663                     OIII   [1665.85]    [1.0]   olivedrab
 2         AlIII-1857                    AlIII   [1857.4]     [1.0]   silver
-3          NIII-1750                     NIII   [1750.0]     [1.0]   deeppink
+3          NIII-1750                     NIII   [1749.674,1752.160]     [1.0,0.734]   deeppink
 4          CIII-1906                    CIII]   [1906.683]   [1.0]   gray
-2         CIII-1906x                    CIII]   [1906.683,1908.734]   [1.5,1.0]   gray
+1         CIII-1906x                    CIII]   [1906.683,1908.734]   [1.0,0.66]   gray
 4          CIII-1908                    CIII]   [1908.734]   [1.0]   gray
-2           CII-2326                      CII   [2326.0]     [1.0]   darkgray
-2          NeIV-2439                     NeIV   [2439.5]     [1.0]   darkkhaki
+2           NII-2143                    [NII]   [2143.448,2139.683]   [1.0,0.41]  mediumvioletred
+2           CII-2326                      CII   [2326.112,2327.644,2328.837,2325.403,2324.213]     [1.0,0.57,0.18,0.16,0.10]   darkgray
+1          NeIV-2439                     NeIV   [2439.5]     [1.0]   darkkhaki
+2          NeIV-2439                     NeIV   [2425.157,2422.545]     [1.0,0.75]   darkkhaki
+2           OII-2471                      OII   [2471.087]     [1.0]   darkkhaki
 5               MgII                     MgII   [2796.352,2803.531]   [1.0,1.0]   teal
-3           NeV-3346                      NeV   [3346.79]    [1.0]   darkkhaki
-3          NeVI-3426                     NeVI   [3426.85]    [1.0]   darkkhaki
-1           OII-3727                    [OII]   [3727.092]   [1.0]   goldenrod
-1           OII-3729                    [OII]   [3729.875]   [1.0]   goldenrod
-5                OII                    [OII]   [3727.092,3729.875]   [1.0,1.0]   goldenrod
-0             OII+Ne         "[OII] + Ne III"   [3729.875,3869]   [1,0.2]   goldenrod
+2           HeI-2945                      HeI   [2945.861]   [1.0]   darkgoldenrod
+2         ArIII-3110                    ArIII   [3110.079]   [1.0]   seagreen
+2           HeI-3188                      HeI   [3188.922]   [1.0]   darkgoldenrod
+1           NeV-3346                      NeV   [3346.79]    [1.0]   darkkhaki
+3           NeV-3426                      NeV   [3426.85,3346.79]    [1.0,0.37]   darkkhaki
+1           OII-3727                    [OII]   [3727.092]   [1.0]   seagreen
+1           OII-3729                    [OII]   [3729.875]   [1.0]   seagreen
+5                OII                    [OII]   [3727.092,3729.875]   [1.0,0.8]   seagreen
+0             OII+Ne            "[OII]+NeIII"   [3729.875,3869]   [1,0.2]   seagreen
 3.1              H12                      H12   [3751.255]   [1.0]   steelblue
 3.1              H11                      H11   [3771.739]   [1.0]   steelblue
 3.1              H10                      H10   [3799.014]   [1.0]   steelblue
-2           HeI-3820                      HeI   [3820.7]     [1.0]   olivedrab
+1          xHeI-3820                      HeI   [3820.7]     [1.0]   darkgoldenrod
 4.1               H9                       H9   [3836.511]   [1.0]   steelblue
-4        NeIII-3867                  [NeIII]   [3869.87]    [1.0]   darkkhaki
-4.1         HeI-3889                      HeI   [3889.75]    [1.0]   olivedrab
-4.1               H8                       H8   [3890.191]   [1.0]   steelblue
-3            CaII-HK              "Ca II H+K"   [3934.79,3969.61]    [1.0,1.0]   peru
+1        NeIII-3867x                  [NeIII]   [3869.87]    [1.0]   darkkhaki
+4         NeIII-3867                  [NeIII]   [3869.861,3968.59]    [1.0,0.30]   darkkhaki
+4.1         HeI-3889                      HeI   [3889.75]    [1.0]   darkgoldenrod
+1.1               H8                       H8   [3890.191]   [1.0]   steelblue
+3            CaII-HK               "CaII H+K"   [3934.79,3969.61]    [1.0,1.0]   peru
 4.1               H7              H$\epsilon$   [3971.236]   [1.0]   steelblue
-4.1       NeIII-3968                  [NeIII]   [3968.59]    [1.0]   darkkhaki
-3           HeI-4027                      HeI   [4027.3]     [1.0]   olivedrab
-3.1         SII-4075                    [SII]   [4069.75,4077.5]   [1.0,1.0]   firebrick
+1.1       NeIII-3968                  [NeIII]   [3968.59]    [1.0]   darkkhaki
+3           HeI-4027                      HeI   [4027.3]     [1.0]   darkgoldenrod
+3.1         SII-4075                    [SII]   [4069.75,4077.5]   [1.0,0.33]   firebrick
 3           SII-4078                    [SII]   [4077.5]     [1.0]   firebrick
 5.1               Hd                H$\delta$   [4102.936]   [1.0]   steelblue
 5                 Hg                H$\gamma$   [4341.731]   [1.0]   steelblue
-4.1        OIII-4363                   [OIII]   [4364.436]   [1.0]   darkgoldenrod
-3           HeI-4472                      HeI   [4472.7]     [1.0]   olivedrab
-3          HeII-4687                     HeII   [4687.5]     [1.0]   darkolivegreen
+4.1        OIII-4363                   [OIII]   [4364.436]   [1.0]   olivedrab
+3           HeI-4472                      HeI   [4472.7]     [1.0]   darkgoldenrod
+3          HeII-4687                     HeII   [4686.866]     [1.0]   goldenrod
 5                 Hb                 H$\beta$   [4862.738]   [1.0]   steelblue
-1          OIII-4959                   [OIII]   [4960.295]   [1.0]   darkgoldenrod
-5               OIII                   [OIII]   [5008.24,4960.295]   [2.98,1.0]   darkgoldenrod
-1            OIII+Hb          [OIII]+H$\beta$   [5008.24,4960.295,4862.68]   [2.98,1.0,0.663]   darkgoldenrod
-1          OIII-5007                   [OIII]   [5008.24]    [1.0]   darkgoldenrod
-3            NI-5199                  "[N I]"   [5199.4,5201.76]   [1.0,1.0]   orchid
-3          HeII-5412                     HeII   [5412.5]     [1.0]   darkolivegreen
-3            OI-5578                  "[O I]"   [5578.89]    [1.0]   tan
-4           HeI-5877                      HeI   [5877.249]   [1.0]   olivedrab
-4.1             NaDI                 "Na I D"   [5891.0,5897.0]       [1.0,1.0]  khaki
-4            OI-6302                  "[O I]"   [6302.046,6365.535]   [1,0.33]   tan
+1          OIII-4959                   [OIII]   [4960.295]   [1.0]   olivedrab
+5               OIII                   [OIII]   [5008.24,4960.295]   [2.98,1.0]   olivedrab
+1            OIII+Hb          [OIII]+H$\beta$   [5008.24,4960.295,4862.68]   [2.98,1.0,0.663]   olivedrab
+1          OIII-5007                   [OIII]   [5008.24]    [1.0]   olivedrab
+2           HeI-5017                      HeI   [5017.399]     [1.0]   darkgoldenrod
+3            NI-5199                     [NI]   [5199.4,5201.76]   [1.4,1.0]   orchid
+1            NI-5197                     [NI]   [5199.4]     [1.0]   orchid
+1            NI-5200                     [NI]   [5201.76]    [1.0]   orchid
+3          HeII-5412                     HeII   [5412.5]     [1.0]   goldenrod
+3            OI-5578                     [OI]   [5578.89]    [1.0]   forestgreen
+2           NII-5756                    [NII]   [5756.189]   [1.0]  mediumvioletred
+4           HeI-5877                      HeI   [5877.249]   [1.0]   darkgoldenrod
+4.1             NaDI                  "NaI D"   [5891.0,5897.0]       [1.0,1.0]  khaki
+4            OI-6302                     [OI]   [6302.046,6365.535]   [1,0.32]   forestgreen
+1            OI-6300                     [OI]   [6302.046]   [1.0]   forestgreen
+1            OI-6363                     [OI]   [6365.535]   [1.0]   forestgreen
 2          SIII-6314                   [SIII]   [6313.81]    [1.0]   darkred
-2            NI-6529                       NI   [6529.03]    [1.0]   orchid
+2           NII-6529                    [NII]   [6529.03]    [1.0]   orchid
 2           NII-6549                    [NII]   [6549.86]    [1.0]  mediumvioletred
 5                 Ha                H$\alpha$   [6564.697]   [1.0]   steelblue
 1             Ha+NII          H$\alpha$+[NII]   [6564.61,6549.86,6585.27]   [1.0,0.083,0.25]   steelblue
 1           NII-6584                    [NII]   [6585.27]    [1.0]  mediumvioletred
-5.1              NII                    [NII]   [6585.27,6549.86]   [3.0,1.0]  mediumvioletred
-1           HeI-6680                      HeI   [6679.995]   [1.0]   olivedrab
+5.1              NII                    [NII]   [6585.27,6549.86]   [1.0,0.34]  mediumvioletred
+0           NII-3to1                    [NII]   [6585.27,6549.86]   [3.0,1.0]  mediumvioletred
+1           HeI-6680                      HeI   [6679.995]   [1.0]   darkgoldenrod
 1           SII-6717                    [SII]   [6718.29]    [1.0]   firebrick
 5                SII                    [SII]   [6718.29,6732.67]   [1.0,1.0]   firebrick
 1.1         SII-6731                    [SII]   [6732.67]    [1.0]   firebrick
-2           HeI-7065                      HeI   [7067.1]     [1.0]   olivedrab
-3         ArIII-7138                    ArIII   [7137.77]    [1.0]   seagreen
-1           OII-7325                    [OII]   [7321.9,7332.21]   [1.2,1.0]   goldenrod
-2.1         OII-7323                    [OII]   [7321.9]     [1.0]   goldenrod
-2           OII-7332                    [OII]   [7332.21]    [1.0]   goldenrod
-3         ArIII-7753                    ArIII   [7753.19]    [1.0]   seagreen
-3.1          OI-7776                       OI   [7776.3]     [1.0]   tan
-2           HeI-8446                      HeI   [8446.7]     [1.0]   olivedrab
-3            OI-8448                       OI   [8448.7]     [1.0]   tan
-3.1        CaII-8600                  "Ca II"   [8500.36,8544.44,8664.52]   [0.2,0.35,0.3]   peru
+2           HeI-7065                      HeI   [7067.1]     [1.0]   darkgoldenrod
+3         ArIII-7137                    ArIII   [7137.77,7753.238]    [1.0,0.24]   seagreen
+1         ArIII-7138                    ArIII   [7137.77]    [1.0]   seagreen
+1           OII-7325                    [OII]   [7321.9,7332.21]   [1.2,1.0]   seagreen
+2.1         OII-7323                    [OII]   [7321.9]     [1.0]   seagreen
+2           OII-7332                    [OII]   [7332.21]    [1.0]   seagreen
+1         ArIII-7753                    ArIII   [7753.19]    [1.0]   seagreen
+3.1          OI-7776                       OI   [7776.3]     [1.0]   forestgreen
+1           HeI-8446                      HeI   [8446.7]     [1.0]   darkgoldenrod
+3            OI-8448                       OI   [8448.7]     [1.0]   forestgreen
+3.1        CaII-8600                     CaII   [8500.36,8544.44,8664.52]   [0.2,0.35,0.3]   peru
+2            CI-8729                       CI   [8729.517]   [1.0]   silver
 3.1             Pa10                     Pa10   [9017.44]    [1.0]   cornflowerblue
 1          SIII-9068                   [SIII]   [9071.1]     [1.0]   darkred
 3.1              Pa9                      Pa9   [9231.6]     [1.0]   cornflowerblue
 1          SIII-9531                   [SIII]   [9533.2]     [1.0]   darkred
 5               SIII                   [SIII]   [9533.2,9071.1]   [2.44,1]   darkred
 3.1              Pa8                      Pa8   [9548.65]    [1.0]   cornflowerblue
+1           CI-9824x                       CI   [9826.82]    [1.0]   silver
 0            CI-9580                  CI-typo   [9852.96]    [1.0]   silver
-3            CI-9850                       CI   [9852.96]    [1.0]   silver
+1           CI-9850x                       CI   [9852.96]    [1.0]   silver
+3            CI-9850                       CI   [9852.96,9826.82]    [1.0,0.34]   silver
 2             FeH-WF                 "FeH WF"   [9918.7]     [1.0]   slategray
 4.1              PaD               Pa$\delta$   [10052.2]    [1.0]   cornflowerblue
-5           HeI-1083                      HeI   [10832.057,10833.306]   [1.0,1.0]   olivedrab
-5.1               PaG               Pa$\gamma$   [10941.2]    [1.0]   cornflowerblue
+2         HeII-10126                     HeII   [10126.034]     [1.0]   goldenrod
+3          SII-10323                      SII   [10323.309,10289.541,10339.234,10373.329]     [1.0,0.76,0.75,0.35]   firebrick
+3           NI-10400                       NI   [10400.580,10400.997,10410.013,10410.432]     [1.0,0.14,0.04,0.06,0.06]   orchid
+1          NI-10401a                       NI   [10400.580]     [1.0]   orchid
+1          NI-10401b                       NI   [10400.997]     [1.0]   orchid
+1          NI-10410a                       NI   [10410.013]     [1.0]   orchid
+1          NI-10410b                       NI   [10410.432]     [1.0]   orchid
+5           HeI-1083                      HeI   [10832.057,10833.306]   [1.0,1.0]   darkgoldenrod
+5.1               PaG              Pa$\gamma$   [10941.2]    [1.0]   cornflowerblue
 3.1       FeII-11128                     FeII   [11128.6]    [1.0]   slategray
-3           OI-11290                       OI   [11290.0]    [1.0]   tan
-2          PII-11886                      PII   [11886.1]    [1.0]   ""
-3         SiIX-12520                      PII   [12520.0]    [1.0]   darkgreen
+3           OI-11290                       OI   [11290.0]    [1.0]   forestgreen
+2          PII-11886                      PII   [11886.09,11471.289]    [1.0,0.38]   orange
+3         SiIX-12520                     SiIX   [12520.0]    [1.0]   darkgreen
 3.1       FeII-12570                     FeII   [12570.2]    [1.0]   slategray
 5                PaB                Pa$\beta$   [12821.7]    [1.0]   cornflowerblue
-2           OI-13168                       OI   [13168.2]    [1.0]   tan
+2           OI-13168                       OI   [13168.2]    [1.0]   forestgreen
 3.1       FeII-13205                     FeII   [13205.508]  [1.0]   slategray
+3.1              Br9                      Br9   [16411.7]    [1.0]   royalblue
 3         FeII-16440                     FeII   [16440.0]    [1.0]   slategray
+3.1              Br9                      Br9   [16811.1]    [1.0]   royalblue
 3.1       FeII-16877                     FeII   [16877.8]    [1.0]   slategray
-3         HeII-16923                     HeII   [16923.0]    [1.0]   darkolivegreen
+3         HeII-16923                     HeII   [16923.0]    [1.0]   goldenrod
+3.1       FeII-17111                     FeII   [17115.6]    [1.0]   slategray
 3.1              BrF                      Br8   [17366.9]    [1.0]   royalblue
 3.1       FeII-17418                     FeII   [17418.8]    [1.0]   slategray
+3.1       FeII-18094                     FeII   [18094.8]    [1.0]   slategray
 3.1              BrE                      Br7   [18179.2]    [1.0]   royalblue
 3.1       FeII-18362                     FeII   [18362.4]    [1.0]   slategray
+3.1        HeI-18691                      HeI   [18690.1]    [1.0]   darkgoldenrod
 5                PaA               Pa$\alpha$   [18756.3]    [1.0]   cornflowerblue
 3.1              BrD               Br$\delta$   [19450.9]    [1.0]   royalblue
 3         SiVI-19634                     SiVI   [19634.0]    [1.0]   darkgreen
 2         AlIX-20400                     AlIX   [20400.0]    [1.0]   lightsteelblue
-3          HeI-20586                      HeI   [20586.9]    [1.0]   olivedrab
+3          HeI-20586                      HeI   [20586.6]    [1.0]   darkgoldenrod
 3.1       FeII-20605                     FeII   [20605.9]    [1.0]   slategray
 3         FeII-20893                     FeII   [20893.8]    [1.0]   slategray
 3         MgII-21374                     MgII   [21374.8]    [1.0]   skyblue
 2         MgII-21438                     MgII   [21438.0]    [1.0]   skyblue
 3                BrG               Br$\gamma$   [21661.3]    [1.0]   royalblue
-3.1       HeII-21891                     HeII   [21891.1]    [1.0]   darkolivegreen
+3.1       HeII-21891                     HeII   [21891.1]    [1.0]   goldenrod
 2        SiVII-24833                    SiVII   [24833.4]    [1.0]   darkgreen
 3         SiIX-25842                     SiIX   [25842.3]    [1.0]   darkgreen
 4                BrB                Br$\beta$   [26258.8]    [1.0]   royalblue
