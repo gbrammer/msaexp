@@ -1941,7 +1941,7 @@ def pixel_table_valid_data(
 
 
 def pixel_table_to_detector(
-    ptab, column="data", split_exposures=True, as_hdu=False, **kwargs
+    ptab, column="data", split_exposures=True, as_hdu=False, shape=(2048, 2048), **kwargs
 ):
     """
     Map pixel table back to detector frame
@@ -1970,7 +1970,7 @@ def pixel_table_to_detector(
     else:
         nexp = 1
 
-    detector_array = np.zeros((nexp, 2048, 2048), dtype=ptab[column].dtype)
+    detector_array = np.zeros((nexp, *shape), dtype=ptab[column].dtype)
     if nexp > 1:
         for exp_index in uexp.values:
             mask = uexp[exp_index]
@@ -3382,8 +3382,21 @@ class ReducedCube:
         if self.spec is None:
             self.set_spec(**kwargs)
 
-        lwaves = [[w / 1.0e4 for w in LINE_WAVELENGTHS[li]] for li in lines]
-        lratios = [LINE_RATIOS[li] for li in lines]
+        # lwaves = [[w / 1.0e4 for w in LINE_WAVELENGTHS[li]] for li in lines]
+        # lratios = [LINE_RATIOS[li] for li in lines]
+        lwaves = []
+        lratios = []
+
+        for i in range(len(lines)):
+            li = lines[i]
+
+            if li in LINE_WAVELENGTHS:
+                lwaves.append([w / 1.0e4 for w in LINE_WAVELENGTHS[li]])
+                lratios.append(LINE_RATIOS[li])
+            else:
+                lwaves.append([float(li.replace('line',''))])
+                lratios.append([1.0])
+                # lines[i] = f'line{li:.4f}'
 
         line_wavelength = lwaves[0][0] * (1 + self.redshift)
         ii = np.where(self.wave > line_wavelength)[0][0]
@@ -4608,9 +4621,14 @@ class LinefitData:
         else:
             line_label = LINE_LABELS_LATEX[line_name] + " @ "
 
+        if line_name in LINE_WAVELENGTHS:
+            line_wave_i = LINE_WAVELENGTHS[line_name][0] * 1.e4
+        else:
+            line_wave_i = float(line_name.replace('line',''))
+
         line_label += r"$\lambda_\mathrm{obs}~=~x~\mathrm{\mu m}$".replace(
             "x",
-            f"{LINE_WAVELENGTHS[line_name][0] * (1 + self.result['redshift']) / 1.e4:.4f}",
+            f"{line_wave_i * (1 + self.result['redshift']) / 1.e4:.4f}",
         )
 
         axes[1].text(
