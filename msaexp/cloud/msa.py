@@ -344,7 +344,7 @@ msaexp version = {msaexp.__version__}
 
     return 2
 
-if __name__ == "__main__":
-    run_one()
+# if __name__ == "__main__":
+#     run_one_msa_preprocess()
 
     
