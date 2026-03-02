@@ -55,6 +55,10 @@ from msaexp import utils as msautils
 NIRSPEC_HOME = '/home/ec2-user/telescopes/NIRSpec'
 HOME = '/GrizliImaging/'
 
+if not os.path.exists(HOME):
+    print(f"HOME={HOME} not found, using HOME={os.getcwd()}")
+    HOME = os.getcwd()
+
 # NIRSPEC_HOME = '/GrizliImaging/NIRSpec'
 
 def test():
