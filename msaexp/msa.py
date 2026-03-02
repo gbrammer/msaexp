@@ -80,7 +80,7 @@ def pad_msa_metafile(
 
     if source_ids is None:
         if slitlet_ids is not None:
-            six = np.in1d(msa.shutter_table["slitlet_id"], slitlet_ids)
+            six = np.isin(msa.shutter_table["slitlet_id"], slitlet_ids)
 
             if six.sum() == 0:
                 msg = f"msaexp.msa.pad_msa_metafile: {slitlet_ids} not found"
@@ -102,7 +102,7 @@ def pad_msa_metafile(
             else:
                 source_ids = all_ids[all_ids != 0]
 
-            six = np.in1d(msa.shutter_table["source_id"], source_ids)
+            six = np.isin(msa.shutter_table["source_id"], source_ids)
             if primary_sources:
                 six &= msa.shutter_table["primary_source"] == "Y"
 
@@ -111,7 +111,7 @@ def pad_msa_metafile(
                 msg += f" in {metafile}.  Available ids are {list(all_ids)}"
                 raise ValueError(msg)
     else:
-        six = np.in1d(msa.shutter_table["source_id"], source_ids)
+        six = np.isin(msa.shutter_table["source_id"], source_ids)
         if six.sum() == 0:
             msg = f"msaexp.msa.pad_msa_metafile: {source_ids} not found"
             msg += f" in {metafile}.  Available ids are {list(all_ids)}"
@@ -123,7 +123,7 @@ def pad_msa_metafile(
     im = pyfits.open(metafile)
 
     shut = Table(im["SHUTTER_INFO"].data)
-    shut = shut[np.in1d(shut["slitlet_id"], slitlets)]
+    shut = shut[np.isin(shut["slitlet_id"], slitlets)]
 
     # Add a shutter on either side
     row = {}
@@ -174,7 +174,7 @@ def pad_msa_metafile(
         shut.add_row(row)
 
     src = Table(im["SOURCE_INFO"].data)
-    src = src[np.in1d(src["source_id"], source_ids)]
+    src = src[np.isin(src["source_id"], source_ids)]
 
     hdus = {
         "SHUTTER_INFO": pyfits.BinTableHDU(shut),
@@ -1295,7 +1295,7 @@ class MSAMetafile:
         tab["nexp"] = 0
         for exp in exps:
             exp_ids = shut["source_id"][shut["dither_point_index"] == exp]
-            tab["nexp"] += np.in1d(tab["source_id"], exp_ids)
+            tab["nexp"] += np.isin(tab["source_id"], exp_ids)
 
             slitlets = []
             for s in tab["source_id"]:

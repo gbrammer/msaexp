@@ -11,9 +11,17 @@ import astropy.units as u
 
 from grizli import utils
 
+try:
+    from grizli.utils import trapz
+except ImportError:
+    try:
+        from numpy import trapz
+    except ImportError:
+        from numpy import trapezoid as trapz
+
 from .general import module_data_path
 
-__all__ = ["LineList", "MolecularHydrogen", "line_flam_to_fnu"]
+__all__ = ["LineList", "MolecularHydrogen", "line_flam_to_fnu", "trapz"]
 
 def arabic_to_roman(label, count=-1):
     """
@@ -1174,7 +1182,7 @@ class MolecularHydrogen:
         """
         if hasattr(T, "__len__"):
             # Temperature distribution
-            norm = np.trapz(T[1], T[0])
+            norm = trapz(T[1], T[0])
             Tx = T[0]
             Ty = T[1] / norm
             dT = utils.trapz_dx(Tx)

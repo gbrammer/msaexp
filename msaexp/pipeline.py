@@ -135,14 +135,14 @@ def query_program(
 
     res = res[unique_indices]
 
-    skip = np.in1d(res["msametfl"], [None])
-    skip &= ~np.in1d(res["exp_type"], ["NRS_FIXEDSLIT"])
+    skip = np.isin(res["msametfl"], [None])
+    skip &= ~np.isin(res["exp_type"], ["NRS_FIXEDSLIT"])
 
     if skip.sum() > 0:
         print(f"Remove {skip.sum()} rows with msametfl=None")
         res = res[~skip]
 
-    skip = np.in1d(res["filter"], ["OPAQUE"])
+    skip = np.isin(res["filter"], ["OPAQUE"])
     if skip.sum() > 0:
         print(f"Remove {skip.sum()} rows with filter=OPAQUE")
         res = res[~skip]
@@ -2609,7 +2609,7 @@ def make_summary_tables(root="msaexp", zout=None):
         tab = utils.GTable(names=cols, rows=rows)
         tab.rename_column("source_ra", "ra")
         tab.rename_column("source_dec", "dec")
-        bad = np.in1d(tab["redshift"], [None])
+        bad = np.isin(tab["redshift"], [None])
         tab["z"] = -1.0
         tab["z"][~bad] = tab["redshift"][~bad]
         tab["mode"] = " ".join(mode.split("-")[-3:-1])
