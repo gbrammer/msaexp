@@ -2,6 +2,10 @@ import numpy as np
 from numba import jit
 from math import erf, atan, pow as _pow, pi as math_pi
 
+import grizli.utils_numba.interp
+
+INTERP_CONSERVE = grizli.utils_numba.interp.interp_conserve_c
+
 __all__ = [
     "simpson",
     "trapz",
@@ -442,11 +446,6 @@ def pixel_integrated_lorentzian_numba(
         # left = right
 
     return samp
-
-
-import grizli.utils_numba.interp
-
-INTERP_CONSERVE = grizli.utils_numba.interp.interp_conserve_c
 
 
 @jit(nopython=True, fastmath=True, error_model="numpy")

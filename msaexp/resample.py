@@ -1,4 +1,5 @@
 import numpy as np
+from .utils import trapz
 
 __all__ = [
     "resample_template",
@@ -84,7 +85,7 @@ def resample_template(
         lsl = templ_wobs[sl]
         g = np.exp(-((lsl - spec_wobs[i]) ** 2) / 2 / dw[i] ** 2)
         g *= 1.0 / np.sqrt(2 * np.pi * dw[i] ** 2)
-        fres[i] = np.trapz(templ_flux[sl] * g, lsl)
+        fres[i] = trapz(templ_flux[sl] * g, lsl)
 
     fres[spec_wobs < wave_min] = left
     fres[spec_wobs > wave_max] = right

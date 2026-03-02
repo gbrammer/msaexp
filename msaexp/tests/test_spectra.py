@@ -191,11 +191,13 @@ def sampler_checks(spec, with_numba=False):
             )
 
             gau = spec.emission_line(line_um, line_flux=1, **kws)
-            assert np.allclose(np.trapz(gau, spec.spec_wobs), 1.0, rtol=5.0e-2)
+            assert np.allclose(
+                utils.trapz(gau, spec.spec_wobs), 1.0, rtol=5.0e-2
+            )
 
             gau2 = spec.fast_emission_line(line_um, line_flux=1, **kws)
             assert np.allclose(
-                np.trapz(gau2, spec.spec_wobs), 1.0, rtol=1.0e-3
+                utils.trapz(gau2, spec.spec_wobs), 1.0, rtol=1.0e-3
             )
 
     igm1 = spec.igm_absorption(1.0)

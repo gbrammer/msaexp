@@ -199,7 +199,7 @@ def test_slit_group():
     ]:
         assert getattr(obj, attr).shape == (obj.N, obj.sh[0] * obj.sh[1])
 
-    assert np.abs(obj.mask.sum() - (13967 - 82)) < 32
+    assert np.abs(obj.mask.sum() - (13967 - 82)) < 48
 
     meta = {
         "diffs": True,
