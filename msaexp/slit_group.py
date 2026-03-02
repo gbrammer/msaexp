@@ -728,8 +728,8 @@ class NirspecCalibrated:
                 )
             else:
                 flat_file = os.path.join(
-                    os.path.dirname(msautils.__file__),
-                    "data/extended_sensitivity",
+                    msautils.module_data_path(),
+                    "extended_sensitivity",
                     f"sflat_spl_coeffs_prism_q{qi}.fits".lower(),
                 )
 
