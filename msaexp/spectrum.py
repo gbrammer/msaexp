@@ -20,6 +20,7 @@ from matplotlib.gridspec import GridSpec
 import astropy.io.fits as pyfits
 
 from grizli import utils
+from .utils import trapz
 
 utils.set_warnings()
 
@@ -298,7 +299,7 @@ class SpectrumSampler(object):
         )
         self.yline = self.xline * 0.0
         self.yline[nsamp] = 1
-        self.yline /= np.trapz(self.yline, self.xline)
+        self.yline /= trapz(self.yline, self.xline)
 
     def initialize_spec(self, spec_input, **kwargs):
         """
@@ -1721,7 +1722,7 @@ def smooth_template_disp(
     gaussian_kernel = (
         1.0 / np.sqrt(2 * np.pi * sig_um**2) * np.exp(-(x**2) / 2 / sig_um**2)
     )
-    tsmooth = np.trapz(gaussian_kernel * fobs, x=wobs, axis=1)
+    tsmooth = trapz(gaussian_kernel * fobs, x=wobs, axis=1)
 
     return tsmooth
 
@@ -3687,12 +3688,12 @@ def integrate_spectrum_filter(spec, filt, z=0, filter_fraction_threshold=0.1):
         return (valid.sum(), 0.0, 0.0, -1.0, -1.0)
 
     # Full filter normalization
-    filt_norm_full = np.trapz(
+    filt_norm_full = trapz(
         filt.throughput / (filt.wave / 1.0e4), filt.wave / 1.0e4
     )
 
     # Normalization of filter sampled by the spectrum
-    filt_norm = np.trapz(
+    filt_norm = trapz(
         (filter_int / spec["wave"])[valid], spec["wave"][valid]
     )
 

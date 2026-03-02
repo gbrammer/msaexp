@@ -1,5 +1,6 @@
 import numpy as np
 
+from .. import utils
 
 def test_igm():
     """
@@ -157,7 +158,7 @@ def test_prf_line():
         line_flux=line_flux,
         velocity_sigma=velocity_sigma,
     )
-    assert np.allclose(np.trapz(line, spec_wobs), 1.0, rtol=rtol)
+    assert np.allclose(utils.trapz(line, spec_wobs), 1.0, rtol=rtol)
 
     # Set R from the pixel spacing
     spec_R_fwhm = 2.35 * spec_wobs / np.gradient(spec_wobs)
@@ -169,7 +170,7 @@ def test_prf_line():
         line_flux=line_flux,
         velocity_sigma=velocity_sigma,
     )
-    assert np.allclose(np.trapz(line, spec_wobs), 1.0, rtol=rtol)
+    assert np.allclose(utils.trapz(line, spec_wobs), 1.0, rtol=rtol)
 
     for v in [0, 100, 500, 1000, 2000, 5000]:
         # c = None
@@ -181,7 +182,7 @@ def test_prf_line():
                 line_flux=line_flux,
                 velocity_sigma=v,
             )
-            assert np.allclose(np.trapz(line, spec_wobs), 1.0, rtol=rtol)
+            assert np.allclose(utils.trapz(line, spec_wobs), 1.0, rtol=rtol)
             # if 1:
             #     pl = plt.plot(spec_wobs, line, color=c, alpha=0.5)
             #     c = pl[0].get_color()
@@ -196,7 +197,7 @@ def test_trapz():
     x = np.linspace(-1, 1, 4096, dtype=np.float32)
     y = x**2
 
-    assert np.allclose(np.trapz(y, x), trapz(y, x), rtol=1.0e-4)
+    assert np.allclose(utils.trapz(y, x), trapz(y, x), rtol=1.0e-4)
 
 
 def test_dust_models():
