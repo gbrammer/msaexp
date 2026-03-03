@@ -889,7 +889,8 @@ def run_pipeline(
         # slit_y_range = [wstep.slit_y_low, wstep.slit_y_high]
         try:
             # with_wcs = load_wcs(dm, wcs_reference_files, slit_y_range)
-            with_wcs = wstep.call(dm, override_wavelengthrange=new_waverange)
+            wstep.override_wavelengthrange = new_waverange
+            with_wcs = wstep.run(dm)
         except NoDataOnDetectorError:
             msg = f"{file} No open slits found to work on"
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
@@ -901,7 +902,7 @@ def run_pipeline(
         # MSAFlagOpen
         msg = f"{file} MSAFlagOpen"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-        flag_open = MSAFlagOpenStep().call(with_wcs)
+        flag_open = MSAFlagOpenStep().run(with_wcs)
     else:
         flag_open = with_wcs
 
@@ -916,7 +917,7 @@ def run_pipeline(
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         step2d = Extract2dStep()
-        ext2d = step2d.call(flag_open)
+        ext2d = step2d.run(flag_open)
 
         _slit_index = None
         if EXPOSURE_TYPE == "NRS_FIXEDSLIT":
@@ -1071,12 +1072,16 @@ def run_pipeline(
             msautils.update_slit_metadata(_slit)
 
     # Run the pipeline step with the updated references (or the originals)
-    flat_corr = flat_step.call(
-        ext2d,
-        override_fflat=flat_reference_files["fflat"],
-        override_sflat=flat_reference_files["sflat"],
-        override_dflat=flat_reference_files["dflat"],
-    )
+    # flat_corr = flat_step.call(
+    #     ext2d,
+    #     override_fflat=flat_reference_files["fflat"],
+    #     override_sflat=flat_reference_files["sflat"],
+    #     override_dflat=flat_reference_files["dflat"],
+    # )
+    flat_step.override_fflat = flat_reference_files["fflat"]
+    flat_step.override_sflat = flat_reference_files["sflat"]
+    flat_step.override_dflat = flat_reference_files["dflat"]
+    flat_corr = flat_step.run(ext2d)
 
     if run_pathloss:
         ##########
@@ -1099,11 +1104,13 @@ def run_pipeline(
                 path_hdul.writeto(new_path_filename, overwrite=True)
                 path_hdul.close()
 
-            path_result = path_step.call(
-                flat_corr, override_pathloss=new_path_filename
-            )
+            # path_result = path_step.call(
+            #     flat_corr, override_pathloss=new_path_filename
+            # )
+            path_step.override_pathloss = new_path_filename
+            path_result = path_step.run(flat_corr)
         else:
-            path_result = path_step.call(flat_corr)
+            path_result = path_step.run(flat_corr)
     else:
         path_result = flat_corr
 
@@ -1135,11 +1142,13 @@ def run_pipeline(
                     bar_hdul.writeto(new_bar_filename, overwrite=True)
                     bar_hdul.close()
 
-                bar_result = bar_step.call(
-                    path_result, override_barshadow=new_bar_filename
-                )
+                # bar_result = bar_step.call(
+                #     path_result, override_barshadow=new_bar_filename
+                # )
+                bar_step.override_barshadow = new_bar_filename
+                bar_result = bar_step.run(path_result)
             else:
-                bar_result = bar_step.call(path_result)
+                bar_result = bar_step.run(path_result)
 
             last_result = bar_result
 
@@ -1165,10 +1174,11 @@ def run_pipeline(
             pref.write(new_phot_filename, overwrite=True)
 
         # Apply photom
-        result = phot_step.call(last_result, override_photom=new_phot_filename)
+        phot_step.override_photom = new_phot_filename
+        result = phot_step.run(last_result)
 
     else:
-        result = phot_step.call(last_result)
+        result = phot_step.run(last_result)
 
     ########
     # Figure

@@ -926,7 +926,7 @@ class NirspecPipeline:
             for file in self.files:
                 with pyfits.open(file) as hdu:
                     hdu[0].header["MSAMETFL"] = self.msametfl
-                    wcs.append(wstep.call(jwst.datamodels.ImageModel(hdu)))
+                    wcs.append(wstep.run(jwst.datamodels.ImageModel(hdu)))
 
             self.pipe["wcs"] = wcs
 
@@ -949,7 +949,7 @@ class NirspecPipeline:
                     utils.LOGFILE, msg, verbose=verbose, show_date=True
                 )
 
-                self.pipe["open"].append(step.call(obj))
+                self.pipe["open"].append(step.run(obj))
 
             self.last_step = "open"
 
@@ -963,7 +963,7 @@ class NirspecPipeline:
                     utils.LOGFILE, msg, verbose=verbose, show_date=True
                 )
 
-                self.pipe["2d"].append(step2d.call(obj))
+                self.pipe["2d"].append(step2d.run(obj))
 
         self.last_step = "2d"
 
@@ -982,7 +982,7 @@ class NirspecPipeline:
                     for _slit in obj.slits:
                         msautils.update_slit_metadata(_slit)
 
-                self.pipe["flat"].append(flat_step.call(obj))
+                self.pipe["flat"].append(flat_step.run(obj))
 
         self.last_step = "flat"
 
@@ -996,7 +996,7 @@ class NirspecPipeline:
                     utils.LOGFILE, msg, verbose=verbose, show_date=True
                 )
 
-                self.pipe["path"].append(path_step.call(obj))
+                self.pipe["path"].append(path_step.run(obj))
 
         self.last_step = "path"
 
@@ -1010,7 +1010,7 @@ class NirspecPipeline:
                     utils.LOGFILE, msg, verbose=verbose, show_date=True
                 )
 
-                self.pipe["bar"].append(bar_step.call(obj))
+                self.pipe["bar"].append(bar_step.run(obj))
 
             self.last_step = "bar"
 
@@ -1024,7 +1024,7 @@ class NirspecPipeline:
                     utils.LOGFILE, msg, verbose=verbose, show_date=True
                 )
 
-                self.pipe["phot"].append(phot_step.call(obj))
+                self.pipe["phot"].append(phot_step.run(obj))
 
         self.last_step = "phot"
 

@@ -219,16 +219,16 @@ class ExposureCube:
         if extend_wavelengths:
             input_wcs = assign_wcs_with_extended(input, **kwargs)
         else:
-            input_wcs = AssignWcsStep().call(input)
+            input_wcs = AssignWcsStep().run(input)
 
-        input_open = MSAFlagOpenStep().call(input_wcs)
+        input_open = MSAFlagOpenStep().run(input_wcs)
         if do_flatfield:
-            input_flat = FlatFieldStep().call(input_open)
+            input_flat = FlatFieldStep().run(input_open)
         else:
             input_flat = input_open
 
         if do_photom:
-            input_photom = PhotomStep().call(input_flat)
+            input_photom = PhotomStep().run(input_flat)
         else:
             input_photom = input_flat
 
