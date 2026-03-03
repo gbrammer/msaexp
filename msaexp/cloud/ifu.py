@@ -23,14 +23,7 @@ __all__ = [
     "combine_ifu_pipeline",
 ]
 
-LOGGER = None
-
-def log_message(msg, level=logging.INFO):
-    
-    if LOGGER is None:
-        print(f"{logging.getLevelName(level)} - {msg}")
-    else:
-        LOGGER.log(level, msg)
+LOGGER = logging.getLogger(__name__)
 
 
 def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
@@ -62,19 +55,19 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     row = db.SQL(QUERY_STRING)
 
     if len(row) == 0:
-        log_message("No empty rows found", logging.WARN)
+        LOGGER.log(logging.WARN, "No empty rows found")
         return None
 
     rate_file = "{fileSetName}_{detector}_rate.fits".format(**row[0])
 
     rowid = row["rowid"][0]
 
-    log_message(
+    LOGGER.log(
+        logging.INFO,
         (
             f"Run preprocess_ifu_file('{rate_file}', sync={sync}, **"
             + json.dumps(kwargs) + f")  # rowid={rowid}"
-        ),
-        logging.INFO
+        )
     )
 
     if sync:
@@ -95,7 +88,7 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
         else:
             status = 2
 
-        log_message(f"{rate_file} complete, status={status}", logging.INFO)
+        LOGGER.log(logging.INFO, f"{rate_file} complete, status={status}")
 
         now = time.time()
         db.execute(
@@ -106,7 +99,7 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
         files = glob.glob(rate_file.replace("_rate.fits", "*"))
         files.sort()
 
-        log_message(f"{rate_file} cleanup {json.dumps(files)}", logging.INFO)
+        LOGGER.log(logging.INFO, f"{rate_file} cleanup {json.dumps(files)}")
         
         for file in files:
             print(f"rm {file}")
@@ -153,7 +146,7 @@ def preprocess_ifu_file(
         mastquery.utils.download_from_mast([file])
 
         if not os.path.exists(file):
-            log_message(f"download failed, {file} not found", logging.INFO)
+            LOGGER.log(logging.INFO, f"download failed, {file} not found")
             return f"{file} not found"
 
     cube = msaifu.ExposureCube(
@@ -181,7 +174,7 @@ def preprocess_ifu_file(
         plt.close("all")
 
     # Saturated mask
-    log_message(f"{file} make saturated mask", logging.INFO)
+    LOGGER.log(logging.INFO, f"{file} make saturated mask")
 
     sat_file, sat_i = msautils.exposure_ramp_saturation(
         file, perform=perform_saturation, **kwargs
@@ -223,7 +216,7 @@ def preprocess_ifu_file(
             .replace("s3:/", "s3://")
         )
 
-        log_message(f"{file} sync to {s3_path}", logging.INFO)
+        LOGGER.log(logging.INFO, f"{file} sync to {s3_path}")
 
         file_prefix = os.path.basename(file.split("_rate")[0])
         for ext in [
