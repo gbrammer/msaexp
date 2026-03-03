@@ -32,8 +32,10 @@ import astropy.time
 
 import grizli
 from grizli import utils, jwst_utils
-jwst_utils.set_quiet_logging()
-utils.set_warnings()
+import logging
+
+# jwst_utils.set_quiet_logging()
+# utils.set_warnings()
 
 import astropy.io.fits as pyfits
 from jwst.datamodels import SlitModel
@@ -58,6 +60,8 @@ HOME = '/GrizliImaging/'
 if not os.path.exists(HOME):
     print(f"HOME={HOME} not found, using HOME={os.getcwd()}")
     HOME = os.getcwd()
+
+LOGGER = logging.getLogger(__name__)
 
 # NIRSPEC_HOME = '/GrizliImaging/NIRSpec'
 
