@@ -1205,9 +1205,23 @@ def slice_corners(
     coord2_data = []
 
     for ind, i in tqdm(enumerate(slice_indices)):
-        slice_wcs = nirspec.nrs_wcs_set_input(
-            input, i, wavelength_range=slice_wavelength_range
-        )
+        try:
+            slice_wcs = nirspec.nrs_wcs_set_input(
+                input, i, wavelength_range=slice_wavelength_range
+            )
+        except TypeError:
+            slice_wcs = nirspec.nrs_wcs_set_input(
+                input, i, # wavelength_range=slice_wavelength_range
+            )
+            transform = slice_wcs.get_transform("detector", "slit_frame")
+
+            slits = input.meta.wcs.get_transform("gwa", "slit_frame").slits
+            print("xxx", slits, slits[i])
+
+            slice_wcs.bounding_box = nirspec.compute_bounding_box(
+                transform, slits[i], slice_wavelength_range, refine=True
+            )
+
         x, y = wcstools.grid_from_bounding_box(
             slice_wcs.bounding_box, step=(1, 1), center=True
         )
