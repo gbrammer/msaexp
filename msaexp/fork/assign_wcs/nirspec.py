@@ -54,7 +54,7 @@ from jwst.assign_wcs.util import (
 from jwst.assign_wcs import pointing
 from jwst.lib.exposure_types import is_nrs_ifu_lamp
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("jwst.assign_wcs.nirspec")
 log.setLevel(logging.DEBUG)
 
 # from jwst.assign_wcs.nirspec import *
@@ -469,12 +469,25 @@ def ifu(input_model, reference_files, slit_y_range=[-.55, .55], limit_detectors=
     gwa2slit = gwa_to_ifuslit(slits, input_model, disperser, reference_files, slit_y_range)
 
     # SLIT to MSA transform
-    slit2slicer = ifuslit_to_slicer(slits, reference_files, input_model)
+    try:
+        slit2slicer = ifuslit_to_slicer(slits, reference_files, input_model)
+    except TypeError:
+        slit2slicer = ifuslit_to_slicer(slits, reference_files)
 
     # SLICER to MSA Entrance
     slicer2msa = slicer_to_msa(reference_files)
 
-    det, sca, gwa, slit_frame, msa_frame, oteip, v2v3, v2v3vacorr, world = create_frames()
+    _ = create_frames()
+    
+    try:
+        (det, sca, gwa, slit_frame,
+         msa_frame, oteip, v2v3, v2v3vacorr, world
+         ) = _
+    except ValueError:
+        (det, sca, gwa, slit_frame,
+         slicer_frame,
+         msa_frame, oteip, v2v3, v2v3vacorr, world
+         ) = _
 
     exp_type = input_model.meta.exposure.type.upper()
 
@@ -493,7 +506,10 @@ def ifu(input_model, reference_files, slit_y_range=[-.55, .55], limit_detectors=
         msa2oteip = ifu_msa_to_oteip(reference_files)
         # OTEIP to V2,V3 transform
         # This includes a wavelength unit conversion from meters to microns.
-        oteip2v23 = oteip_to_v23(reference_files, input_model)
+        try:
+            oteip2v23 = oteip_to_v23(reference_files, input_model)
+        except TypeError:
+            oteip2v23 = oteip_to_v23(reference_files)
 
         # Compute differential velocity aberration (DVA) correction:
         va_corr = pointing.dva_corr_model(

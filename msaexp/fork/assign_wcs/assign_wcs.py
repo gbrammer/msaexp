@@ -10,13 +10,13 @@ from jwst.assign_wcs.miri import store_dithered_position
 
 from .nirspec import ifu as ifu_fork
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("jwst.assign_wcs.assign_wcs")
 log.setLevel(logging.DEBUG)
 
 __all__ = ["load_wcs"]
 
 
-def load_wcs(input_model, reference_files={}, nrs_slit_y_range=None):
+def load_wcs(input_model, reference_files={}, nrs_slit_y_range=None, **kwargs):
     """
     Create a gWCS object and store it in ``Model.meta``.
 
@@ -90,7 +90,16 @@ def load_wcs(input_model, reference_files={}, nrs_slit_y_range=None):
                 if output_model.meta.exposure.type.lower() == 'mir_lrs-slitless':
                     output_model.wavelength = get_wavelengths(output_model)
             elif output_model.meta.exposure.type.lower() == "nrs_ifu":
-                update_s_region_nrs_ifu(output_model, mod)
+                try:
+                    update_s_region_nrs_ifu(output_model, mod)
+                except TypeError:
+                    try:
+                        update_s_region_nrs_ifu(output_model)
+                    except TypeError as exc:
+                        log.info("Unable to update S_REGION for type {}: {}".format(
+                        output_model.meta.exposure.type, exc))
+                        
+                    
             elif output_model.meta.exposure.type.lower() == 'mir_mrs':
                 update_s_region_mrs(output_model)
             else:

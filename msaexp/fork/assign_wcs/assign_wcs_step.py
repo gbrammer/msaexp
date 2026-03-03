@@ -11,7 +11,7 @@ from jwst.assign_wcs.nircam import imaging as nircam_imaging
 from jwst.assign_wcs.niriss import imaging as niriss_imaging
 
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('jwst.assign_wcs.assign_wcs_step')
 log.setLevel(logging.DEBUG)
 
 __all__ = ["AssignWcsStep"]
