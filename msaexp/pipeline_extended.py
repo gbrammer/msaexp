@@ -720,7 +720,10 @@ def assign_wcs_with_extended(dm, file=None, ranges=EXTENDED_RANGES, **kwargs):
     # slit_y_range = [wstep.slit_y_low, wstep.slit_y_high]
     try:
         # with_wcs = load_wcs(dm, wcs_reference_files, slit_y_range)
-        with_wcs = wstep.call(dm, override_wavelengthrange=new_waverange)
+        # with_wcs = wstep.call(dm, override_wavelengthrange=new_waverange)
+        wstep.override_wavelengthrange = new_waverange
+        with_wcs = wstep.run(dm)
+
     except NoDataOnDetectorError:
         msg = f"{file} No open slits found to work on"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
