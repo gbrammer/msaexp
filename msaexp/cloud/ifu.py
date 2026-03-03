@@ -1,13 +1,15 @@
 import os
 import numpy as np
 import subprocess
+import json
+import logging
 
 import matplotlib.pyplot as plt
 import astropy.io.fits as pyfits
 
 from grizli import jwst_utils
 
-jwst_utils.set_quiet_logging(50)
+# jwst_utils.set_quiet_logging(50)
 
 from grizli import utils
 
@@ -21,6 +23,15 @@ __all__ = [
     "combine_ifu_pipeline",
 ]
 
+LOGGER = None
+
+def log_message(msg, level=logging.INFO):
+    
+    if LOGGER is None:
+        print(f"{logging.getLevelName(level)} - {msg}")
+    else:
+        LOGGER.log(level, msg)
+
 
 def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     """
@@ -31,32 +42,41 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     import time
 
     if rowid is None:
-        row = db.SQL(
-            f"""
+        QUERY_STRING = f"""
             SELECT rowid, \"fileSetName\", LOWER(detector) as detector
             FROM nirspec_ifu_exposures
             WHERE status = 0
             ORDER BY RANDOM()
             LIMIT 1
         """
-        )
+        
     else:
-        row = db.SQL(
-            f"""
+        QUERY_STRING = f"""
             SELECT rowid, \"fileSetName\", LOWER(detector) as detector
             FROM nirspec_ifu_exposures
             WHERE rowid = {rowid}
             ORDER BY RANDOM()
             LIMIT 1
         """
-        )
+
+    row = db.SQL(QUERY_STRING)
 
     if len(row) == 0:
+        log_message("No empty rows found", logging.WARN)
         return None
 
     rate_file = "{fileSetName}_{detector}_rate.fits".format(**row[0])
 
     rowid = row["rowid"][0]
+
+    log_message(
+        (
+            f"Run preprocess_ifu_file('{rate_file}', sync={sync}, **"
+            + json.dumps(kwargs) + f")  # rowid={rowid}"
+        ),
+        logging.INFO
+    )
+
     if sync:
         now = time.time()
         db.execute(
@@ -75,6 +95,8 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
         else:
             status = 2
 
+        log_message(f"{rate_file} complete, status={status}", logging.INFO)
+
         now = time.time()
         db.execute(
             f"UPDATE nirspec_ifu_exposures SET status = {status}, ctime = {now} WHERE rowid = {rowid}"
@@ -83,6 +105,9 @@ def run_one_preprocess_ifu(clean=False, sync=False, rowid=None, **kwargs):
     if clean:
         files = glob.glob(rate_file.replace("_rate.fits", "*"))
         files.sort()
+
+        log_message(f"{rate_file} cleanup {json.dumps(files)}", logging.INFO)
+        
         for file in files:
             print(f"rm {file}")
             os.remove(file)
@@ -128,6 +153,7 @@ def preprocess_ifu_file(
         mastquery.utils.download_from_mast([file])
 
         if not os.path.exists(file):
+            log_message(f"download failed, {file} not found", logging.INFO)
             return f"{file} not found"
 
     cube = msaifu.ExposureCube(
@@ -155,6 +181,8 @@ def preprocess_ifu_file(
         plt.close("all")
 
     # Saturated mask
+    log_message(f"{file} make saturated mask", logging.INFO)
+
     sat_file, sat_i = msautils.exposure_ramp_saturation(
         file, perform=perform_saturation, **kwargs
     )
@@ -194,6 +222,9 @@ def preprocess_ifu_file(
             .replace("//", "/")
             .replace("s3:/", "s3://")
         )
+
+        log_message(f"{file} sync to {s3_path}", logging.INFO)
+
         file_prefix = os.path.basename(file.split("_rate")[0])
         for ext in [
             "cal.yaml",
