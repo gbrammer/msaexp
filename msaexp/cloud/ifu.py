@@ -338,6 +338,7 @@ def run_one_products_ifu(
         )
 
     if len(row) == 0:
+        LOGGER.log(logging.WARN, "No empty rows found")
         return None
 
     if row["yaml_kwargs"][0]:
@@ -350,6 +351,14 @@ def run_one_products_ifu(
     rowid = row["rowid"][0]
     obsid = row["obsid"][0]
     gfilt = row["gfilt"][0]
+
+    LOGGER.log(
+        logging.INFO,
+        (
+            f"Run run_one_products_ifu(rowid={rowid}, sync={sync}, **"
+            + json.dumps(kwargs) + f")  # {obsid} {gfilt}"
+        )
+    )
 
     if sync:
         now = time.time()
@@ -378,6 +387,8 @@ def run_one_products_ifu(
             f"UPDATE nirspec_ifu_products SET status = 2, ctime = {now}, outroot = '{outroot}' WHERE rowid = {rowid}"
         )
 
+        LOGGER.log(logging.INFO, f"rowid={rowid} complete, status=2")
+
         s3_path = os.path.join(s3_prefix, "jw" + obsid) + "/"
         s3_path = s3_path.replace("//", "/").replace("s3:/", "s3://")
 
@@ -389,6 +400,12 @@ def run_one_products_ifu(
         )
 
     if clean:
+        
+        LOGGER.log(
+            logging.INFO,
+            f"rowid={rowid} cleanup {json.dumps(result_files)}"
+        )
+        
         for file in result_files:
             print(f"rm {file}")
             os.remove(file)
