@@ -1972,7 +1972,8 @@ class SlitGroup:
 
         return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
 
-    def set_background_spectra(self, path="", skip_h_gratings=True, **kwargs):
+
+    def set_background_spectra(self, path="", mask_yslit=[[-4,4]], df=0, resid_limits=[-3, 5], skip_h_gratings=True, **kwargs):
         """
         Try to read global sky background spectra
         """
@@ -2072,6 +2073,74 @@ class SlitGroup:
 
         self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
         self.mask &= np.isfinite(self.var_total) & (self.var_total > 0)
+
+        if df > 0:
+            gsky = self.sky_data["sky2d"] * 1.
+
+            xminmax = (self.wave[self.mask].min(), self.wave[self.mask].max())
+            bspl = utils.bspline_templates(
+                self.wave.flatten(),
+                df=int(df),
+                get_matrix=True,
+                minmax=xminmax
+            )
+
+            msg = (
+                f"{__name__} set_background_spectra: scale df={int(df)}"
+                + f" wrange = {xminmax[0]:.2f} {xminmax[1]:.2f}"
+            )
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+            msk = self.mask & True
+
+            for ymask in mask_yslit:
+                msk &= ~((self.yslit > ymask[0]) & (self.yslit < ymask[1]))
+
+                msg = (
+                    f"{__name__} set_background_spectra: exclude yslit = "
+                    + f"[{ymask[0]:.1f}, {ymask[1]:.1f}]  N={msk.sum()}"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+            # (np.abs(self.yslit) > 4)
+            sivar = 1/np.sqrt(self.var_total)
+            sky_resid = (self.sci - self.sky_background) * sivar
+            msk &= sky_resid > resid_limits[0]
+            msk &= sky_resid < resid_limits[1]
+            msg = (
+                f"{__name__} set_background_spectra: sky_residuals "
+                + f"[{resid_limits[0]:.1f}, {resid_limits[1]:.1f}]"
+                + f"  N={msk.sum()}"
+            )
+            utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+
+            if msk.sum() < 10:
+                msg = (
+                    f"{__name__} set_background_spectra: empty mask"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
+                
+                return False
+
+            Ax = (bspl.T * gsky.flatten() * sivar.flatten()).T
+            yx = (self.sci * sivar).flatten()
+
+            c = np.linalg.lstsq(
+                Ax[msk.flatten(), :],
+                yx[msk.flatten()],
+                rcond=None
+            )
+
+            mbspl = bspl.dot(c[0]).reshape(gsky.shape)
+
+            self.sky_data["sky2d"] *= mbspl
+            self.sky_data["rescale"] = {
+                "minmax": xminmax,
+                "df": int(df),
+            }
+
+        else:
+            return True
 
     def estimate_sky(
         self,
@@ -2927,6 +2996,7 @@ class SlitGroup:
                 sky = self.sky_data["sky2d"] * 1.0
             else:
                 sky = np.zeros_like(self.wave)
+
         elif self.sky_arrays is not None:
             sky = np.interp(
                 self.wave,
