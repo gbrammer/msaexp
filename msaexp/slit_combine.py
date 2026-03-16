@@ -1973,9 +1973,46 @@ class SlitGroup:
         return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
 
 
-    def set_background_spectra(self, path="", mask_yslit=[[-4,4]], df=0, resid_limits=[-3, 5], skip_h_gratings=True, **kwargs):
+    def set_background_spectra(self, path="", skip_h_gratings=True, df=0, wsteps=None, mask_yslit=[[-4,4]], resid_limits=[-3, 5], apply_to_background=True, **kwargs):
         """
-        Try to read global sky background spectra
+        Read global sky background spectra in "gbkg.fits" files
+        
+        Parameters
+        ----------
+        path : str
+            Path to files
+    
+        skip_h_gratings : bool
+            Skip this function for H gratings where the background spectra
+            often are clipped with NaN values
+
+        df : int
+            Degrees of freedom of the rescaling function of the bkg spectra fit
+            to the slit data
+
+        wsteps : array, None
+            Optional wavelength array to set the x scale of the rescaling
+            function.  Set this to the typical PRISM wavelength grid to
+            generate the rescaling function on a scale close to that of the
+            original detector sampling.
+
+        mask_yslit : list of 2-tuples
+            Ranges in the centered y slit coordinates to exclude from the 
+            rescaling calculation, e.g., to exclude the source itself
+
+        resid_limits : (float, float)
+            Limits on the (data - sky) / err residuals to include in the
+            rescaling fit
+
+        apply_to_background : bool
+            By default apply the rescaling to the background spectra.
+            If set to False, apply the inverse scaling to the science data
+            and variance arrays
+
+        Returns
+        -------
+        Updates the sky_data["sky2d"] attribute
+
         """
 
         if skip_h_gratings & (self.grating.upper().endswith('H')):
@@ -2074,16 +2111,36 @@ class SlitGroup:
         self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
         self.mask &= np.isfinite(self.var_total) & (self.var_total > 0)
 
-        if df > 0:
+        if  df > 0:
             gsky = self.sky_data["sky2d"] * 1.
 
-            xminmax = (self.wave[self.mask].min(), self.wave[self.mask].max())
-            bspl = utils.bspline_templates(
-                self.wave.flatten(),
-                df=int(df),
-                get_matrix=True,
-                minmax=xminmax
-            )
+            if wsteps is None:
+                xminmax = (
+                    self.wave[self.mask].min(), self.wave[self.mask].max()
+                )
+
+                bspl = utils.bspline_templates(
+                    self.wave.flatten(),
+                    df=int(df),
+                    get_matrix=True,
+                    minmax=xminmax
+                )
+            else:
+                xminmax = (0.0, 1.0)
+
+                xinterp = np.interp(
+                    self.wave.flatten(),
+                    wsteps,
+                    np.linspace(0, 1.0, len(wsteps)),
+                    left=0.0, right=1.0,
+                )
+
+                bspl = utils.bspline_templates(
+                    xinterp,
+                    df=int(df),
+                    get_matrix=True,
+                    minmax=xminmax
+                )
 
             msg = (
                 f"{__name__} set_background_spectra: scale df={int(df)}"
@@ -2093,7 +2150,7 @@ class SlitGroup:
 
             msk = self.mask & True
 
-            for ymask in mask_yslit:
+            for ymask in np.atleast_2d(mask_yslit):
                 msk &= ~((self.yslit > ymask[0]) & (self.yslit < ymask[1]))
 
                 msg = (
@@ -2131,12 +2188,33 @@ class SlitGroup:
                 rcond=None
             )
 
-            mbspl = bspl.dot(c[0]).reshape(gsky.shape)
+            scale_sky = bspl.dot(c[0]).reshape(gsky.shape)
 
-            self.sky_data["sky2d"] *= mbspl
+            if apply_to_background:
+                self.sky_data["sky2d"] *= scale_sky
+
+                self.var_total = (
+                    self.var_poisson + self.var_rnoise + 
+                    self.var_sky * scale_sky**2
+                )
+
+            else:
+                self.phot_corr /= scale_sky
+                self.sci /= scale_sky
+                self.var_rnoise /= scale_sky**2
+                self.var_poisson /= scale_sky**2
+            
+                self.var_total = (
+                    self.var_poisson + self.var_rnoise + self.var_sky
+                )
+            
             self.sky_data["rescale"] = {
                 "minmax": xminmax,
                 "df": int(df),
+                "wsteps": wsteps,
+                "coeffs": c,
+                "apply_to_background": apply_to_background,
+                "scale_sky": scale_sky,
             }
 
         else:
