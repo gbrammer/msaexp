@@ -63,6 +63,12 @@ SCALE_FWHM = 1.0
 DEFAULT_WINGS = None
 WINGS_XOFF = None
 
+PLUS3 = [
+    [0, 1, 0],
+    [1, 1, 1],
+    [0, 1, 0]
+]
+
 __all__ = [
     "split_visit_groups",
     "SlitGroup",
@@ -612,6 +618,7 @@ class SlitGroup:
         flag_profile_kwargs=None,
         do_multiple_mask=True,
         flag_trace_kwargs={},
+        flag_2d_kwargs=None,
         flag_percentile_kwargs={},
         undo_pathloss=True,
         trace_with_xpos=False,
@@ -966,6 +973,9 @@ class SlitGroup:
         if (flag_trace_kwargs is not None) & (self.mask.sum() > 100):
             if self.meta["position_key"] != "manual_position":
                 self.flag_trace_outliers(**flag_trace_kwargs)
+
+        if (flag_2d_kwargs is not None) & (self.mask.sum() > 100):
+            self.flag_2d_outliers(**flag_2d_kwargs)
 
         if (flag_percentile_kwargs is not None) & (self.mask.sum() > 100):
             self.flag_percentile_outliers(**flag_percentile_kwargs)
@@ -1973,7 +1983,7 @@ class SlitGroup:
         return ncold, nhot, cold_flagged * 1 + hot_flagged * 2
 
 
-    def set_background_spectra(self, path="", skip_h_gratings=True, df=0, wsteps=None, mask_yslit=[[-4,4]], resid_limits=[-3, 5], apply_to_background=True, **kwargs):
+    def set_background_spectra(self, path="", skip_h_gratings=True, df=-1, by_wavelength=False, wsteps=None, poly=False, mask_yslit=[[-4,4]], resid_limits=[-3, 5], apply_to_background=True, **kwargs):
         """
         Read global sky background spectra in "gbkg.fits" files
         
@@ -2111,8 +2121,13 @@ class SlitGroup:
         self.var_total = self.var_rnoise + self.var_poisson + self.var_sky
         self.mask &= np.isfinite(self.var_total) & (self.var_total > 0)
 
-        if  df > 0:
+        if  df >= 0:
             gsky = self.sky_data["sky2d"] * 1.
+
+            if (wsteps is None) & (not by_wavelength):
+                wsteps = np.nanpercentile(
+                    self.wave.flatten(), np.linspace(0, 100, 17)
+                )
 
             if wsteps is None:
                 xminmax = (
@@ -2135,16 +2150,22 @@ class SlitGroup:
                     left=0.0, right=1.0,
                 )
 
-                bspl = utils.bspline_templates(
-                    xinterp,
-                    df=int(df),
-                    get_matrix=True,
-                    minmax=xminmax
-                )
+                if poly:
+                    bspl = np.polynomial.chebyshev.chebvander(
+                        xinterp * 2 - 1,
+                        df
+                    )
+                else:
+                    bspl = utils.bspline_templates(
+                        xinterp,
+                        df=int(df),
+                        get_matrix=True,
+                        minmax=xminmax
+                    )
 
             msg = (
-                f"{__name__} set_background_spectra: scale df={int(df)}"
-                + f" wrange = {xminmax[0]:.2f} {xminmax[1]:.2f}"
+                f"{__name__} set_background_spectra: scale poly={poly}"
+                + f" df={int(df)} wrange = {xminmax[0]:.2f} {xminmax[1]:.2f}"
             )
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
@@ -2212,6 +2233,7 @@ class SlitGroup:
                 "minmax": xminmax,
                 "df": int(df),
                 "wsteps": wsteps,
+                "poly": poly,
                 "coeffs": c,
                 "apply_to_background": apply_to_background,
                 "scale_sky": scale_sky,
@@ -2647,6 +2669,62 @@ class SlitGroup:
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
         return outlier
+
+    def flag_2d_outliers(self, filter_size=5, threshold=[-5, 5], with_mask=False, dilate_structure=PLUS3, in_place=True):
+        """
+        """
+        if with_mask:
+            msk = np.nan**(1-self.mask)
+        else:
+            msk = self.mask**0
+
+        sci2d = np.array([
+            (self.sci[i,:] * msk[i,:]).reshape(self.sh)
+            for i, s in enumerate(self.slits)
+        ])
+
+        var2d = np.array([
+            (self.var_total[i,:] * msk[i,:]).reshape(self.sh)
+            for i, s in enumerate(self.slits)
+        ])
+
+        s2d = np.nanmedian(sci2d, axis=0)
+        v2d = np.nanmedian(var2d, axis=0)
+
+        w2d = self.wave[0,:].reshape(self.sh)
+        m2d = np.isfinite(s2d + v2d + w2d)
+        so = np.argsort(w2d[m2d])
+
+        resid = (
+            (s2d[m2d][so] -  nd.median_filter(s2d[m2d][so], filter_size))
+            / np.sqrt(v2d[m2d][so])
+        )
+
+        outlier = (resid < threshold[0]) | (resid > threshold[1])
+
+        valid = np.ones(s2d.shape, dtype=bool).flatten()
+        ix = np.where(m2d.flatten())[0][so][outlier]
+        valid[ix] = False
+
+        if dilate_structure:
+            valid = ~nd.binary_dilation(
+                (~valid).reshape(self.sh),
+                structure=dilate_structure,
+            ).flatten()
+
+        msg = (
+            f" {'flag_2d_outliers':<28}: filter_size={filter_size}"
+            f", threshold={threshold}"
+            f"  flagged={(~valid).sum()}"
+        )
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+        if in_place:
+            for i, s in enumerate(self.slits):
+                self.mask[i, :] &= valid
+
+        return valid
+
 
     def flag_percentile_outliers(
         self,
