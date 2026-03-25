@@ -72,7 +72,6 @@ import astropy.units as u
 
 import eazy.igm
 
-from . import drizzle
 from . import utils as msautils
 
 try:
@@ -846,6 +845,7 @@ class SpectrumSampler(object):
 
             fig.tight_layout(pad=1)
         """
+        from . import drizzle
 
         if isinstance(self.spec_input, pyfits.HDUList):
             out_hdul = drizzle.extract_from_hdul(self.spec_input, **kwargs)

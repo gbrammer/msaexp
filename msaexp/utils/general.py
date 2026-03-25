@@ -9,8 +9,6 @@ import numpy as np
 import astropy.io.fits as pyfits
 import matplotlib.colorizer
 
-import jwst.datamodels
-
 import grizli.utils
 
 log = logging.getLogger(__name__)
@@ -41,18 +39,60 @@ BAD_PIXEL_FLAG = 1 | 1024
 # Valid NRS pixels ((ymin, ymax), (xmin, xmax))
 DETECTOR_EDGES = ((0, 2048), (0, 2038))
 
+# Copy of jwst.datamodels.dqflags.pixel
+PIXEL_FLAGS = {
+    'GOOD': 0,
+    'DO_NOT_USE': 1,
+    'SATURATED': 2,
+    'JUMP_DET': 4,
+    'DROPOUT': 8,
+    'OUTLIER': 16,
+    'PERSISTENCE': 32,
+    'AD_FLOOR': 64,
+    'CHARGELOSS': 128,
+    'UNRELIABLE_ERROR': 256,
+    'NON_SCIENCE': 512,
+    'DEAD': 1024,
+    'HOT': 2048,
+    'WARM': 4096,
+    'LOW_QE': 8192,
+    'RC': 16384,
+    'TELEGRAPH': 32768,
+    'NONLINEAR': 65536,
+    'BAD_REF_PIXEL': 131072,
+    'NO_FLAT_FIELD': 262144,
+    'NO_GAIN_VALUE': 524288,
+    'NO_LIN_CORR': 1048576,
+    'NO_SAT_CHECK': 2097152,
+    'UNRELIABLE_BIAS': 4194304,
+    'UNRELIABLE_DARK': 8388608,
+    'UNRELIABLE_SLOPE': 16777216,
+    'UNRELIABLE_FLAT': 33554432,
+    'OPEN': 67108864,
+    'ADJ_OPEN': 134217728,
+    'FLUX_ESTIMATED': 268435456,
+    'MSA_FAILED_OPEN': 536870912,
+    'OTHER_BAD_PIXEL': 1073741824,
+    'REFERENCE_PIXEL': 2147483648
+}
 
 def set_bad_pixel_flag():
     """
-    Set the global ``BAD_PIXEL_FLAG`` variable"""
+    Set the global ``BAD_PIXEL_FLAG`` variable
+    """
+    # import jwst.datamodels
+    try:
+        from jwst.datamodels.dqflags import pixel as DQ_PIXEL_FLAGS
+    except ImportError:
+        DQ_PIXEL_FLAGS = PIXEL_FLAGS
+
     global BAD_PIXEL_FLAG
 
     for _bp in BAD_PIXEL_NAMES:
-        BAD_PIXEL_FLAG |= jwst.datamodels.dqflags.pixel[_bp]
-
+        if _bp in DQ_PIXEL_FLAGS:
+            BAD_PIXEL_FLAG |= DQ_PIXEL_FLAGS[_bp]
 
 set_bad_pixel_flag()
-
 
 def set_plot_style(style_file=None):
     """
