@@ -6,6 +6,7 @@ import gc
 import traceback
 import glob
 import yaml
+import logging
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,6 +21,8 @@ from grizli import utils
 import grizli
 import msaexp
 import msaexp.spectrum
+
+from .utils import upload_to_s3, download_file
 
 # test = """
 # zfit="(0.1,9)"
@@ -40,75 +43,7 @@ __all__ = [
     "run_one_redshift_fit",
 ]
 
-
-def download_file(URL, force=False):
-    """
-    """
-    import requests
-    out_file = os.path.basename(URL)
-    if os.path.exists(out_file) & (not force):
-        return out_file
-
-    msg = f'download {URL} to {out_file}'
-    utils.log_comment(utils.LOGFILE, msg, verbose=True)
-
-    resp = requests.get(URL.replace("+", "%2B"))
-    # save to file        
-    with open(out_file,'wb') as FLE:
-        FLE.write(resp.content)
-
-    return out_file
-
-def upload_to_s3(file_name, bucket, object_name=None, ExtraArgs={}, verbose=True):
-    """Upload a file to an S3 bucket
-
-    :param file_name: File to upload
-    :param bucket: Bucket to upload to
-    :param object_name: S3 object name. If not specified then file_name is used
-    :return: True if file was uploaded, else False
-    """
-    import logging
-    import boto3
-    from botocore.exceptions import ClientError
-    import os
-
-    # If S3 object_name was not specified, use file_name
-    if object_name is None:
-        object_name = os.path.basename(file_name)
-
-    # Upload the file
-    s3_client = boto3.client('s3')
-
-    msg = f'upload {file_name} to s3://{bucket}/{object_name}'
-    
-    if object_name.endswith('png'):
-        ExtraArgs['ContentType'] = 'image/png'
-    elif object_name.endswith('jpg'):
-        ExtraArgs['ContentType'] = 'image/jpeg'
-    elif object_name.endswith('fits'):
-        ExtraArgs['ContentType'] = 'application/fits'
-    else:
-        ExtraArgs['ContentType'] = 'text/plain'
-        
-    try:
-        response = s3_client.upload_file(
-            file_name,
-            bucket,
-            object_name,
-            ExtraArgs=ExtraArgs
-        )
-
-    except ClientError as e:
-        logging.error(e)
-        if verbose:
-            print(msg + ' [FAILED]')
-        return False
-
-    if verbose:
-        print(msg)
-
-    return True
-
+LOGGER = logging.getLogger(__name__)
 
 def read_templates(for_prism=True, eazy_templates=False, single_template=False):
     import eazy
@@ -126,7 +61,7 @@ def read_templates(for_prism=True, eazy_templates=False, single_template=False):
     # Add PSB template
     if not os.path.exists('young_post_starburst.fits'):
         UU = 'https://s3.amazonaws.com/msaexp-nirspec/scratch/young_post_starburst.fits'
-        download_file(UU, force=False)
+        download_file(UU, overwrite=False)
 
     psb = eazy.templates.Template('young_post_starburst.fits')
     ORIG_TEMPLATES.append(psb)
@@ -232,7 +167,8 @@ def resample_templates(R=800):
     
     msg = f'fit_msa_redshift: resample templates to R={R}  (N={len(tlog)})'
     utils.log_comment(utils.LOGFILE, msg, verbose=True)
-    
+    LOGGER.debug(msg)
+
     igm_obj = eazy.igm.Inoue14()
     z = 10
     igm = igm_obj.full_IGM(z, tlog*(1+z))
@@ -248,12 +184,10 @@ def resample_templates(R=800):
             EAZY_TEMPLATES.append(ti)
             res_status = ''
 
-        utils.log_comment(
-            utils.LOGFILE,
-            f'resample_templates: {ti.name:>44} {len(ti.wave):>8} {res_status}',
-            verbose=True
-        )
-            
+        msg = f'resample_templates: {ti.name:>44} {len(ti.wave):>8} {res_status}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        LOGGER.debug(msg)
+
         # EAZY_TEMPLATES[-1].flux *= igm
         EAZY_TEMPLATES[-1].resample_R = R
 
@@ -415,15 +349,15 @@ def handle_nirspec_redshift(event, ACL='public-read', clean=True):
     """
     import time
     from grizli.aws import db
-    
+
     print(f'handle_nirspec_redshift: {event}')
-    
+
     db.execute(f"""UPDATE nirspec_redshift_handler
     SET status = 1, ctime={time.time()}
     WHERE root = '{event['root']}' AND file = '{event['file']}'
     """
     )
-    
+
     field = event['root'].split('-v')[0]
     if field in ['macs0417', 'macs0416', 'abell370', 'macs1423', 'macs1149']:
         s3_path = 'grizli-canucs/nirspec'
@@ -481,8 +415,12 @@ def handle_nirspec_redshift(event, ACL='public-read', clean=True):
         if fi == file:
             continue
 
-        obj_name = os.path.join('/'.join(s3_path.split('/')[1:]), event['root'], fi)
-        
+        obj_name = os.path.join(
+            '/'.join(s3_path.split('/')[1:]),
+            event['root'],
+            fi
+        )
+
         upload_to_s3(
             fi,
             bucket,
@@ -512,7 +450,7 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
     utils.log_comment(utils.LOGFILE, f'grizli version {grizli.__version__}', verbose=True)
     utils.log_comment(utils.LOGFILE, f'msaexp version {msaexp.__version__}', verbose=True)
     
-    download_file(URL, force=False)
+    download_file(URL, overwrite=False)
     spec = msaexp.spectrum.SpectrumSampler(file)
 
     ##########
@@ -624,11 +562,15 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
     if spec.meta['GRATING'].upper() == 'PRISM':
         msg = f'{file}: Prism templates'
         utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        LOGGER.debug(msg)
+
         IS_GRATING = False
         
-        read_templates(for_prism=True,
-                       eazy_templates=use_eazy_templates,
-                       single_template=single_template)
+        read_templates(
+            for_prism=True,
+            eazy_templates=use_eazy_templates,
+            single_template=single_template
+        )
         
         resample_templates(R=800)
         plt_kwargs['eazy_templates'] = EAZY_TEMPLATES
@@ -637,8 +579,11 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
 
         msg = f'{file}: Use Medium-resolution line widths'
         utils.log_comment(utils.LOGFILE, msg, verbose=True)
-    
-        plt_kwargs['vel_width'] = (100. if force_vel_width < 0 else force_vel_width)
+        LOGGER.debug(msg)
+
+        plt_kwargs['vel_width'] = (
+            100. if force_vel_width < 0 else force_vel_width
+        )
         plt_kwargs['is_prism'] = False
         
         zstep = [float(np.maximum(plt_kwargs['vel_width']/3.e5*1.4, 0.001)),
@@ -660,7 +605,7 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
             
             resample_templates(R=2.5*3.e5/plt_kwargs['vel_width'])
             plt_kwargs['eazy_templates'] = EAZY_TEMPLATES
-                
+
         if 'jades' not in outroot:
             smooth_sigma = 2
 
@@ -668,8 +613,11 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
 
         msg = f'{file}: Use High-resolution line width'
         utils.log_comment(utils.LOGFILE, msg, verbose=True)
-        
-        plt_kwargs['vel_width'] = (100. if force_vel_width < 0 else force_vel_width)
+        LOGGER.debug(msg)
+
+        plt_kwargs['vel_width'] = (
+            100. if force_vel_width < 0 else force_vel_width
+        )
         plt_kwargs['is_prism'] = False
 
         zstep = [float(np.maximum(plt_kwargs['vel_width']/3.e5*1.4, 0.001)),
@@ -706,7 +654,9 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
     plt.ioff()
 
     try:
-        _ = msaexp.spectrum.fit_redshift(file=file, z0=z0, zstep=zstep, **plt_kwargs)
+        _ = msaexp.spectrum.fit_redshift(
+            file=file, z0=z0, zstep=zstep, **plt_kwargs
+        )
         fig0, ztab, zfit = _
     except:
         utils.log_exception(utils.LOGFILE, traceback)
@@ -747,7 +697,9 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
     plt_kwargs['eazy_templates'] = None
     plt_kwargs['nspline'] = orig_nspline
     print(plt_kwargs['nspline'])
-    _fig, zsp, res = msaexp.spectrum.plot_spectrum(file, z=zfit['z'], **plt_kwargs)
+    _fig, zsp, res = msaexp.spectrum.plot_spectrum(
+        file, z=zfit['z'], **plt_kwargs
+    )
     
     xres = {}
     for k in res:

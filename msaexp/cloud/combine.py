@@ -8,6 +8,7 @@ import glob
 import subprocess
 import time
 import traceback
+import logging
 
 import yaml
 
@@ -35,6 +36,7 @@ __all__ = [
     "get_targets",
 ]
 
+LOGGER = logging.getLogger(__name__)
 
 if 0:
     root = "snh0pe-v4"

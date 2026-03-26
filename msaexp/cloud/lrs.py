@@ -5,6 +5,7 @@ Scripts for reducting MIR LRS data with a high-quality PSF model
 import os
 import glob
 import yaml
+import logging
 
 import numpy as np
 
@@ -28,6 +29,8 @@ import astropy.units as u
 CROSS_PSCALE = 0.11057
 
 CRDS_CONTEXT = "jwst_1464.pmap"
+
+LOGGER = logging.getLogger(__name__)
 
 def full_lrs_pipeline(
     prog=5141,
