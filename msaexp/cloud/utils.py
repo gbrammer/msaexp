@@ -355,7 +355,7 @@ def download_from_s3(
 
     """
     import boto3
-    from boto3.exceptions import S3UploadFailedError
+    from boto3.exceptions import S3TransferFailedError
     from botocore.exceptions import ClientError
 
     path_split = path.split("s3://")[1].split("/")
