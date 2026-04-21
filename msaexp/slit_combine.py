@@ -974,9 +974,6 @@ class SlitGroup:
             if self.meta["position_key"] != "manual_position":
                 self.flag_trace_outliers(**flag_trace_kwargs)
 
-        if (flag_2d_kwargs is not None) & (self.mask.sum() > 100):
-            self.flag_2d_outliers(**flag_2d_kwargs)
-
         if (flag_percentile_kwargs is not None) & (self.mask.sum() > 100):
             self.flag_percentile_outliers(**flag_percentile_kwargs)
 
@@ -1884,6 +1881,7 @@ class SlitGroup:
             self.meta["num_shutters"] = len(self.info["shutter_state"][0])
         elif self.meta["num_shutters"] == 0:
             self.meta["num_shutters"] = self.unp.N * 1
+            self.meta["wrap_barshadow"] = False
 
         if self.meta["undo_barshadow"] == 2:
             self.apply_spline_bar_correction()
@@ -2670,7 +2668,7 @@ class SlitGroup:
 
         return outlier
 
-    def flag_2d_outliers(self, filter_size=5, threshold=[-5, 5], with_mask=False, dilate_structure=PLUS3, in_place=True):
+    def flag_2d_outliers(self, tfit=None, filter_size=5, threshold=[-10, 10], with_mask=False, trim_multiples=True, dilate_structure=PLUS3, in_place=True):
         """
         """
         if with_mask:
@@ -2678,15 +2676,28 @@ class SlitGroup:
         else:
             msk = self.mask**0
 
-        sci2d = np.array([
-            (self.sci[i,:] * msk[i,:]).reshape(self.sh)
-            for i, s in enumerate(self.slits)
-        ])
+        if tfit is not None:
+            sci2d = np.array([
+                ((tfit[k]['diff'].reshape(self.sh) - tfit[k]['smod'])
+                 * (tfit[k]['vdiff'] > 0).reshape(self.sh))
+                for k in tfit
+            ])
 
-        var2d = np.array([
-            (self.var_total[i,:] * msk[i,:]).reshape(self.sh)
-            for i, s in enumerate(self.slits)
-        ])
+            var2d = np.array([
+                (tfit[k]['vdiff'] * (tfit[k]['vdiff'] > 0)).reshape(self.sh)
+                for k in tfit
+            ])
+
+        else:
+            sci2d = np.array([
+                (self.sci[i,:] * msk[i,:]).reshape(self.sh)
+                for i, s in enumerate(self.slits)
+            ])
+
+            var2d = np.array([
+                (self.var_total[i,:] * msk[i,:]).reshape(self.sh)
+                for i, s in enumerate(self.slits)
+            ])
 
         s2d = np.nanmedian(sci2d, axis=0)
         v2d = np.nanmedian(var2d, axis=0)
@@ -2705,6 +2716,24 @@ class SlitGroup:
         valid = np.ones(s2d.shape, dtype=bool).flatten()
         ix = np.where(m2d.flatten())[0][so][outlier]
         valid[ix] = False
+
+        if trim_multiples:
+            invalid = (~valid).reshape(self.sh)
+            if invalid.sum() > 0:
+                n0 = invalid.sum()
+
+                labels, num_features = nd.label(invalid)
+                unl = utils.Unique(labels.flatten(), verbose=False)
+                for k in range(1, unl.N):
+                    if unl.counts[k] > 1:
+                        valid[unl[unl.values[k]]] = True
+
+                n1 = (~valid).sum()
+
+                msg = (
+                    f" {'flag_2d_outliers':<28}: trim_multiples {n0} -> {n1}"
+                )
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
         if dilate_structure:
             valid = ~nd.binary_dilation(
@@ -3020,6 +3049,9 @@ class SlitGroup:
             num_shutters = 3
         else:
             wrap = "auto"
+
+        if "wrap_barshadow" in self.meta:
+            wrap = self.meta["wrap_barshadow"]
 
         _msg = " (mode='{bar_corr_mode}', wrap={wrap}, num_shutters={num_shutters})"
         utils.log_comment(
@@ -5354,6 +5386,7 @@ def extract_spectra(
     fix_params=False,
     input_fix_sigma=None,
     fit_params_kwargs=None,
+    flag_2d_kwargs=None,
     diffs=True,
     undo_pathloss=True,
     undo_barshadow=False,
@@ -5927,6 +5960,9 @@ def extract_spectra(
             kws["fix_sigma"] = fix_sigma
 
             tfit = obj.fit_all_traces(**kws)
+
+        if (flag_2d_kwargs is not None) & (obj.mask.sum() > 100) & (obj.N > 2):
+            obj.flag_2d_outliers(tfit=tfit, **flag_2d_kwargs)
 
         xobj[k] = {"obj": obj, "fit": tfit}
 

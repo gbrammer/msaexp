@@ -304,6 +304,9 @@ def combine_spectra_pipeline(
     for i, f in enumerate(files):
         utils.log_comment(utils.LOGFILE, f"file {i:>3} {f}", verbose=True)
 
+    if sky_diffs >= 0:
+        flag_2d_kwargs = None
+
     try:
 
         if initial_theta in ["auto"]:
@@ -365,6 +368,7 @@ def combine_spectra_pipeline(
             include_full_pixtab=["PRISM"],
             do_multiple_mask=True,
             protect_exception=True,
+            num_shutters=-1,
         )
 
         for k in kws:
