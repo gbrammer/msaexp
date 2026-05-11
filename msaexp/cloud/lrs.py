@@ -623,11 +623,35 @@ def process_2d_products(
     prefix="lrs",
     z=0,
     show_2d_corr=True,
+    show_sn_threshold=5,
     vmax=None,
     **kwargs,
 ):
     """
     Combine 2D data
+
+    Parameters
+    ----------
+    data : dict
+
+    calspec_file : str
+
+    prefix : str
+
+    z : float
+
+    show_2d_corr : bool
+
+    show_sn_threshold : float
+        Threshold on median spectrum S/N below which the 2D plot is normalized
+        by the overall S/N rather than flux units
+
+    Returns
+    -------
+    hdul : `astropy.io.fits.HDUList`
+
+    fig : `matplotlib.figure.Figure`
+
     """
     import matplotlib.pyplot as plt
 
@@ -656,7 +680,18 @@ def process_2d_products(
     else:
         corr2d = 1.0
 
-    if vmax is None:
+    median_sn = np.nanmedian(data["spec"] / np.sqrt(data["spec_var"]))
+    if median_sn < show_sn_threshold:
+        corr2d = 1.0 / np.sqrt(den)
+        corr2d = np.sqrt(data["spec_var"]) # / corr
+
+        if vmax is None:
+            vmax = 2 * np.nanpercentile(num / den / corr2d, 95)
+            vmax = np.maximum(vmax, 3)
+
+            # print("xxx vmax", vmax)
+
+    elif vmax is None:
         vmax = 5 * np.nanpercentile(num / den / corr2d, 90)
 
     fig, axes = plt.subplots(3, 1, figsize=(8, 7), sharex=True, sharey=True)
