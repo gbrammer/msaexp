@@ -150,6 +150,7 @@ def resample_template_numba(
     spec_R_fwhm,
     templ_wobs,
     templ_flux,
+    templ_weight=None,
     velocity_sigma=100,
     nsig=5,
     fill_value=0.0,
@@ -223,6 +224,11 @@ def resample_template_numba(
 
     Nt = len(templ_wobs)
 
+    has_weight = templ_weight is not None
+
+    if has_weight:
+        resamp_weight = np.ones_like(spec_wobs) * fill_value
+
     for i in range(N):
         if spec_wobs[i] < wave_min:
             resamp[i] = left
@@ -257,9 +263,20 @@ def resample_template_numba(
             2 * np.pi * dw[i] ** 2
         )
         # g *= 1./np.sqrt(2*np.pi*dw[i]**2)
-        resamp[i] = trapz(templ_flux[sl] * g, lsl)
+        if has_weight:
+            resamp_weight[i] = trapz(templ_weight[sl] * g, lsl)
 
-    return resamp
+            resamp[i] = (
+                trapz(templ_flux[sl] * templ_weight[sl] * g, lsl)
+                / resamp_weight[i]
+            )
+        else:
+            resamp[i] = trapz(templ_flux[sl] * g, lsl)
+
+    if has_weight:
+        return np.append(resamp, resamp_weight)
+    else:
+        return resamp
 
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
