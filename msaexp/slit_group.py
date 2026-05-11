@@ -596,7 +596,11 @@ class NirspecCalibrated:
                 fslit_path[~fslit_msk] = 1
 
                 fslit_dq = fslit.dq * fslit_msk
-                slit_flat = get_slit_flat(fslit, flat_models)
+                try:
+                    slit_flat = get_slit_flat(fslit, flat_models)
+                except IndexError:
+                    continue
+
                 fslit_flat = slit_flat.data
                 fslit_flat[~fslit_msk] = 0
 
