@@ -256,7 +256,7 @@ def s3_to_url(s3_path, scaleway_region=None, **kwargs):
 
 
 def download_file(
-    URL, output_path="./", overwrite=False, check_s3=True, **kwargs
+    URL, output_path="./", overwrite=False, check_s3=True, log_level=logging.DEBUG, verbose=False, **kwargs
 ):
     """
     Download a remote file from HTTP or S3
@@ -276,6 +276,10 @@ def download_file(
         If URL starts with "https://s3.amazonaws.com/", try to first download
         with the `boto3` S3 API.
 
+    log_level, verbose : int, bool
+        `logging` level for messaging.  If ``verbose=True``, set ``log_level``
+        to the current logger level.
+
     Returns
     -------
     local_file : str, None
@@ -287,27 +291,40 @@ def download_file(
     if "force" in kwargs:
         overwrite = kwargs["force"]
 
+    if verbose:
+        log_level = LOGGER.getEffectiveLevel()
+
     local_file = os.path.join(output_path, os.path.basename(URL))
 
     if os.path.exists(local_file) & (not overwrite):
+        msg = f"Found existing {local_file}"
+        LOGGER.log(log_level, msg)
         return local_file
 
     s3_path = url_to_s3(URL)
 
     if check_s3 & s3_path.startswith("s3://"):
-        s3_file = download_from_s3(s3_path, output_path=output_path, **kwargs)
+
+        s3_file = download_from_s3(
+            s3_path,
+            output_path=output_path,
+            log_level=log_level,
+            verbose=verbose,
+            **kwargs
+        )
 
         if s3_file is None:
             if URL.startswith("s3://"):
                 return None
 
             msg = f"download_from_s3('{s3_path}') failed, fall back to http"
-            LOGGER.debug(msg)
+            LOGGER.log(log_level, msg)
         else:
             return s3_file
 
+    # HTTP download if http requested or falling back from failed s3
     msg = f"Download {URL} to {local_file}"
-    LOGGER.debug(msg)
+    LOGGER.log(log_level, msg)
 
     resp = requests.get(URL.replace("+", "%2B"))
 
@@ -323,7 +340,8 @@ def download_from_s3(
     output_path="./",
     ExtraArgs={"RequestPayer": "requester"},
     overwrite=True,
-    verbose=True,
+    log_level=logging.DEBUG,
+    verbose=False,
     **kwargs,
 ):
     """
@@ -343,6 +361,10 @@ def download_from_s3(
 
     overwrite : bool
         Overwrite local file if it exists
+
+    log_level, verbose : int, bool
+        `logging` level for messaging.  If ``verbose=True``, set ``log_level``
+        to the current logger level.
 
     kwargs : dict
         Keyword arguments passed to
@@ -373,17 +395,20 @@ def download_from_s3(
 
     local_file = os.path.join(output_path, os.path.basename(file_prefix))
 
+    if verbose:
+        log_level = LOGGER.getEffectiveLevel()
+
     if os.path.exists(local_file) & (not overwrite):
-        if verbose:
-            print(f"{local_file} exists")
+        msg = f"Found existing {local_file}"
+        LOGGER.log(log_level, msg)
 
         return local_file
 
     msg = f"Download {path} to {local_file}"
 
     try:
+        LOGGER.log(log_level, msg)
         bkt.download_file(file_prefix, local_file, ExtraArgs=ExtraArgs)
-        LOGGER.log(verbose * 10, msg)
         return local_file
 
     except ClientError as e:
