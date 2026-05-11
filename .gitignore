@@ -14,6 +14,8 @@ docs/examples/codespace/*
 
 msaexp/version.py
 
+*.DS_Store
+
 msaexp/tests/.DS_Store
 msaexp/tests/data/ceers-prism.1345_933.v0.*
 msaexp/tests/data/test-driz*
