@@ -1,6 +1,6 @@
 import numpy as np
 from numba import jit
-from math import erf, atan, pow as _pow, pi as math_pi
+from math import erf, atan, pow as _pow, pi as math_pi, sqrt
 
 import grizli.utils_numba.interp
 
@@ -145,12 +145,58 @@ def trapz(y, x):
 
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
+def trapz_unc(y, x, unc):
+    """
+    Accelerated trapezoid rule integration with uncertainties on dependent
+    variable
+
+    Parameters
+    ----------
+    y : array-like
+        dependent variable
+
+    x : array-like
+        independent variable
+
+    unc : array-like
+        Uncertainty on independent variable
+
+    Returns
+    -------
+    result : float
+        Numerical integral of y(x)
+
+    unc_result : float
+        Propagated uncertainty on integral of y(x)
+
+    """
+    N = len(x)
+
+    h = (x[1] - x[0]) / 2.0
+    result = y[0] * h
+    unc_result = (h * unc[0])**2
+    h0 = h
+
+    for i in range(1, N - 1):
+        h1 = (x[i + 1] - x[i]) / 2.0
+        result += y[i] * (h0 + h1)
+        unc_result += ((h0+h1) * unc[i])**2
+        h0 = h1
+
+    result += y[-1] * h1
+    unc_result += (h1 * unc[-1])**2
+
+    return result, sqrt(unc_result)
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
 def resample_template_numba(
     spec_wobs,
     spec_R_fwhm,
     templ_wobs,
     templ_flux,
-    templ_weight=None,
+    templ_unc=None,
+    spec_dwobs=None,
     velocity_sigma=100,
     nsig=5,
     fill_value=0.0,
@@ -177,6 +223,9 @@ def resample_template_numba(
 
     templ_flux : array-like
         Template flux densities sampled at `templ_wobs`
+
+    templ_unc : array-like
+        Optional uncertainties on ``templ_flux``
 
     velocity_sigma : float
         Kinematic velocity width, km/s
@@ -224,10 +273,10 @@ def resample_template_numba(
 
     Nt = len(templ_wobs)
 
-    has_weight = templ_weight is not None
+    has_unc = templ_unc is not None
 
-    if has_weight:
-        resamp_weight = np.ones_like(spec_wobs) * fill_value
+    if has_unc:
+        resamp_unc = np.ones_like(spec_wobs) * fill_value
 
     for i in range(N):
         if spec_wobs[i] < wave_min:
@@ -259,22 +308,34 @@ def resample_template_numba(
 
         sl = slice(ilo, ihi)
         lsl = templ_wobs[sl]
+        fsl = templ_flux[sl]
+        if has_unc:
+            usl = templ_unc[sl]
+
         g = np.exp(-((lsl - spec_wobs[i]) ** 2) / 2 / dw[i] ** 2) / np.sqrt(
             2 * np.pi * dw[i] ** 2
         )
-        # g *= 1./np.sqrt(2*np.pi*dw[i]**2)
-        if has_weight:
-            resamp_weight[i] = trapz(templ_weight[sl] * g, lsl)
 
-            resamp[i] = (
-                trapz(templ_flux[sl] * templ_weight[sl] * g, lsl)
-                / resamp_weight[i]
+        # Integrate across pixel
+        if spec_dwobs is not None:
+            in_wstep = np.abs(lsl - spec_wobs[i]) <= spec_dwobs[i] / 2.
+            lsl = lsl[in_wstep]
+            fsl = fsl[in_wstep]
+            g = g[in_wstep]
+
+            if has_unc:
+                usl = usl[in_wstep]
+
+        # g *= 1./np.sqrt(2*np.pi*dw[i]**2)
+        if has_unc:
+            resamp[i], resamp_unc[i] = trapz_unc(
+                fsl * g, lsl, usl * g
             )
         else:
-            resamp[i] = trapz(templ_flux[sl] * g, lsl)
+            resamp[i] = trapz(fsl * g, lsl)
 
-    if has_weight:
-        return np.append(resamp, resamp_weight)
+    if has_unc:
+        return np.append(resamp, resamp_unc)
     else:
         return resamp
 

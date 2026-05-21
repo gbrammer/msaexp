@@ -32,6 +32,16 @@ CRDS_CONTEXT = "jwst_1464.pmap"
 
 LOGGER = logging.getLogger(__name__)
 
+def load_lrs_badpix():
+    """
+    Load ``msaexp/data/lrs/miri_lrs_badpix.txt table``
+    """
+    badpix_file = os.path.join(
+        msautils.module_data_path(), "lrs", "miri_lrs_badpix.txt"
+    )
+    lrs_bpix = utils.read_catalog(badpix_file)
+    return lrs_bpix
+
 def full_lrs_pipeline(
     prog=5141,
     obs=1,
@@ -46,6 +56,7 @@ def full_lrs_pipeline(
     run_level2=True,
     skip_photom_step=True,
     do_nod_subtraction=True,
+    flatten_bkg_trend=False,
     optimize_trace_niter=3,
     x0=[0.0, 0.0],
     nod_ext="cal",
@@ -195,7 +206,11 @@ def full_lrs_pipeline(
 
     if do_nod_subtraction:
         s2 = nod_sky_subtraction(
-            dir="Level2", file_query=file_query, ext=nod_ext, bkg_threshold=0.3
+            dir="Level2",
+            file_query=file_query,
+            ext=nod_ext,
+            bkg_threshold=0.3,
+            flatten_bkg_trend=flatten_bkg_trend,
         )
 
     result = {
@@ -911,7 +926,7 @@ def lrs_regions(res, output="lrs.reg"):
     res["illum_footprint"] = illum_polygons
 
 
-def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold=0.3):
+def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold=0.3, flatten_bkg_trend=True, **kwargs):
     """
     Compute differences of nodded exposures for sky subtraction
     """
@@ -919,6 +934,8 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
     full_file_query = os.path.join(dir, file_query + "*" + ext + ".fits")
 
     s2_files = glob.glob(full_file_query)
+
+    lrs_bpix = load_lrs_badpix()
 
     if (ext == "bkg") & (len(s2_files) == 0):
         ext = "cal"
@@ -944,6 +961,10 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
             dm.close()
             continue
 
+        # Apply badpix mask
+        dm.dq[lrs_bpix["yi"], lrs_bpix["xi"]] |= 1
+        dq_mask = (dm.dq & 1) > 0
+
         # targ, grp, dith, _, _ = file.split('_')
 
         dith = f"{dm.meta.dither.x_offset:>4.1f}"
@@ -951,10 +972,25 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
 
         if targ not in s2:
             s2[targ] = {}
+
         if dith not in s2[targ]:
-            s2[targ][dith] = {"dm": []}
+            s2[targ][dith] = {"dm": [], "scl": []}
+
+        if flatten_bkg_trend:
+            if (i == 0):
+                bkg_ref = dm.data * np.nan**dq_mask
+                bkg_ratio_i = 1.0
+            else:
+                bkg_ratio_i = np.nanmedian(dm.data / bkg_ref)
+
+            msg = f"flatten_bkg_trend: {file} {bkg_ratio_i:8.3f}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+        else:
+            bkg_ratio_i = 1.0
 
         s2[targ][dith]["dm"].append(dm)
+        s2[targ][dith]["scl"].append(bkg_ratio_i)
 
     if ext == "bkg":
         return s2
@@ -968,12 +1004,22 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
             msg = f'  dither {dith}: {len(s2[targ][dith]["dm"])} exposures'
             utils.log_comment(utils.LOGFILE, msg, verbose=True)
 
-            s2[targ][dith]["avg"] = np.nanmean(
-                np.array([dm.data for dm in s2[targ][dith]["dm"]]), axis=0
+            s2_i = s2[targ][dith]
+
+            s2_i["avg"] = np.nanmean(
+                np.array([
+                    dm.data / scl * np.nan**(dm.dq & 1)
+                    for (dm, scl) in zip(s2_i["dm"], s2_i["scl"])
+                ]),
+                axis=0
             )
 
-            s2[targ][dith]["var"] = np.nanmean(
-                np.array([dm.err**2 for dm in s2[targ][dith]["dm"]]), axis=0
+            s2_i["var"] = np.nanmean(
+                np.array([
+                    (dm.err / scl * np.nan**(dm.dq & 1))**2
+                    for (dm, scl) in zip(s2_i["dm"], s2_i["scl"])
+                ]),
+                axis=0
             )
 
         for d1 in s2[targ]:
@@ -995,11 +1041,14 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
                 other_avg = np.nanmean(np.array(other_dithers), axis=0)
                 other_var = np.nanmean(np.array(other_vars), axis=0)
 
-            for dm in s2[targ][d1]["dm"]:
-                dm.data -= other_avg
-                dm.err += np.sqrt(other_var)
+            s2_i = s2[targ][d1]
+
+            for dm, scl in zip(s2_i["dm"], s2_i["scl"]):
+                dm.data = (dm.data / scl - other_avg) * scl
+                dm.err = np.sqrt((dm.err / scl)**2 + other_var) * scl
 
                 dm.meta.filename = dm.meta.filename.replace("_bkg", "")
+
                 out_file = os.path.join(
                     dir, dm.meta.filename.replace(ext, ext + "_bkg")
                 )

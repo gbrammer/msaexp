@@ -448,7 +448,7 @@ def saturated_mask(files, ptab):
         print(f"{file}  {ovalid} > {nvalid}  ({ovalid - nvalid})")
 
 
-def plot_cube_strips(ptabs, figsize=(10, 5), cmap="bone_r", **kwargs):
+def plot_cube_strips(ptabs, figsize=(10, 5), cmap="bone_r", alpha=0.05, vmin=-0.1, vmax=5.6, **kwargs):
     """
     Plot spatial slices of a cube pixel table
     """
@@ -477,7 +477,7 @@ def plot_cube_strips(ptabs, figsize=(10, 5), cmap="bone_r", **kwargs):
             ixi = un[v] & (
                 np.abs(ptab["wave"] - np.nanmedian(ptab["wave"])) < 0.01
             )
-            ax.scatter(dx[ixi], dy[ixi], alpha=0.1, color=color)
+            ax.scatter(dx[ixi], dy[ixi], alpha=alpha, color=color)
 
         # Cube data
         ax = axes[1]
@@ -507,10 +507,10 @@ def plot_cube_strips(ptabs, figsize=(10, 5), cmap="bone_r", **kwargs):
             dy[test] + ry,
             c=ptab["data"][test],
             cmap=cmap,
-            alpha=0.3,
+            alpha=alpha,
             marker="s",
-            vmin=-0.1,
-            vmax=5.6,
+            vmin=vmin,
+            vmax=vmax,
             s=30,
             ec="None",
         )
@@ -1216,7 +1216,7 @@ def slice_corners(
             transform = slice_wcs.get_transform("detector", "slit_frame")
 
             slits = input.meta.wcs.get_transform("gwa", "slit_frame").slits
-            print("xxx", slits, slits[i])
+            # print("xxx", slits, slits[i])
 
             slice_wcs.bounding_box = nirspec.compute_bounding_box(
                 transform, slits[i], slice_wavelength_range, refine=True
@@ -1626,7 +1626,9 @@ def ifu_pipeline(
     perform_saturation=False,
     cumulative_saturation=True,
     exclude_self_saturation=True,
+    center_coords=None,
     recenter_cube=False,
+    show_strips=True,
     **kwargs,
 ):
     """
@@ -1644,10 +1646,14 @@ def ifu_pipeline(
         Rootname of output file
 
     use_first_center : bool
-        Flag to use the reference coordinate as the first exposure for all exposures
+        Flag to use the reference coordinate as the first exposure for all
+        exposures
 
     make_drizzled : bool
         Make rectified resampled cube
+
+    show_strips : bool
+        Make strip figure diagnostic with `~msaexp.ifu.plot_cube_strips`
 
     kwargs : dict
         Keyword arguments passed to all sub functions
@@ -1679,19 +1685,24 @@ def ifu_pipeline(
         files = [os.path.basename(file) for file in res["dataURI"]]
         files.sort()
     else:
-        obsid = files[0][2:13]
+        if obsid is None:
+            obsid = os.path.basename(files[0])[2:13]
+
         if grating is None:
             with pyfits.open(files[0]) as im:
                 grating = im[0].header["GRATING"]
 
     msg = f"ifu_pipeline: file={files[0]}  {obsid} {grating}"
+    #print("xxx", msg, f"cube-{obsid}-{grating}{output_suffix}.log.txt".lower())
+
     utils.LOGFILE = f"cube-{obsid}-{grating}{output_suffix}.log.txt".lower()
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     # Initialize
     cubes = []
     for file in files:
-        cube = ExposureCube(file, **kwargs)
+        file_ = os.path.basename(file) if file.startswith("s3://") else file
+        cube = ExposureCube(file_, **kwargs)
         cubes.append(cube)
 
         if cube.ptab is None:
@@ -1733,9 +1744,12 @@ def ifu_pipeline(
     # Saturated mask
     sat_files, sat_data = [], []
     for file in files:
+        file_ = os.path.basename(file) if file.startswith("s3://") else file
+
         sat_file, sat_i = msautils.exposure_ramp_saturation(
-            file, perform=perform_saturation, **kwargs
+            file_, perform=perform_saturation, **kwargs
         )
+
         if sat_i is None:
             sat_i = np.zeros((2048, 2048), dtype=bool)
 
@@ -1754,8 +1768,6 @@ def ifu_pipeline(
         ptab_sat = sat_mask[cube.ptab["ypix"], cube.ptab["xpix"]]
         if exclude_self_saturation:
             ptab_sat ^= this_sat[cube.ptab["ypix"], cube.ptab["xpix"]]
-
-        # print("xxx", files[i], ptab_sat.sum())
 
         cube.ptab["dq"] |= (ptab_sat * 4096).astype(cube.ptab["dq"].dtype)
         if cumulative_saturation:
@@ -1779,11 +1791,23 @@ def ifu_pipeline(
     ptab = astropy.table.vstack(ptabs)
     ptab.meta["srcname"] = SOURCE
     ptab.meta["obsid"] = obsid
+
     if "proposer_ra" in ptabs[0].meta:
         ptab.meta["ra_ref"] = ptabs[0].meta["proposer_ra"]
         ptab.meta["dec_ref"] = ptabs[0].meta["proposer_dec"]
 
-    if recenter_cube:
+    if center_coords is not None:
+
+        oref = ptab.meta["ra_ref"] * 1, ptab.meta["dec_ref"] * 1
+
+        ptab.meta["ra_ref"] = center_coords[0]
+        ptab.meta["dec_ref"] = center_coords[1]
+
+        msg = f"User-defined center: ({oref[0]:>.6f}, {oref[1]:.6f}) -> "
+        msg += f'({ptab.meta["ra_ref"]:>.6f}, {ptab.meta["dec_ref"] :.6f})'
+        utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
+
+    elif recenter_cube:
         oref = ptab.meta["ra_ref"] * 1, ptab.meta["dec_ref"] * 1
 
         coo_ = np.array([ptab["ra"], ptab["dec"]])
@@ -1799,23 +1823,24 @@ def ifu_pipeline(
         msg += f'({ptab.meta["ra_ref"]:>.6f}, {ptab.meta["dec_ref"] :.6f})'
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    strip_fig = plot_cube_strips(
-        ptabs, ref_coords=(ptab.meta["ra_ref"], ptab.meta["dec_ref"])
-    )
+    if show_strips:
+        strip_fig = plot_cube_strips(
+            ptabs, ref_coords=(ptab.meta["ra_ref"], ptab.meta["dec_ref"])
+        )
 
-    strip_fig.text(
-        0.5,
-        0.005,
-        outroot,
-        ha="center",
-        va="bottom",
-        transform=strip_fig.transFigure,
-        fontsize=8,
-    )
+        strip_fig.text(
+            0.5,
+            0.005,
+            outroot,
+            ha="center",
+            va="bottom",
+            transform=strip_fig.transFigure,
+            fontsize=8,
+        )
 
-    utils.figure_timestamp(strip_fig)
+        utils.figure_timestamp(strip_fig)
 
-    strip_fig.savefig(f"{outroot}.strips.png")
+        strip_fig.savefig(f"{outroot}.strips.png")
 
     ptab.meta["nfiles"] = len(files)
     for i, file_ in enumerate(files):
@@ -2008,17 +2033,24 @@ def pixel_table_to_detector(
         return detector_array
 
 
-def pixel_table_dx_dy(ptab, ref_coords=None, wcs=None, **kwargs):
+def pixel_table_dx_dy(ptab, ref_coords=None, pa="meta", wcs=None, **kwargs):
     """
     Parameters
     ----------
     ptab : Table
-        IFU cube pixel table with (at least) columns ``ra``, ``dec`` and attribute
-        ``meta["position_angle"]``
+        IFU cube pixel table with (at least) columns ``ra``, ``dec``
 
     ref_coords : (float, float), None
         Reference decimal ra, dec.  If not specified, then get from ``ra_ref``, ``dec_ref``
         entries in the metadata
+
+    pa : float, str
+        Position angle, degrees from North towards East.  If ``pa="meta"``,
+        get from ``ptab.meta["position_angle"]``
+
+    wcs : `~astropy.wcs.WCS`, None
+        If provided, return the pixel indices of ``wcs`` transformed from
+        the sky coordinates in ``ptab``.
 
     Returns
     -------
@@ -2030,7 +2062,10 @@ def pixel_table_dx_dy(ptab, ref_coords=None, wcs=None, **kwargs):
         dx, dy = wcs.all_world2pix(ptab["ra"], ptab["dec"], 0)
         return dx, dy
 
-    rot = rotation_matrix(ptab.meta["position_angle"])
+    if pa in ["meta"]:
+        pa = ptab.meta["position_angle"]
+
+    rot = rotation_matrix(pa)
 
     if ref_coords is None:
         ra_ref = ptab.meta["ra_ref"]
@@ -2822,6 +2857,8 @@ class ReducedCube:
                     self.sci = cube_hdu["DATA"].data * 1
                     self.wht = 1.0 / cube_hdu["STAT"].data
 
+                    self.primary_header = cube_hdu[0].header.copy()
+                    
                     self.header["GRATING"] = "MUSE"
                     self.header["FILTER"] = "MUSE"
 
@@ -2949,6 +2986,67 @@ class ReducedCube:
         info = f"{self.file} {self.shape}  {self.grating}_{self.filter}"
         info += f'  ({self.header["CRVAL1"]:.6f}, {self.header["CRVAL2"]:.6f})  z={self.redshift:.4f}'
         return info
+
+    def exposure_files(self, s3_prefix="s3://msaexp-nirspec/ifu_exposures", extensions=["ptab.fits", "satflag.fits.gz"], download_kwargs=None):
+        """
+        Get paths to individual exposures files that were used to make the cube
+
+        Parameters
+        ----------
+        s3_prefix : str
+            S3 object prefix
+
+        extensions : list
+            File types to retrieve.  For a given ``rate.fits`` exposure file,
+            the file objects are stored at
+            ``{s3_prefix}/jw{obsid}/jw{obsid}_[00000]_[00000]_nrs[1,2]_{ext}``
+
+            Available extensions are
+
+              - ``ptab.fits``: Full exposure pixel table (~90 MB)
+              - ``fs.fits``: Information extracted from the fixed-slit
+                 apertures that can be useful for estimating the sky
+                 background (~10 MB)
+              - ``satflag.fits.gz``: List of saturated pixels that can cause
+                 persistence (~50 KB)
+              - ``cal.yaml``: Full metadata of the pipeline ``cal``
+                product (~7 KB)
+              - ``rate_onef_axis0.png``: Diagnostic figure from the 1/f
+                 correction (~70 KB)
+
+        download_kwargs : None, dict
+            If provided (e.g., an empty dict) then retrieve the files,
+            otherwise, just generate the file lists.
+
+        Returns
+        -------
+        s3_files : dict
+            Dictionary with keys of the file ``extensions`` and values of
+            lists of S3 object paths for the individual files
+
+        """
+        from .cloud.utils import download_file
+
+        h_ = self.header
+
+        s3_files = {}
+
+        for i in range(h_['NFILES']):
+            file_prefix = h_[f"FILE{i:04d}"].split("_rate")[0]
+            for ext in extensions:
+                if i == 0:
+                    s3_files[ext] = []
+
+                s3_files[ext].append(
+                    f"{s3_prefix}/jw{h_['OBSID']}/{file_prefix}_{ext}".lower()
+                )
+
+        if download_kwargs is not None:
+            for ext in extensions:
+                for file in s3_files[ext]:
+                    resp = download_file(file, **download_kwargs)
+
+        return s3_files
 
     def load_sensitivity(self, **kwargs):
         """
@@ -3388,9 +3486,12 @@ class ReducedCube:
         optimize="loss",
         min_line_threshold=-4,
         broad_component_sigma=None,
+        optimizer="lstsq",
         **kwargs,
     ):
         """ """
+        from scipy.optimize import nnls
+
         from tqdm import tqdm
 
         if self.spec is None:
@@ -3521,6 +3622,10 @@ class ReducedCube:
             f"fit_emission_line: {lines} {scale_disp:.1f} σ={velocity_sigma:.0f} "
             f"z={self.redshift:.4f} nslice={nsl} dv={dv_ii:.1f} km/s  {nbins} bins  {ngrid} steps"
         )
+
+        if templates is not None:
+            msg += f"   N={len(templates)} templates"
+
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
         A = np.vstack([c, np.zeros((nlines, nsl))])
@@ -3559,7 +3664,10 @@ class ReducedCube:
                 Ax = (A * swht_sl[:, j, i])[:, oki]
                 yxi = yx[:, j, i][oki]
 
-                lsq = np.linalg.lstsq(Ax.T, yxi, rcond=None)
+                if optimizer == "lstsq":
+                    lsq = np.linalg.lstsq(Ax.T, yxi, rcond=None)
+                else:
+                    lsq = nnls(Ax.T, yxi)
 
                 c_ji = lsq[0] * 1.0
 
@@ -3568,7 +3676,7 @@ class ReducedCube:
                         v_ji = utils.safe_invert(Ax.dot(Ax.T)).diagonal()
                         vcoeffs[k, :, j, i] = v_ji
                         clip_line = is_line & (
-                            c_ji < min_line_threshold * np.sqrt(v_ji)
+                            c_ji <= min_line_threshold * np.sqrt(v_ji)
                         )
                         c_ji[clip_line] = 0.0
                     except:
@@ -3618,14 +3726,18 @@ class ReducedCube:
             "max_line_dv": max_line_dv,
             "max_model": max_model,
             "get_covariance": get_covariance,
+            "msk": msk,
         }
 
         return ldata
 
     def log_sigma_grid(
-        self, min_dv_factor=0.5, max_sigma=500, step_factor=2, **kwargs
+        self, min_dv_factor=0.5, max_sigma=500, step_factor=2, values=None, **kwargs
     ):
         """ """
+        if values is not None:
+            return np.array(values)
+
         min_wave_dv = np.ceil(self.gradient_dv.min() * min_dv_factor / 25) * 25
 
         sigmas = np.exp(
@@ -4393,6 +4505,7 @@ class LinefitData:
         sn_threshold=4,
         discrete_sigma=True,
         show_contours=True,
+        mask_min_weight=0.1,
         **kwargs,
     ):
         """ """
@@ -4428,7 +4541,7 @@ class LinefitData:
         mean_image, mean_weight = self.cube.mean_image(
             wave_range=(self.cube.wave[imin], self.cube.wave[imax])
         )
-        weight_mask = mean_weight > 0.1 * np.nanmedian(mean_weight)
+        weight_mask = mean_weight > mask_min_weight * np.nanmedian(mean_weight)
         if weight_mask.sum() < 0.1 * weight_mask.size:
             weight_mask = np.isfinite(mean_weight)
 

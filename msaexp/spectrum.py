@@ -283,6 +283,21 @@ class SpectrumSampler(object):
         """
         return self.spec.meta
 
+    @property
+    def label(self):
+        """
+        """
+        if "label" in self.spec.meta:
+            return self.spec.meta["label"]
+        elif self.file is not None:
+            return os.path.basename(self.file)
+        elif "SRCNAME" in self.spec.meta:
+            return self.spec.meta["SRCNAME"]
+        elif "GRATING" in self.spec.meta:
+            return "spec {GRATING}-{FILTER}".format(**self.spec.meta).lower()
+        else:
+            return ""
+
     def initialize_emission_line(self, nsamp=64):
         """
         Initialize emission line
@@ -417,11 +432,13 @@ class SpectrumSampler(object):
         """
 
         templ_wobs = template.wave.astype(np.float32) * (1 + z) / 1.0e4
-        # if fnu:
-        #     templ_flux = template.flux_fnu(z=z).astype(np.float32)
-        # else:
-        #     templ_flux = template.flux_flam(z=z).astype(np.float32)
         templ_flux = template.flux_fnu(z=z).astype(np.float32)
+
+        if hasattr(template, 'unc'):
+            templ_unc = template.unc
+            res_unc = np.zeros_like(self.spec_wobs)
+        else:
+            templ_unc = None
 
         if with_igm:
             igmz = IGM_FUNC(z, templ_wobs * 1.0e4)
@@ -439,21 +456,230 @@ class SpectrumSampler(object):
             elif self.sensitivity[order] is None:
                 continue
 
-            res_i = RESAMPLE_FUNC(
+            res_ = RESAMPLE_FUNC(
                 self.spec_wobs,
                 self.spec_R_fwhm * scale_disp * order,
                 templ_wobs * order,
                 templ_flux * igmz,
+                templ_unc=templ_unc,
                 velocity_sigma=velocity_sigma,
                 nsig=nsig,
             )
+
+            if templ_unc is None:
+                res_i = res_
+            else:
+                res_i, res_unc = res_.reshape(2, self.NSPEC)
 
             if order != 1:
                 res += res_i * self.sensitivity[order] * self.inv_sensitivity
             else:
                 res += res_i
 
-        return res * self.spec["to_flam"]**(fnu is False)
+        if templ_unc is None:
+            return res * self.spec["to_flam"]**(fnu is False)
+        else:
+            return (
+                res * self.spec["to_flam"]**(fnu is False),
+                res_unc * self.spec["to_flam"]**(fnu is False)
+            )
+
+    def smooth_velocity(self, velocity_sigma=500., unc="err", full_object=False, full_sliced=False, mask="valid", **kwargs):
+        """
+        Smooth spectrum in velocity space
+        """
+        import copy
+        import eazy.templates
+
+        if isinstance(mask, str):
+            if mask == "valid":
+                mask = self.spec["valid"] > 0
+            elif mask in self.spec.colnames:
+                mask = self.spec[mask] > 0
+        elif mask is None:
+            mask = np.isfinite(self.spec["flux"])
+
+        tsp = eazy.templates.Template(
+            arrays=(
+                self.spec["wave"][mask] * 1.e4,
+                (self.spec["flux"] * self.spec["to_flam"])[mask] * 1.e9
+            )
+        )
+
+        if isinstance(unc, str):
+            if unc == "valid":
+                tsp.unc = self.spec["valid"][mask] * 1
+            elif unc in self.spec.colnames:
+                tsp.unc = self.spec[unc][mask] * 1.0
+        elif unc is not None:
+            tsp.unc = unc[mask] * 1.0
+        else:
+            tsp.unc = None
+
+        result = self.resample_eazy_template(
+            tsp,
+            velocity_sigma=velocity_sigma,
+            **kwargs
+        )
+
+        if tsp.unc is None:
+            resamp, resamp_unc = result, result * 0.
+        else:
+            resamp, resamp_unc = result
+            bad = resamp_unc > self.spec["err"]
+            resamp_unc[bad] = 0.0
+            
+        if full_object:
+            wstep = np.exp(
+                np.arange(
+                    np.log(self.spec["wave"][mask].min()),
+                    np.log(self.spec["wave"][mask].max()),
+                    velocity_sigma / 2.5 / 3.e5)
+                )
+
+            if full_sliced:
+                wi = np.round(
+                    np.interp(
+                        wstep[3:-3], self.spec["wave"], np.arange(self.NSPEC))
+                ).astype(int)
+            else:
+                wi = np.arange(self.NSPEC, dtype=int)
+
+            spc = copy.deepcopy(self)
+            spc.NSPEC = len(wi)
+            spc.spec = self.spec[wi]
+            spc.spec["wave_index"] = wi
+            spc.spec_wobs = (spc.spec["wave"] * 1.0).astype(np.float32)
+            
+            Rdisp = 1.0 / spc.spec["R"]**2 + (2.35 * velocity_sigma / 3e5)**2
+            spc.spec_R_fwhm = (1.0 / np.sqrt(Rdisp)).astype(np.float32)
+
+            spc.spec["flux"] = resamp[wi]
+            spc.spec["err"] = resamp_unc[wi]
+            spc.spec["valid"] = (spc.spec["flux"] != 0) & (resamp_unc[wi] > 0)
+            spc.meta["smooth_velocity"] = velocity_sigma
+
+            for order in spc.sensitivity:
+                if spc.sensitivity[order] is not None:
+                    if hasattr(spc.sensitivity[order], "__len__"):
+                        spc.sensitivity[order] = spc.sensitivity[order][wi]
+
+            if isinstance(self.spec_input, pyfits.HDUList):
+
+                orig_cols = [
+                    c.name for c in spc.spec_input["SPEC1D"].columns
+                ]
+
+                spc.spec_input["SPEC1D"] = pyfits.BinTableHDU(
+                    spc.spec[orig_cols]
+                )
+
+                if "WHT" in self.spec_input:
+                    err2d = 1.0 / np.sqrt(self.spec_input["WHT"].data)
+                    NY = err2d.shape[0]
+
+                    spc.spec_input["WHT"].data = (
+                        self.spec_input["WHT"].data[:, wi]
+                    )
+
+                    for ext in ["SCI", "PROFILE", "BACKGROUND"]:
+                        if ext not in self.spec_input:
+                            continue
+
+                        spc.spec_input[ext].data = (
+                            self.spec_input[ext].data[:, wi]
+                        )
+
+                        for i, row in enumerate(self.spec_input[ext].data):
+                            row_i = (row * self.spec["to_flam"])[mask] * 1.e9
+
+                            tsp.flux[0,:] = row_i
+                            tsp.unc = err2d[i,:] * 1.0
+
+                            result = self.resample_eazy_template(
+                                tsp,
+                                velocity_sigma=velocity_sigma,
+                                **kwargs
+                            )
+
+                            resamp, resamp_unc = result
+                            spc.spec_input[ext].data[i,:] = resamp[wi]
+
+                            if ext == "SCI":
+                                spc.spec_input["WHT"].data[i,:] = (
+                                    1.0 / resamp_unc[wi]**2
+                                )
+
+            return spc
+
+        else:
+            return resamp, resamp_unc
+
+
+    def regrid(self, wstep=None, velocity_sigma=250, mask="valid"):
+        """
+        """
+        from .resample_numba import trapz_unc
+        
+        if isinstance(mask, str):
+            if mask == "valid":
+                mask = self.spec["valid"] > 0
+            elif mask in self.spec.colnames:
+                mask = self.spec[mask] > 0
+        elif mask is None:
+            mask = np.isfinite(self.spec["flux"])
+
+        if wstep is None:
+            wstep = np.exp(
+                np.arange(
+                    np.log(self.spec["wave"].min()),
+                    np.log(self.spec["wave"].max()),
+                    velocity_sigma / 3.e5)
+                )
+
+        wgrid = msautils.array_to_bin_edges(wstep)
+        new = utils.GTable()
+
+        new["wave"] = wstep
+        new["flux"] = 0.0
+        new["err"] = 0.0
+
+        new["R"] = np.interp(
+            wstep, self.spec["wave"], self.spec["R"],
+            left=self.spec["R"][0], right=self.spec["R"][-1]
+        )
+        new["nbin"] = 0
+
+        N = len(wstep)
+
+        nu = 1.0 / self.spec["wave"]
+
+        for i in range(N):
+            wbin = (
+                (self.spec["wave"] >= wgrid[i])
+                & (self.spec["wave"] < wgrid[i+1])
+                & self.spec["valid"] & mask
+            )
+            nbin = wbin.sum()
+            if nbin > 1:
+                nu_bin = nu[wbin][::-1]
+                dnu = nu_bin[-1] - nu_bin[0]
+
+                resamp, resamp_unc = trapz_unc(
+                    self.spec["flux"][wbin][::-1],
+                    nu_bin,
+                    self.spec["err"][wbin][::-1],
+                )
+
+                new["flux"][i] = resamp / dnu
+                new["err"][i] = resamp_unc / dnu
+                new["nbin"][i] = wbin.sum()
+
+        for k in self.spec.meta:
+            new.meta[k] = self.spec.meta[k]
+
+        return SpectrumSampler(new)
+
 
     def emission_line(
         self,
@@ -874,9 +1100,15 @@ class SpectrumSampler(object):
         """
         if isinstance(self.spec_input, pyfits.HDUList):
             fig = msautils.drizzled_hdu_figure(self.spec_input, **kwargs)
-        else:
+        elif self.file is None:
             with pyfits.open(self.file) as hdul:
                 fig = msautils.drizzled_hdu_figure(hdul, **kwargs)
+        else:
+            hdul = pyfits.HDUList([
+                pyfits.PrimaryHDU(),
+                pyfits.BinTableHDU(self.spec, name='SPEC1D')
+            ])
+            fig = msautils.drizzled_hdu_figure(hdul, **kwargs)
 
         return fig
 
@@ -1176,7 +1408,7 @@ class SpectrumSampler(object):
 
         valid &= ~low_sensitivity
 
-        msg = f"{os.path.basename(self.file)}  z={z:.3f}  "
+        msg = f"{self.label}  z={z:.3f}  "
         msg += f"{w[valid].min():.2f} – {w[valid].max():.2f} µm"
         utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
 
@@ -1264,10 +1496,13 @@ GRATING_COLORS = {
     "PRISM": "purple",
     "G395M": "tomato",
     "G235M": "goldenrod",
-    "G140M": "steelblue"
+    "G140M": "steelblue",
+    "G395H": "coral",
+    "G235H": "gold",
+    "G140H": "lightblue",
 }
 
-def multiplot_spectra(file="smacs0723-ero-v4_g395m-f290lp_2736_6355.spec.fits", ny=8, log_steps=True, wave_limits=None, renorm=True, extra="", spline_step=64, gratings=[], trim_empty_axes=True, grating_colors=GRATING_COLORS, **kwargs):
+def multiplot_spectra(file="smacs0723-ero-v4_g395m-f290lp_2736_6355.spec.fits", ny=8, z=None, log_steps=True, wave_limits=None, renorm=True, extra="", spline_step=64, gratings=[], trim_empty_axes=True, grating_colors=GRATING_COLORS, **kwargs):
     """
     Query and plot overlapping spectra
 
@@ -1314,9 +1549,10 @@ def multiplot_spectra(file="smacs0723-ero-v4_g395m-f290lp_2736_6355.spec.fits", 
     import eazy.filters
 
     query_url = (
-        "https://grizli-cutout.herokuapp.com/nirspec_extractions?file=" + file + "&output=csv" + extra
+        "https://grizli-cutout.herokuapp.com/nirspec_extractions?file="
+        + file + "&output=csv" + extra
     )
-    print(query_url)
+    print(query_url),
 
     spec_list = utils.read_catalog(query_url, format="csv")
 
@@ -1326,7 +1562,8 @@ def multiplot_spectra(file="smacs0723-ero-v4_g395m-f290lp_2736_6355.spec.fits", 
     else:
         keep = np.ones(len(spec_list), dtype=bool)
 
-    z = spec_list["z"][(spec_list["grade"] > 2.5) & (keep)].mean()
+    if z is None:
+        z = spec_list["z"][(spec_list["grade"] > 2.5) & (keep)].mean()
 
     for i, row in enumerate(spec_list):
         print(
@@ -2893,27 +3130,38 @@ def read_spectrum(
             # grating_degree=2 default poly fit for gratings
             **kwargs
         )
+
         spec["R"] = R_fwhm
         spec["R"].description = "Spectral resolution from tabulated curves"
+
+        if "smooth_velocity" in spec.meta:
+            vsm = spec.meta["smooth_velocity"]
+            Rdisp = 1.0 / spec["R"]**2 + (2.35 * vsm / 3.e5)**2
+            spec["R"] = 1.0 / np.sqrt(Rdisp)
+            spec["R"].description += f" + smooth_velocity={vsm:.1f} km/s"
 
     spec.grating = grating
     spec.filter = _filter
 
     flam_unit = 1.0e-20 * u.erg / u.second / u.cm**2 / u.Angstrom
 
-    um = spec["wave"].unit
-    if um is None:
-        um = u.micron
+    wave_unit = spec["wave"].unit
+    if spec["wave"].unit is None:
+        wave_unit = u.micron
 
-    spec.equiv = u.spectral_density(spec["wave"].data * um)
+    flux_unit = spec["flux"].unit
+    if flux_unit is None:
+        flux_unit = u.microJansky
+
+    spec.equiv = u.spectral_density(spec["wave"].data * wave_unit)
 
     spec["to_flam"] = (
-        (1 * spec["flux"].unit).to(flam_unit, equivalencies=spec.equiv).value
+        (1 * flux_unit).to(flam_unit, equivalencies=spec.equiv).value
     )
     spec.meta["flamunit"] = flam_unit.unit
 
-    spec.meta["fluxunit"] = spec["flux"].unit
-    spec.meta["waveunit"] = spec["wave"].unit
+    spec.meta["fluxunit"] = flux_unit
+    spec.meta["waveunit"] = wave_unit
 
     spec["wave"] = spec["wave"].value
     spec["flux"] = spec["flux"].value

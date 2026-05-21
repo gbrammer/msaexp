@@ -200,6 +200,32 @@ def test_trapz():
     assert np.allclose(utils.trapz(y, x), trapz(y, x), rtol=1.0e-4)
 
 
+def test_trapz_unc():
+    """
+    test trapz integration with uncertainties
+    """
+    from ..resample_numba import trapz_unc
+
+    Nx = 128
+    x = np.linspace(-1, 1, Nx, dtype=np.float32)
+    y = x**2
+
+    Nr = 1024
+    N = (Nr, Nx)
+
+    np.random.seed(1)
+    unc = np.ones(N) * 0.1
+
+    rvs = y + np.random.normal(size=N) * unc
+    res = np.array(
+        [trapz_unc(rvs[i,:], x, unc[i,:]) for i in range(N[0])]
+    )
+
+    resid = (res[:, 0] - 2./3) / res[:, 1]
+    
+    assert np.allclose(np.std(resid), 1.0, rtol=0.1)
+
+
 def test_dust_models():
     """ """
     from ..resample_numba import calzetti2000_alambda, calzetti2000_attenuation
