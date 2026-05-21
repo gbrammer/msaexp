@@ -1962,6 +1962,24 @@ def drizzled_hdu_figure(
 
         if ny is None:
             ny = 21
+
+        # print("xxx LRS", xt_limits, xlim, tick_steps, ny)
+
+    elif hdul[1].header["GRATING"] == "MUSE":
+
+        xt_limits = [0.45, 0.95]
+
+        if xlim is None:
+            xlim = [0.44, 0.94]
+
+        if tick_steps is None:
+            tick_steps = [0.05, 0.01]
+
+        if ny is None:
+            ny = 12
+
+        # print("xxx MUSE", xt_limits, xlim, tick_steps, ny)
+
     else:
         xt_limits = [0.5, 5.72]
 
