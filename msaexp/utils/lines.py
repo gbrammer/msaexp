@@ -59,15 +59,16 @@ def axis_renorm_x(ax, value):
     else:
         return np.interp(value, ax.get_xlim(), [0,1])
 
+WHITE_BBOX_ = {
+    "fc": "w",
+    "ec": "None",
+    "alpha": 1.0,
+    "boxstyle": "square,pad=0.3",
+}
 
 class LineList(object):
 
-    WHITE_BBOX = {
-        "fc": "w",
-        "ec": "None",
-        "alpha": 1.0,
-        "boxstyle": "square,pad=0.3",
-    }
+    WHITE_BBOX = WHITE_BBOX_
 
     CLEAN_CENTER_KWARGS = {
         "ha": "center",
@@ -152,6 +153,67 @@ class LineList(object):
     def N(self):
         return len(self.data)
 
+    def append_scaled_orders(self, priorities=[5], orders=[2,3], priority_offset=100, append=True):
+        """
+        Add rows to the ``data`` table for higher spectral orders
+        where wavelength multiplied by $m=2,3,...$
+
+        Parameters
+        ----------
+        priorities : list, None
+            List of priorities to include
+
+        orders : list
+            List of order integers
+
+        priority_offset : float
+            New rows will have priority + priority_offset
+
+        append : bool
+            Append new rows directly to the ``data`` attribute table
+
+        Returns
+        -------
+        order_rows : table
+            Table with wavelengths scaled by the requested orders and updated
+            labels
+
+        """
+        import astropy.table
+
+        subset = np.isin(np.floor(self.data["priority"]), np.array(priorities))
+
+        dsub = self.data[subset]
+
+        order_rows = []
+
+        prev = np.zeros(len(self.data), dtype=bool)
+
+        for order in orders:
+            for row in dsub:
+                rowd = dict(row)
+                rowd["name"] += f"-m{order}"
+                rowd["label"] += r" ($m=" + f"{order}" + r"$)"
+                rowd["wavelength"] = [w * order for w in row["wavelength"]]
+                rowd["priority"] += order * priority_offset
+                order_rows.append(rowd)
+
+            # remove rows already created by this function
+            prev |= np.isin(
+                np.floor(self.data["priority"]),
+                np.array(priorities) + order * priority_offset
+            )
+
+        order_rows = utils.GTable(order_rows)
+
+        if append:
+            self.data = astropy.table.vstack([
+                self.data[~prev], order_rows
+            ])
+
+        return order_rows
+
+
     def select_lines(
         self,
         z=0,
@@ -160,6 +222,7 @@ class LineList(object):
         exclude_prefixes=[],
         priorities=[4, 5],
         floor=True,
+        max_microns=500,
         **kwargs,
     ):
         """
@@ -186,6 +249,9 @@ class LineList(object):
             If true, ignore decimal part of the linelist priorities and just compare
             the integer values
 
+        max_microns : float
+            Threshold compared to ``max(x)`` above which wavelengths are
+            interpreted to be $\mathrm{AA}$ rather than $\mu\mathrm{m}$
         Returns
         -------
         selected : boolean array
@@ -198,7 +264,7 @@ class LineList(object):
 
         """
         x_scale = 1 + z
-        if wave_range[1] < 500:
+        if wave_range[1] < max_microns:
             # axis is in probably in microns
             x_scale /= 1.0e4
 
@@ -253,9 +319,10 @@ class LineList(object):
         ls="-",
         fontsize=7,
         alpha=0.8,
-        bbox={"fc": "w", "ec": "None", "alpha": 1.0},
+        label_alpha=None,
+        bbox=WHITE_BBOX_, #{"fc": "w", "ec": "None", "alpha": 1.0},
         zorder=1,
-        label_zorder=2,
+        label_zorder=None,
         **kwargs,
     ):
         """
@@ -314,6 +381,12 @@ class LineList(object):
         xlim = ax.get_xlim()
         ylim = ax.get_ylim()
 
+        if label_alpha is None:
+            label_alpha = alpha
+
+        if label_zorder is None:
+            label_zorder = zorder + 1
+
         if wave_pixels is not None:
             wpix = np.arange(len(wave_pixels))
             xlim = np.interp(xlim, wpix, wave_pixels)
@@ -337,8 +410,35 @@ class LineList(object):
         if y_normalized:
             tr = ax.transAxes
             y_normalized = False
+
         else:
-            tr = None
+
+            ds = self.data[selected]
+            w0 = np.array([w[0] for w in ds["wavelength"]]) * x_scale
+            so = np.argsort(w0)
+
+            if bottom == "priority":
+                bottom = (w0[so], ds["priority"][so])
+            elif not hasattr(bottom, "__len__"):
+                bottom = (xlim, np.interp([bottom, bottom], ylim, [0, 1]))
+            else:
+                bottom = (bottom[0], np.interp(bottom[1], ylim, [0, 1]))
+
+            if top == "priority":
+                top = (w0[so], ds["priority"][so])
+            elif not hasattr(top, "__len__"):
+                top = (xlim, np.interp([top, top], ylim, [0, 1]))
+            else:
+                top = (top[0], np.interp(top[1], ylim, [0, 1]))
+
+            if y_label == "priority":
+                y_label = (w0[so], ds["priority"][so])
+            elif not hasattr(y_label, "__len__"):
+                y_label = (xlim, np.interp([y_label, y_label], ylim, [0, 1]))
+            else:
+                y_label = (y_label[0], np.interp(y_label[1], ylim, [0, 1]))
+
+            tr = ax.transAxes #tr = None
 
         for row in self.data[selected]:
             wave_i = np.array(row["wavelength"]) * x_scale
@@ -449,7 +549,7 @@ class LineList(object):
                     color=row["color"],
                     va=va,
                     ha=ha,
-                    alpha=alpha,
+                    alpha=label_alpha,
                     fontsize=fontsize,
                     bbox=bbox,
                     zorder=label_zorder,
@@ -459,32 +559,42 @@ class LineList(object):
 
         return self.data[selected]
 
-    def demo(self, xlim=[0.35, 0.51]):
+    def demo(self, xlim=[0.35, 0.51], figsize=(8, 8)):
         """
         Show a demonstration of various plot options
         """
         import matplotlib.pyplot as plt
 
-        fig, axes = plt.subplots(7, 1, figsize=(8, 8))
+        fig, axes = plt.subplots(7, 1, figsize=figsize)
+
         for ax in axes:
             ax.set_ylim(-0.5, 2.5)
 
         kws = dict(fontsize=8, bbox=self.WHITE_BBOX, ha="left", va="bottom")
+
         lxy = (0.02, 0.09)
 
         axes[0].set_xlim(xlim[0] * 1.0e4, xlim[1] * 1.0e4)
         self.add_to_axis(axes[0])
-        axes[0].text(*lxy, "defaults", transform=axes[0].transAxes, **kws)
+        axes[0].text(
+            *lxy,
+            r"defaults (NB: automatically detects $\lambda$ units of $\mathrm{\AA}$ and $\mu\mathrm{m}$)",
+            transform=axes[0].transAxes, **kws
+        )
 
         for ax in axes[1:]:
             ax.set_xlim(xlim)
 
         self.add_to_axis(
-            axes[1], prefixes=["O", "Pa"], va="bottom", y_normalized=False
+            axes[1], prefixes=["O", "Pa"], va="bottom",
+            y_normalized=False, bottom=0.5, top=1.1, y_label=1.3,
         )
         axes[1].text(
             *lxy,
-            'prefixes=["O","Pa"], y_normalized=False',
+            (
+                'prefixes=["O","Pa"], y_normalized=False, '
+                + 'bottom=0.5, top=1.1, y_label=1.3, va="bottom"'
+            ),
             transform=axes[1].transAxes,
             **kws,
         )
@@ -502,7 +612,7 @@ class LineList(object):
             **kws,
         )
 
-        axes[3].set_ylim(0.1, 10)
+        axes[3].set_ylim(0.2, 50)
         axes[3].semilogy()
         self.add_to_axis(
             axes[3], priorities=[2, 3, 4, 5], label_priorities=[4, 5]
@@ -514,7 +624,7 @@ class LineList(object):
             **kws,
         )
 
-        axes[4].set_ylim(0.1, 10)
+        axes[4].set_ylim(0.2, 50)
         axes[4].loglog()
         self.add_to_axis(
             axes[4], priorities=[3, 4, 5], y_label=0.5, va="center"
@@ -527,40 +637,47 @@ class LineList(object):
         )
 
         xi = np.linspace(-1, 1, 128)
-        yi = np.cos(xi * 4 * np.pi)
+        yi = np.cos(xi * 4 * np.pi) * 0.8
         xp = np.interp(xi, [-1, 1], xlim)
-        axes[5].plot(xp, yi - 1, color="0.8")
-        axes[5].plot(xp, yi * 0.2 + 1, color="0.8")
+
+        axes[5].plot(xp, yi + 1., color="0.8")
+        axes[5].plot(xp, yi * 0.2 + 2.1, color="0.8")
+
         self.add_to_axis(
             axes[5],
-            bottom=(xp, yi - 1),
-            top=(xp, yi * 0.2 + 1),
+            bottom=(xp, yi + 1),
+            top=(xp, yi * 0.2 + 2.1),
             priorities=[3, 4, 5],
+            va="bottom",
+            y_normalized=False,
         )
+
         axes[5].text(
             *lxy,
-            "interpolated bottom, top",
+            "interpolated bottom & top arrays, y_normalized=False",
             transform=axes[5].transAxes,
             **kws,
         )
 
         axes[6].plot(xp, yi * 0.2 + 1, color="0.8")
+
         self.add_to_axis(
             axes[6],
-            y_label=(xp, yi * 0.2 + 1),
+            y_label=(xp, np.interp(yi * 0.2 + 1, axes[6].get_ylim(), [0, 1])),
             priorities=[3, 4, 5],
             va="center",
-            bbox=self.WHITE_BBOX,
-            fontsize=5,
+            bbox=None,
+            fontsize=9,
         )
+
         axes[6].text(
             *lxy,
-            'interpolated y_label, va="center", white bbox, fontsize=5',
+            'interpolated y_label, va="center", bbox=None, fontsize=9',
             transform=axes[6].transAxes,
             **kws,
         )
 
-        fig.tight_layout(pad=1)
+        fig.tight_layout(pad=0.5)
 
         return fig
 
