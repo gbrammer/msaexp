@@ -54,6 +54,7 @@ LINE_LABELS_LATEX = {
 
 LINE_WAVELENGTHS, LINE_RATIOS = utils.get_line_wavelengths()
 
+PIXEL_SCALE = 0.10805
 
 def linelist_velocity_offset(lines):
     """
@@ -1957,6 +1958,12 @@ def pixel_table_valid_data(
         ptab.meta["bad_pixel_flag"] = bad_pixel_flag
         valid &= (ptab["dq"] & bad_pixel_flag) == 0
 
+    try:
+        msaopen = pixel_table_oper_mask(ptab, in_place=False, **kwargs)
+        valid &= ~msaopen
+    except:
+        pass
+
     if low_threshold is not None:
         if "scale_rnoise" in ptab.meta:
             scale_rnoise = ptab.meta["scale_rnoise"]
@@ -1977,6 +1984,74 @@ def pixel_table_valid_data(
         valid &= ~bad_low
 
     return valid
+
+
+def pixel_table_oper_mask(ptab, date=None, in_place=True, **kwargs):
+    """
+    Get stuck-open mask from MSAOPER reference files
+
+    The derived masks are available at
+    https://s3.amazonaws.com/msaexp-nirspec/ifu-sflat/index.html
+
+    """
+    msaopen = np.zeros(len(ptab), dtype=bool)
+
+    if date is None:
+        if 'date' in ptab.meta:
+            date = ptab.meta["date"]
+        else:
+            return msaopen
+
+    URL_PREFIX = "https://s3.amazonaws.com/msaexp-nirspec/ifu-sflat/"
+
+    key = '{grating}_{filter}'.format(**ptab.meta).lower()
+    exposure_indices = {}
+    for det_i in ["nrs1", "nrs2"]:
+        exposure_indices[det_i] = []
+        for j in range(ptab.meta["nfiles"]):
+            if det_i in ptab.meta[f"file{j:04d}"]:
+                exposure_indices[det_i].append(j)
+
+        if len(exposure_indices[det_i]) == 0:
+            continue
+
+        mask_file = f"msaoper_mask_{key}_{det_i}.fits.gz"
+        if os.path.exists(mask_file):
+            msg = f"pixel_table_oper_mask: mask file {mask_file}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=(VERBOSITY & 1))
+            mask_im = pyfits.open(mask_file)
+        else:
+            msg = f"pixel_table_oper_mask: mask_file {URL_PREFIX}{mask_file}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=(VERBOSITY & 3))
+            mask_im = pyfits.open(URL_PREFIX + mask_file)
+
+        ind = 0
+        date_ind = mask_im[0].header[f"DATE{0:04d}"]
+
+        for i in range(mask_im[0].header["NDATES"]):
+            date_i = mask_im[0].header[f"DATE{i:04d}"]
+            if date < date_i:
+                break
+            else:
+                ind = i
+                date_ind = date_i
+
+        msg = f"pixel_table_oper_mask: {date} > {date_ind} (i={ind})"
+        utils.log_comment(utils.LOGFILE, msg, verbose=(VERBOSITY & 3))
+
+        mask_date = mask_im[0].data[ind,:,:]
+        in_mask = (
+            (mask_date[ptab['ypix'], ptab['xpix']] > 0)
+            & np.isin(ptab['exposure'], exposure_indices[det_i])
+        )
+
+        msaopen[in_mask] = True
+        mask_im.close()
+
+    if in_place:
+        ptab["msaopen"] = msaopen
+
+    return msaopen
 
 
 def pixel_table_to_detector(
