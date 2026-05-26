@@ -429,3 +429,11 @@ def test_linelist():
     ll = line_utils.LineList()
     fig = ll.demo()
     plt.close(fig)
+
+    N0 = ll.N * 1
+
+    ll_orders = ll.append_scaled_orders(priorities=[5], orders=[2,3])
+
+    N1 = ll.N * 1
+
+    assert (N1 - N0 == len(ll_orders))
