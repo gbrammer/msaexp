@@ -484,7 +484,7 @@ class SpectrumSampler(object):
                 res_unc * self.spec["to_flam"]**(fnu is False)
             )
 
-    def smooth_velocity(self, velocity_sigma=500., unc="err", full_object=False, full_sliced=False, mask="valid", **kwargs):
+    def smooth_velocity(self, velocity_sigma=500., unc="err", full_object=False, full_sliced=False, mask="valid", orders=[1], **kwargs):
         """
         Smooth spectrum in velocity space
         """
@@ -519,6 +519,7 @@ class SpectrumSampler(object):
         result = self.resample_eazy_template(
             tsp,
             velocity_sigma=velocity_sigma,
+            orders=orders,
             **kwargs
         )
 
@@ -626,6 +627,7 @@ class SpectrumSampler(object):
                 mask = self.spec["valid"] > 0
             elif mask in self.spec.colnames:
                 mask = self.spec[mask] > 0
+
         elif mask is None:
             mask = np.isfinite(self.spec["flux"])
 
