@@ -153,6 +153,24 @@ class LineList(object):
     def N(self):
         return len(self.data)
 
+    def insert_spaces_in_labels(self):
+        """
+        Insert extra spaces in ion names
+        """
+        numerals = "I II III V IV VI VII VIII X IX XI XII XIII XIV XV XVI XVII XVIII XIX".split()[::-1]
+
+        labels = []
+        for row in self.data:
+            label = (r"$~$" + "+" + "$~$").join(row["label"].split("+"))
+            for num in numerals:
+                if num in label:
+                    label = label.replace(num, r"$~$" + num)
+                    break
+
+            labels.append(label)
+
+        self.data["label"] = labels
+
     def append_scaled_orders(self, priorities=[5], orders=[2,3], priority_offset=100, append=True):
         """
         Add rows to the ``data`` table for higher spectral orders
