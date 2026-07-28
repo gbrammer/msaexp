@@ -4578,6 +4578,7 @@ class LinefitData:
         use_err_scale=False,
         save=True,
         sn_threshold=4,
+        nomask=False,
         discrete_sigma=True,
         show_contours=True,
         mask_min_weight=0.1,
@@ -4650,7 +4651,8 @@ class LinefitData:
         line_sn_mask[~gmask] = np.nan
         line_sn_mask[~weight_mask] = np.nan
 
-        print("xxx line_sn_mask", np.isfinite(line_sn_mask).sum())
+        # print("xxx line_sn_mask", np.isfinite(line_sn_mask).sum())
+
         if np.isfinite(line_sn_mask).sum() == 0:
             if (full_line_sig > 0).sum() > 0:
                 line_sn_mask = np.nan ** (1 - (full_line_sig > 0))
@@ -4826,7 +4828,7 @@ class LinefitData:
         if line_name in LINE_WAVELENGTHS:
             line_wave_i = LINE_WAVELENGTHS[line_name][0] * 1.e4
         else:
-            line_wave_i = float(line_name.replace('line',''))
+            line_wave_i = float(line_name.replace('line','')) * 1.e4
 
         line_label += r"$\lambda_\mathrm{obs}~=~x~\mathrm{\mu m}$".replace(
             "x",
