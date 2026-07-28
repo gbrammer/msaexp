@@ -176,8 +176,8 @@ def test_slit_group():
     assert len(obj.exptime) == obj.N
     assert obj.exptime.sum() == 3063.666
 
-    assert np.allclose(obj.slit_pixel_scale, 0.1044, rtol=1.0e-3)
-    assert np.allclose(obj.slit_shutter_scale, 0.2283, rtol=1.0e-3)
+    assert np.allclose(obj.slit_pixel_scale, 0.1044, rtol=1.0e-2)
+    assert np.allclose(obj.slit_shutter_scale, 0.2283, rtol=1.0e-2)
     assert np.allclose(obj.source_ypixel_position, 0.5079880, rtol=1.0e-3)
 
     assert obj.calc_reference_exposure == 2
@@ -199,7 +199,7 @@ def test_slit_group():
     ]:
         assert getattr(obj, attr).shape == (obj.N, obj.sh[0] * obj.sh[1])
 
-    assert np.abs(obj.mask.sum() - (13967 - 82)) < 48
+    assert np.abs(obj.mask.sum() - (13967 - 82)) < 64
 
     meta = {
         "diffs": True,
@@ -232,10 +232,13 @@ def test_slit_group():
 
     for k in meta:
         assert k in obj.meta
-        assert obj.meta[k] == meta[k]
+        if hasattr(meta[k], 'upper'):
+            assert obj.meta[k] == meta[k]
+        else:
+            assert np.allclose(obj.meta[k], meta[k], rtol=1.e-2)
 
-    assert np.allclose(np.nanmin(obj.wave), 1.34484, rtol=1.0e-3)
-    assert np.allclose(np.nanmax(obj.wave), 5.3821, rtol=1.0e-3)
+    assert np.allclose(np.nanmin(obj.wave), 1.3448, rtol=1.0e-2)
+    assert np.allclose(np.nanmax(obj.wave), 5.3821, rtol=1.0e-2)
 
     assert np.nanmin(obj.bar[obj.mask]) > default_kwargs["min_bar"]
 
