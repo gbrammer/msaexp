@@ -1095,9 +1095,9 @@ class SlitGroup:
         return trace_yoffset
 
     @property
-    def slit_pixel_scale(self):
+    def slit_pixel_scale_old(self):
         """
-        Compute cross dispersion pixel scale from slit WCS
+        Compute cross dispersion pixel scale from slit WCS [deprecated]
 
         Returns
         -------
@@ -1110,12 +1110,35 @@ class SlitGroup:
         wcs = sl.meta.wcs
         d2s = wcs.get_transform("detector", "world")
 
+        xc = self.sh[1] // 2
+
         x0 = d2s(self.sh[1] // 2, self.sh[0] // 2)
         x1 = d2s(self.sh[1] // 2, self.sh[0] // 2 + 1)
 
         dx = np.array(x1) - np.array(x0)
         cosd = np.cos(x0[1] / 180 * np.pi)
         pix_scale = np.sqrt((dx[0] * cosd) ** 2 + dx[1] ** 2) * 3600.0
+
+        return pix_scale
+
+
+    @property
+    def slit_pixel_scale(self):
+        """
+        Compute cross dispersion pixel scale from slit WCS
+
+        Returns
+        -------
+        pix_scale : float
+            Cross-dispersion pixel scale ``arcsec / pixel``
+
+        """
+
+        if "slit_pixel_scale" in self.meta:
+            pix_scale = self.meta["slit_pixel_scale"]
+        else:
+            pix_scale = msautils.slit_pixel_scale(self.slits[0])
+            self.meta["slit_pixel_scale"] = pix_scale
 
         return pix_scale
 
@@ -1131,15 +1154,11 @@ class SlitGroup:
 
         """
 
-        sl = self.slits[0]
-        wcs = sl.meta.wcs
-        d2s = wcs.get_transform("detector", "slit_frame")
-
-        x0 = d2s(self.sh[1] // 2, self.sh[0] // 2)
-        x1 = d2s(self.sh[1] // 2, self.sh[0] // 2 + 1)
-
-        dx = np.array(x1) - np.array(x0)
-        pix_scale = np.sqrt(dx[0] ** 2 + dx[1] ** 2)
+        if "slit_shutter_scale" in self.meta:
+            pix_scale = self.meta["slit_shutter_scale"]
+        else:
+            pix_scale = msautils.slit_shutter_scale(self.slits[0])
+            self.meta["slit_shutter_scale"] = pix_scale
 
         return pix_scale
 
@@ -1858,7 +1877,10 @@ class SlitGroup:
             _dy = self.info["y_offset"] - self.info["y_offset"][0]
             _dy /= self.slit_pixel_scale
 
+            # print("xxx", self.info["y_offset"], self.slit_pixel_scale)
             msg = " Recomputed offsets slit     : "
+            msg += f" {self.slit_pixel_scale:.5f}\"/pix "
+
             _dystr = ", ".join([f"{_dyi:5.2f}" for _dyi in _dy])
 
             msg += f"force [{_dystr}] pix offsets"
@@ -3016,7 +3038,7 @@ class SlitGroup:
 
         self.var_total = self.var_poisson + self.var_rnoise + self.var_sky
 
-    def apply_spline_bar_correction(self):
+    def apply_spline_bar_correction(self, estimate_shutter_offset=True, **kwargs):
         """
         Own bar shadow correction for PRISM derived from empty background shutters
         and implemented as a flexible bspline
@@ -3040,6 +3062,7 @@ class SlitGroup:
             return None
 
         num_shutters = self.meta["num_shutters"]
+
         if num_shutters > 3:
             # Force use 3-shutter file
             wrap = True
@@ -3050,10 +3073,41 @@ class SlitGroup:
         else:
             wrap = "auto"
 
+        # if estimate_shutter_offset & (num_shutters in [1,2,3]):
+        #     unique_shutters = utils.Unique(
+        #         np.round(self.slit_frame_y[0][self.mask[0]]).astype(int),
+        #         verbose=False,
+        #     )
+        #     used_shutters = np.array(unique_shutters.values)[
+        #         unique_shutters.counts > 0.8 * unique_shutters.counts.max()
+        #     ]
+        #     first_shutter = {
+        #         1: 0,
+        #         2: 0,
+        #         3: -1,
+        #     }
+        #     barshadow_dy = first_shutter[num_shutters] - used_shutters[0]
+        # else:
+        #     barshadow_dy = 0
+
+        if estimate_shutter_offset:
+            bar_dy = msautils.get_bar_shutter_offset(
+                self.slit_frame_y[0][self.mask[0]],
+                num_shutters=num_shutters
+            )
+        else:
+            bar_dy = 0
+
         if "wrap_barshadow" in self.meta:
             wrap = self.meta["wrap_barshadow"]
 
-        _msg = " (mode='{bar_corr_mode}', wrap={wrap}, num_shutters={num_shutters})"
+        if "barshadow_dy" in self.meta:
+            bar_dy = self.meta["barshadow_dy"]
+
+        self.meta["barshadow_dy"] = bar_dy
+
+        _msg = " (mode='{bar_corr_mode}', wrap={wrap}, num_shutters={num_shutters}, dy={barshadow_dy})"
+
         utils.log_comment(
             utils.LOGFILE,
             (
@@ -3065,13 +3119,13 @@ class SlitGroup:
 
         if self.meta["bar_corr_mode"] == "flat":
             bar, bar_wrapped = msautils.get_prism_bar_correction(
-                self.fixed_yshutter,
+                self.fixed_yshutter + bar_dy,
                 num_shutters=num_shutters,
                 wrap=wrap,
             )
         else:
             bar, bar_wrapped = msautils.get_prism_wave_bar_correction(
-                self.fixed_yshutter,
+                self.fixed_yshutter + bar_dy,
                 self.wave,
                 num_shutters=num_shutters,
                 wrap=wrap,

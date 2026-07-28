@@ -2578,6 +2578,52 @@ def get_nirspec_psf_fwhm(wave):
     return fwhm
 
 
+def get_bar_shutter_offset(slit_frame_y, num_shutters=3, threshold=0.8, **kwargs):
+    """
+    Compute offset such that the first "valid" shutter in a slit corresponds
+    to the first shutter in the barshadow reference files given
+    ``num_shutters``.
+
+    Parameters
+    ----------
+    slit_frame_y : array-like
+        ``slit_frame`` cross dispersion coordinate.  This should be masked
+        by the valid pixels in a particular slitlet cutout.
+
+    num_shutters : int
+        Number of shutters in the slitlet
+
+    threshold : float
+        Threshold relative to the maximum number of pixels per shutter index
+        to treat as valid
+
+    Returns
+    -------
+    barshadow_dy : int
+        Shutter offset for use with the barshadow reference file
+
+    """
+    first_shutter = {
+        1: 0,
+        2: 0,
+        3: -1,
+    }
+
+    if num_shutters not in first_shutter:
+        return 0
+
+    unique_shutters = grizli.utils.Unique(
+        np.round(slit_frame_y).astype(int),
+        verbose=False,
+    )
+
+    used_shutters = np.array(unique_shutters.values)[
+        unique_shutters.counts > threshold * unique_shutters.counts.max()
+    ]
+    barshadow_dy = first_shutter[num_shutters] - used_shutters[0]
+
+    return barshadow_dy
+
 def get_prism_bar_correction(
     scaled_yshutter,
     num_shutters=3,
@@ -2897,9 +2943,9 @@ def get_prism_wave_bar_correction(
     return bar, is_wrapped
 
 
-def slit_shutter_scale(slit):
+def slit_shutter_scale_old(slit):
     """
-    Pixel scale of the ``slit_frame`` coordinate
+    Pixel scale of the ``slit_frame`` coordinate [deprecated]
 
     Parameters
     ----------
@@ -2924,6 +2970,98 @@ def slit_shutter_scale(slit):
 
     return pix_scale
 
+
+def slit_shutter_scale(slit, ref_wavelength=None, **kwargs):
+    """
+    Compute cross dispersion pixel scale from slit WCS in shutter coordinates
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    ref_wavelength : float, None
+        Reference wavelength (microns).  If not specified, will use
+        ``np.nanmedian(slit.wavelength)``.
+
+    Returns
+    -------
+    pix_scale : float
+        Cross-dispersion pixel scale ``shutters / pixel``
+
+    """
+
+    wcs = slit.meta.wcs
+
+    s2d = wcs.get_transform("slit_frame", "detector")
+
+    ysl = np.linspace(-1,1,64)
+    xsl = ysl * 0.
+
+    if ref_wavelength is None:
+        ref_wavelength = np.nanmedian(slit.wavelength)
+
+    wsl = ysl * 0. + ref_wavelength
+
+    # pixel coordinates as a function of slit
+    xps, yps = s2d(xsl, ysl, wsl * 1.e-6)
+    grad_pix = np.sqrt(np.gradient(xps)**2 + np.gradient(yps)**2)
+
+    # Pixel scale: dslit / dpix
+    dxdp = np.gradient(ysl) / grad_pix
+
+    pix_scale = np.nanmedian(dxdp)
+
+    return pix_scale
+
+
+def slit_pixel_scale(slit, ref_wavelength=None, **kwargs):
+    """
+    Compute cross dispersion pixel scale from slit WCS
+
+    Parameters
+    ----------
+    slit : `~jwst.datamodels.SlitModel`
+        Slitlet data object
+
+    ref_wavelength : float, None
+        Reference wavelength (microns).  If not specified, will use
+        ``np.nanmedian(slit.wavelength)``.
+
+    Returns
+    -------
+    pix_scale : float
+        Cross-dispersion pixel scale ``arcsec / pixel``
+
+    """
+
+    wcs = slit.meta.wcs
+
+    s2d = wcs.get_transform("slit_frame", "detector")
+    s2tel = wcs.get_transform("slit_frame", "v2v3vacorr")
+
+    ysl = np.linspace(-1,1,64)
+    xsl = ysl * 0.
+
+    if ref_wavelength is None:
+        ref_wavelength = np.nanmedian(slit.wavelength)
+
+    wsl = ysl * 0. + ref_wavelength
+
+    # ideal coordinates (v2v3, arcsec) as a function of slit
+    v2s, v3s, ws = s2tel(xsl, ysl, wsl * 1.e-6)
+    grad_ideal = np.sqrt(np.gradient(v2s)**2 + np.gradient(v3s)**2)
+
+    # pixel coordinates as a function of slit
+    xps, yps = s2d(xsl, ysl, wsl * 1.e-6)
+    grad_pix = np.sqrt(np.gradient(xps)**2 + np.gradient(yps)**2)
+
+    # Pixel scale: (dv2v3 / dslit) / (dpix / dslit)
+    dxdp = grad_ideal / grad_pix
+
+    pix_scale = np.nanmedian(dxdp)
+
+    return pix_scale
 
 def get_slit_coordinates(slit, trace_with_ypos=False, **kwargs):
     """
@@ -2977,7 +3115,7 @@ def get_slit_coordinates(slit, trace_with_ypos=False, **kwargs):
     return _wave, slit_frame_y, yslit
 
 
-def get_slit_data(slit, wrap=True, **kwargs):
+def get_slit_data(slit, wrap=True, dy=0, bar_dy="auto", **kwargs):
     """
     Parse slit coordinates and attributes
 
@@ -3002,8 +3140,7 @@ def get_slit_data(slit, wrap=True, **kwargs):
     sh = wave.shape
 
     shutter_scale = slit_shutter_scale(slit)
-
-    dy = 0.0
+    num_shutters = np.minimum(len(slit.shutter_state), 3)
 
     shutter_y = (slit_frame_y / shutter_scale + dy) / 5.0
 
@@ -3011,10 +3148,16 @@ def get_slit_data(slit, wrap=True, **kwargs):
         bar = np.ones_like(wave).reshape(sh)
         bar_wrapped = False
     else:
+        if bar_dy in ["auto"]:
+            msk = np.isfinite(wave + slit.data)
+            bar_dy = get_bar_shutter_offset(
+                slit_frame_y[msk], num_shutters=num_shutters, threshold=0.8
+            )
+
         bar, bar_wrapped = get_prism_wave_bar_correction(
-            shutter_y.flatten(),
+            shutter_y.flatten() + bar_dy,
             wave.flatten(),
-            num_shutters=np.minimum(len(slit.shutter_state), 3),
+            num_shutters=num_shutters,
             wrap=wrap,
         )
         bar = bar.reshape(sh)
@@ -3036,6 +3179,9 @@ def get_slit_data(slit, wrap=True, **kwargs):
         "bar": bar,
         "slx": slx,
         "sly": sly,
+        "dy": dy,
+        "bar_dy": bar_dy,
+        "shutter_scale": shutter_scale,
         "shutter_state": slit.shutter_state,
         "num_shutters": len(slit.shutter_state),
         "bar_wrapped": bar_wrapped,
