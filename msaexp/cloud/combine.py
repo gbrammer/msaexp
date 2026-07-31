@@ -988,7 +988,7 @@ def get_extraction_info(root="snh0pe-v4", outroot=None, key="4446_274"):
     return info
 
 
-def handle_spectrum_extraction(**event):
+def handle_spectrum_extraction(unique_path=False, **event):
     """
     Handler
     """
@@ -1030,6 +1030,21 @@ def handle_spectrum_extraction(**event):
     s3_base = event["s3_base"]
     sync = event["sync"] not in [0, False, "False"]
     sync &= event["rowid"] is not None
+
+    home_path = os.getcwd()
+    if unique_path:
+        work_path = os.path.join(home_path, f"{outroot}_{key}")
+        print(f"unique_path: working directory {work_path}")
+
+        if os.path.exists(work_path):
+            if skip_existing:
+                return None, None, 99
+        else:
+            os.makedirs(work_path)
+
+        os.chdir(work_path)
+    else:
+        work_path = home_path
 
     if sync:
         SQL = f"""
@@ -1120,6 +1135,17 @@ def handle_spectrum_extraction(**event):
         for file in files:
             print(f"rm {file}")
             os.remove(file)
+
+        if unique_path & (work_path != home_path):
+            files = glob.glob(os.path.join(work_path, "*"))
+            for file in files:
+                print(f"rm {file}")
+                os.remove(file)
+
+    os.chdir(home_path)
+    if unique_path & (work_path != home_path):
+        print(f"rmdir {work_path}")
+        os.rmdir(work_path)
 
     return xobj, info, status
 
