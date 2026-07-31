@@ -1143,7 +1143,7 @@ def handle_spectrum_extraction(unique_path=False, **event):
                 os.remove(file)
 
     os.chdir(home_path)
-    if unique_path & (work_path != home_path):
+    if event["clean"] & unique_path & (work_path != home_path):
         print(f"rmdir {work_path}")
         os.rmdir(work_path)
 
