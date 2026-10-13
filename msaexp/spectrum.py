@@ -1679,7 +1679,7 @@ class SpectrumSampler(object):
 
         ax.step(
             xpix,
-            ospec["flux"] * mnorm * to_unit,
+            ospec["flux"] * mnorm * to_unit * np.nan**(~ospec['valid']),
             where="mid",
             label=mlabel,
             **step_kwargs,
@@ -3175,7 +3175,7 @@ def set_spec_sys_err(spec, sys_err=0.02):
     spec.meta["sys_err"] = sys_err
 
 
-def read_mast_x1d(file, mask_bit=1, dilate_mask=2, spectrum_extension='EXTRACT1D', **kwargs):
+def read_mast_x1d(file, mask_bit=1, dilate_mask=0, spectrum_extension='EXTRACT1D', **kwargs):
     """
     Read a MAST x1d spectrum and modify column names, meta, etc.
     """
@@ -3208,6 +3208,8 @@ def read_mast_x1d(file, mask_bit=1, dilate_mask=2, spectrum_extension='EXTRACT1D
         bad_pix = (spec["dq"] & mask_bit) > 0
     else:
         bad_pix = ~np.isfinite(spec["flux"])
+
+    bad_pix |= spec["err"] <= 0
 
     if dilate_mask > 0:
         bad_pix = nd.binary_dilation(bad_pix, iterations=dilate_mask)
@@ -3286,7 +3288,11 @@ def dummy_spec_hdulist(spec, file_2d=None, prof_max=0.4, **kwargs):
             s2im = pyfits.open(file_2d)
 
         if s2im is not None:
-            to_ujy = s2im['SCI'].header['PIXAR_SR'] * 1.e12
+
+            if s2im['SCI'].header['BUNIT'] == 'MJy':
+                to_ujy = 1.e12
+            else:
+                to_ujy = s2im['SCI'].header['PIXAR_SR'] * 1.e12
 
             msk = (s2im["SCI"].data == 0) | (s2im["WHT"].data == 0)
 
