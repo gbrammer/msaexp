@@ -913,6 +913,8 @@ class SlitGroup:
             "with_fs_offset": "Extra fixed slit offset",
             "with_sflat_correction": "Field-dependent s-flat correction",
             "with_extra_dq": "Extra DQ pixel mask",
+            "slit_pixel_scale": "Pixel scale along the slitlet in arcsec",
+            "slit_shutter_scale": "Scale of shutter coordinates per pixel",
         }
 
         self.shapes = []
@@ -1217,6 +1219,7 @@ class SlitGroup:
         rows = []
         pscale = self.slit_pixel_scale * 1
         source_ypixel_position = self.source_ypixel_position * 1
+        # shutter_scale = self.slit_shutter_scale * 1
 
         for i, sl in enumerate(self.slits):
             row = {
@@ -1408,6 +1411,9 @@ class SlitGroup:
 
         if self.meta["nod_offset"] is None:
             self.meta["nod_offset"] = MSA_NOD_ARCSEC / self.slit_pixel_scale
+
+        # Populate meta["slit_shutter_scale"]
+        shutter_scale = self.slit_shutter_scale * 1
 
         sl = (slice(0, self.sh[0]), slice(0, self.sh[1]))
 
@@ -1687,7 +1693,8 @@ class SlitGroup:
         bad |= ~np.isfinite(phot_corr)
 
         if self.grating in ["PRISM"]:
-            bad |= sci > PRISM_MAX_VALID
+            if np.nanpercentile(sci[~bad], 95) < PRISM_MAX_VALID:
+                bad |= sci > PRISM_MAX_VALID
             bad |= sci < PRISM_MIN_VALID_SN * np.sqrt(var_rnoise + var_poisson)
 
             if (VERBOSE_LOG & 4):
