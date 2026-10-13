@@ -75,7 +75,8 @@ class ClippedColormap(matplotlib.colorizer.Colorizer):
             lab[:, :, 0] = -max_lightness
 
         # Transform back
-        arr[:, :, :3] = cspace_converter("CAM02-UCS", "sRGB1")(lab) #), rgba[-1])
+        arr[:, :, :3] = cspace_converter("CAM02-UCS", "sRGB1")(lab)
+
         if ndim == 1:
             arr = arr[0, 0, :]
         elif ndim == 2:
@@ -97,8 +98,15 @@ class ClippedColormap(matplotlib.colorizer.Colorizer):
         rgba = self._cmap.to_rgba(x, **kwargs)
         return self.clip_color_lightness(rgba, max_lightness=self.max_lightness)
 
-    def __call__(self, x, **kwargs):
-        return self.to_rgba(x, **kwargs)
+    def __call__(self, x, hex=False, **kwargs):
+        from matplotlib.colors import to_hex
+
+        rgba = self.to_rgba(x, **kwargs)
+
+        if hex:
+            return to_hex(rgba)
+        else:
+            return rgba
 
     @property
     def autoscale(self):
