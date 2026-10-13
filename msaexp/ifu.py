@@ -1395,7 +1395,7 @@ def drizzle_cube_data(
     """
     from tqdm import tqdm
 
-    dx, dy = pixel_table_dx_dy(ptab, **kwargs)
+    dx, dy = pixel_table_dx_dy(ptab["ra", "dec"], **kwargs)
 
     if side in ["auto"]:
         sx = (int(np.nanmax(np.abs(dx)) / pixel_size) + 4) * pixel_size
@@ -1511,7 +1511,7 @@ def make_drizzle_hdul(
     """
     import astropy.wcs as pywcs
 
-    dx, dy = pixel_table_dx_dy(ptab, **kwargs)
+    dx, dy = pixel_table_dx_dy(ptab["ra", "dec"], **kwargs)
 
     if side in ["auto"]:
         sx = (int(np.nanmax(np.abs(dx)) / pixel_size) + 4) * pixel_size
@@ -1542,14 +1542,21 @@ def make_drizzle_hdul(
 
     pa_aper = meta["position_angle"]
 
+    if "ref_coords" in kwargs:
+        ra_ref, dec_ref = kwargs["ref_coords"]
+    else:
+        ra_ref = meta["ra_ref"]
+        dec_ref = meta["dec_ref"]
+
     hdul = utils.make_wcsheader(
-        meta["ra_ref"],
-        meta["dec_ref"],
+        ra_ref,
+        dec_ref,
         size=[2 * s * pixel_size for s in Nside],
         pixscale=pixel_size,
         get_hdu=True,
         theta=-pa_aper,
     )
+
     sky_wcs = pywcs.WCS(hdul.header, relax=True)
 
     hdul.header["NAXIS"] = 3
@@ -2134,7 +2141,27 @@ def pixel_table_dx_dy(ptab, ref_coords=None, pa="meta", wcs=None, **kwargs):
 
     """
     if wcs is not None:
-        dx, dy = wcs.all_world2pix(ptab["ra"], ptab["dec"], 0)
+        if wcs.naxis == 2:
+            dx, dy = wcs.all_world2pix(
+                ptab["ra"].astype(float),
+                ptab["dec"].astype(float),
+                1
+            )
+        else:
+            dx, dy, dw_ = wcs.all_world2pix(
+                ptab["ra"].astype(float),
+                ptab["dec"].astype(float),
+                np.full(len(ptab["ra"]), wcs.wcs.crval[2]),
+                1
+            )
+
+        pscale = utils.get_wcs_pscale(wcs)
+        # print("xxx wcs", wcs.wcs.crpix, wcs.wcs.crval, pscale)
+        # print("xxx pscale", pscale, dx.min(), np.nanmin(dx))
+
+        dx = (dx - wcs.wcs.crpix[0]) * pscale
+        dy = (dy - wcs.wcs.crpix[1]) * pscale
+
         return dx, dy
 
     if pa in ["meta"]:
@@ -2147,6 +2174,8 @@ def pixel_table_dx_dy(ptab, ref_coords=None, pa="meta", wcs=None, **kwargs):
         dec_ref = ptab.meta["dec_ref"]
     else:
         ra_ref, dec_ref = ref_coords
+        # ptab.meta["ra_ref"] = ra_ref
+        # ptab.meta["dec_ref"] = dec_ref
 
     dra = -(ptab["ra"] - ra_ref) * np.cos(dec_ref / 180 * np.pi) * 3600
     dde = (ptab["dec"] - dec_ref) * 3600
