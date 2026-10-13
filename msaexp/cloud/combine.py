@@ -341,6 +341,7 @@ def combine_spectra_pipeline(
             flag_profile_kwargs=None,
             flag_trace_kwargs=flag_trace_kwargs,
             lookup_prf_type="merged",  # by grating
+            lookup_prf_version="001",
             weight_type="ivm",
             files=files,
             root=outroot,
