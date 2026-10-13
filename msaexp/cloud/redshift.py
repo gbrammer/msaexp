@@ -649,6 +649,10 @@ def run_fit(file='rubies-egs61-v2_prism-clear_4233_75646.spec.fits', root='rubie
 
     plt_kwargs['halpha_prism'] = ['Ha+NII','CIV-1549', 'HeII-1640', 'NIV-1487']
 
+    for k in kwargs:
+        if k in plt_kwargs:
+            plt_kwargs[k] = kwargs[k]
+
     msaexp.spectrum.SCALE_UNCERTAINTY = np.zeros(2)
 
     plt.ioff()
