@@ -1851,6 +1851,7 @@ def drizzled_hdu_figure(
     recenter=True,
     use_aper_columns=False,
     smooth_sigma=None,
+    **kwargs,
 ):
     """
     Figure showing drizzled HDU
@@ -2150,6 +2151,7 @@ def drizzled_hdu_figure(
 
     xt = xt[(xt > sp["wave"].min()) & (xt < sp["wave"].max())]
     xv = np.interp(xt, sp["wave"], np.arange(len(sp)))
+
     if major < 0.1:
         xtl = [f"{v:.2f}" for v in xt]
     elif major >= 1:
@@ -2313,13 +2315,19 @@ def drizzled_hdu_figure(
         )
 
     if xlim is not None:
-        xvi = np.interp(xlim, sp["wave"], np.arange(len(sp)))
+        xvi = np.interp(
+            xlim, #np.clip(xlim, np.nanmin(sp["wave"]), np.nanmax(sp["wave"])),
+            sp["wave"],
+            np.arange(len(sp))
+        )
         for ax in axes:
             ax.set_xlim(*xvi)
 
     else:
         for ax in axes:
             ax.set_xlim(0, nx)
+
+    # print("***", xlim, ax.get_xlim(), nx, xt, xv, xtm, xvm)
 
     fig.tight_layout(pad=0.5)
 

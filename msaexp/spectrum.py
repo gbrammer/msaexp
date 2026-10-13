@@ -24,6 +24,7 @@ from .utils import trapz
 
 utils.set_warnings()
 
+MAST_DIRECT_URL = "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/"
 
 def float_representer(dumper, value):
     """
@@ -1085,7 +1086,7 @@ class SpectrumSampler(object):
 
         return output
 
-    def drizzled_hdu_figure(self, **kwargs):
+    def drizzled_hdu_figure(self, get_2d=False, **kwargs):
         """
         Run `~msaexp.utils.drizzled_hdu_figure` on array data
 
@@ -1093,6 +1094,14 @@ class SpectrumSampler(object):
         ----------
         kwargs : dict
             Keyword arguments passed to `~msaexp.utils.drizzled_hdu_figure`
+
+        get_2d : bool, str
+            Not generally needed for `msaexp` products that have the 2D
+            information attached in the same FITS file.
+
+            If bool and ``self`` is a MAST x1d spectrum, try to find or
+            download the corresponding s2d file.  If a string, then use that
+            as the s2d file.
 
         Returns
         -------
@@ -1102,14 +1111,26 @@ class SpectrumSampler(object):
         """
         if isinstance(self.spec_input, pyfits.HDUList):
             fig = msautils.drizzled_hdu_figure(self.spec_input, **kwargs)
-        elif self.file is None:
-            with pyfits.open(self.file) as hdul:
+
+        elif self.file is not None:
+            if self.file.endswith('_x1d.fits'):
+                if get_2d:
+                    if isinstance(get_2d, str):
+                        file_2d = get_2d
+                    else:
+                        file_2d = self.file.replace("_x1d.fits", "_s2d.fits")
+                else:
+                    file_2d = None
+
+                hdul = dummy_spec_hdulist(self.spec, file_2d=file_2d, **kwargs)
                 fig = msautils.drizzled_hdu_figure(hdul, **kwargs)
+
+            else:
+                with pyfits.open(self.file) as hdul:
+                    fig = msautils.drizzled_hdu_figure(hdul, **kwargs)
         else:
-            hdul = pyfits.HDUList([
-                pyfits.PrimaryHDU(),
-                pyfits.BinTableHDU(self.spec, name='SPEC1D')
-            ])
+            hdul = dummy_spec_hdulist(self.spec)
+
             fig = msautils.drizzled_hdu_figure(hdul, **kwargs)
 
         return fig
@@ -1493,6 +1514,185 @@ class SpectrumSampler(object):
             ax.set_ylim(*yl)
 
         return fig, axes
+
+    def query_mast_files(self, extensions=["x1d"], download=False, **kwargs):
+        """
+        Query for the corresponding MAST level 3 file
+
+        Parameters
+        ----------
+        extensions : list
+             List of MAST extensions to query, e.g,. ``x1d``, ``s2d``
+
+        download : bool
+            If matches found, download them
+
+        Returns
+        -------
+        result : dict
+
+        """
+        import mastquery.jwst
+        import mastquery.utils
+
+        query_filters = mastquery.jwst.make_program_filter(
+            progs=[self.meta['PROGRAM']]
+        )
+
+        query_filters += mastquery.jwst.make_query_filter(
+            column="productLevel", values=["3"]
+        )
+
+        query_filters += mastquery.jwst.make_query_filter(
+            column="visit", values=[int(self.meta['VISIT'])]
+        )
+
+        query_filters += mastquery.jwst.make_query_filter(
+            column="filter", values=[self.meta['FILTER']]
+        )
+
+        query_filters += mastquery.jwst.make_query_filter(
+            column="grating", values=[self.meta['GRATING']]
+        )
+
+        res = mastquery.jwst.query_jwst(
+            instrument='NRS',
+            filters=query_filters,
+            extensions=extensions
+        )
+
+        if 'BKG' in self.meta['SRCALIAS']:
+            src_suffix = f"b{int(self.meta['SRCALIAS'][3:]):09d}_"
+        else:
+            src_suffix = f"s{int(self.meta['SRCALIAS']):09d}_"
+
+        if len(res) == 0:
+
+            result = {
+                "query_filters": query_filters,
+                "query_result": res,
+                "match_alias": None,
+                "mast_files": None,
+                "src_suffix": src_suffix,
+            }
+
+            return result
+
+        match_alias = np.array([
+            src_suffix in file for file in res['filename']
+        ])
+
+        if match_alias.sum() == 0:
+            msg = (
+                "No MAST file found like {PROGRAM}-o{VISIT}_{src_suffix}"
+                + "_nirspec_{FILTER}-{GRATING}"
+            ).format(src_suffix=src_suffix, **self.meta)
+            print(msg)
+        else:
+            files_ = res['filename'][match_alias].tolist()
+            print(f"MAST files: {','.join(files_)}")
+
+        if (match_alias.sum() > 0):
+            # mast_files = mastquery.utils.download_from_mast(
+            #     res["filename"][match_alias].tolist(),
+            #     **kwargs
+            # )
+            mast_files = []
+            for f in res["filename"][match_alias]:
+                mast_files.append(
+                    MAST_DIRECT_URL + f
+                )
+        else:
+            mast_files = None
+
+        result = {
+            "query_filters": query_filters,
+            "query_result": res,
+            "match_alias": match_alias,
+            "mast_files": mast_files,
+            "src_suffix": src_suffix,
+        }
+
+        return result
+
+    def compare(self, file, renorm=True, step_kwargs=dict(color="magenta", alpha=0.5), **kwargs):
+        """
+        Make a figure comparing to another spectrum, e.g., a MAST x1d product
+
+        Parameters
+        ----------
+        file : str
+            Other filename to load as a `~msaexp.spectrum.SpectrumSampler`
+            object
+
+        renorm : bool
+            Scale other spectrum where it overlaps
+
+        step_kwargs : dict
+            Keyword arguments to the overplotted 1D spectrum
+
+        Returns
+        -------
+        fig : `matplotlib.Figure`
+            Figure from `~msaexp.spectrum.SpectrumSampler.drizzled_hdu_figure`
+            with the comparision spectrum overplotted
+
+        ospec : `~msaexp.spectrum.SpectrumSampler`
+            The other spectrum
+
+        """
+
+        ospec = SpectrumSampler(file)
+
+        fig = self.drizzled_hdu_figure(**kwargs)
+
+        mlabel = os.path.basename(file)
+
+        xpix = np.interp(ospec["wave"], self["wave"], np.arange(self.NSPEC))
+    
+        fint = np.interp(
+            self["wave"], ospec["wave"], ospec["flux"],
+            left=np.nan, right=np.nan
+        )
+
+        if renorm:
+            mask = np.isfinite(fint) & (self["valid"])
+
+            mnorm = np.nansum((fint * self["flux"] / self["err"]**2)[mask])
+            mnorm /= np.nansum((fint **2 / self["err"]**2)[mask])
+
+            if mnorm < 0:
+                mnorm = 1.0
+
+            mlabel += f' x {mnorm:.1f}'
+
+        else:
+            mnorm = 1.0
+
+        ax = fig.axes[2]
+
+        to_unit = 1.0
+
+        if "unit" in kwargs:
+            if kwargs["unit"].lower() == "flam":
+                to_unit = ospec.spec["to_flam"]
+
+        ax.step(
+            xpix,
+            ospec["flux"] * mnorm * to_unit,
+            where="mid",
+            label=mlabel,
+            **step_kwargs,
+        )
+
+        ax.legend(fontsize=8, loc="lower right")
+
+        self.spec["other"] = fint * mnorm
+        self.spec.meta["OTHERFIL"] = file
+        self.spec.meta["OTHERSCL"] = mnorm
+
+        return fig, ospec
+
 
 GRATING_COLORS = {
     "PRISM": "purple",
@@ -2975,6 +3175,134 @@ def set_spec_sys_err(spec, sys_err=0.02):
     spec.meta["sys_err"] = sys_err
 
 
+def read_mast_x1d(file, mask_bit=1, dilate_mask=2, spectrum_extension='EXTRACT1D', **kwargs):
+    """
+    Read a MAST x1d spectrum and modify column names, meta, etc.
+    """
+    import astropy.units as u
+    import scipy.ndimage as nd
+
+    with pyfits.open(file) as hdul:
+        if spectrum_extension in hdul:
+            spec = utils.read_catalog(hdul[spectrum_extension])
+        else:
+            spec = utils.read_catalog(file)
+
+        for c in list(spec.colnames):
+            spec.rename_column(c, c.lower())
+
+        for k in hdul[0].header:
+            if k in ["", "HISTORY"]:
+                continue
+            elif k not in spec.meta:
+                # print(k)
+                spec.meta[k] = hdul[0].header[k]
+            else:
+                pass
+
+    spec.rename_column("wavelength", "wave")
+
+    spec.rename_column("flux_error", "err")
+
+    if "dq" in spec.colnames:
+        bad_pix = (spec["dq"] & mask_bit) > 0
+    else:
+        bad_pix = ~np.isfinite(spec["flux"])
+
+    if dilate_mask > 0:
+        bad_pix = nd.binary_dilation(bad_pix, iterations=dilate_mask)
+
+    for c in ["flux", "err"]:
+        spec[c] = spec[c].to(u.microJansky)
+        spec[c][bad_pix] = np.nan
+
+    for c in ["flux_var_poisson", "flux_var_rnoise", "flux_var_flat"]:
+        spec[c] = spec[c].to(u.microJansky**2)
+        spec[c][bad_pix] = np.nan
+
+    return spec
+
+
+def dummy_spec_hdulist(spec, file_2d=None, prof_max=0.4, **kwargs):
+    """
+    Make empty arrays needed for `msaexp.utils.drizzled_hdu_figure`
+
+    Parameters
+    ---------
+    spec : `astropy.table.Table`
+        Spectrum data table with columns ``flux``, ``err``, etc.
+
+    Returns
+    -------
+    hdul : `astropy.io.fits.HDUList`
+        HDU data
+
+    """
+    try:
+        from urllib.error import HTTPError as ReadError
+    except ImportError:
+        ReadError = IOError
+
+    ptab = utils.GTable()
+    ptab["pix"] = [0.]
+    ptab["profile"] = [1.]
+    ptab["pfit"] = [1.]
+
+    bintab = pyfits.BinTableHDU(spec, name='SPEC1D')
+    h = bintab.header
+
+    hdul = pyfits.HDUList([
+        pyfits.PrimaryHDU(),
+        bintab,
+        pyfits.ImageHDU(data=spec["flux"][None,:], header=h, name='SCI'),
+        pyfits.ImageHDU(data=1./spec["err"][None,:]**2, header=h , name='WHT'),
+        pyfits.ImageHDU(
+            data=np.ones_like(spec["flux"][None,:]), header=h, name='PROFILE'
+        ),
+        pyfits.BinTableHDU(ptab, name='PROF1D'),
+    ])
+
+    for ext in hdul:
+        hdul[ext].header["YTRACE"] = 0.
+        hdul[ext].header["PROFCEN"] = 0.
+        hdul[ext].header["PROFSIG"] = 0.
+        hdul[ext].header["PROFSTRT"] = 0.
+        hdul[ext].header["PROFSTOP"] = 0.
+
+    if file_2d is not None:
+        s2im = None
+
+        if file_2d.endswith("_s2d.fits"):
+            if os.path.exists(file_2d):
+                s2im = pyfits.open(file_2d)
+            else:
+                s2d_url = MAST_DIRECT_URL + os.path.basename(file_2d)
+                try:
+                    s2im = pyfits.open(s2d_url)
+                    print(s2d_url)
+                except ReadError:
+                    s2im = None
+        else:
+            s2im = pyfits.open(file_2d)
+
+        if s2im is not None:
+            to_ujy = s2im['SCI'].header['PIXAR_SR'] * 1.e12
+
+            msk = (s2im["SCI"].data == 0) | (s2im["WHT"].data == 0)
+
+            hdul['SCI'].data = s2im['SCI'].data * to_ujy * np.nan**msk
+            hdul['WHT'].data = s2im['WHT'].data / to_ujy**2 * np.nan**msk
+
+            hdul['PROFILE'].data = np.ones_like(hdul['SCI'].data) * prof_max
+
+            sh = s2im["SCI"].data.shape
+            yhalf = sh[0] / 2
+            hdul["SPEC1D"].header["YTRACE"] = yhalf
+
+    # fig = msautils.drizzled_hdu_figure(hdu, **kwargs)
+    return hdul
+
+
 def read_spectrum(
     inp,
     spectrum_extension="SPEC1D",
@@ -3039,12 +3367,17 @@ def read_spectrum(
     import scipy.ndimage as nd
 
     if isinstance(inp, str):
-        if "fits" in inp:
+        if inp.endswith("_x1d.fits"):
+            spec = read_mast_x1d(inp, **kwargs)
+
+        elif "fits" in inp:
+
             with pyfits.open(inp) as hdul:
                 if spectrum_extension in hdul:
                     spec = utils.read_catalog(hdul[spectrum_extension])
                 else:
                     spec = utils.read_catalog(inp)
+
         else:
             spec = utils.read_catalog(inp)
 
