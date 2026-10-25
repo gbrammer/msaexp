@@ -208,7 +208,7 @@ class SpectrumSampler(object):
 
     spec = {}
     spec_wobs = None
-    spec_R_fwhm = None
+    spec_R_fwhm = {}
     valid = None
     wave_step = None
 
@@ -245,9 +245,10 @@ class SpectrumSampler(object):
         spec_wobs : array-like
             Observed wavelengths, microns
 
-        spec_R_fwhm : array-like
+        spec_R_fwhm : dict
             Tabulated spectral resolution `R = lambda / dlambda`, assumed to be
-            defined as FWHM
+            defined as FWHM.  Separate entries for each spectral order $m$
+            evaluated at $\lambda / m$.
 
         valid : array-like
             Boolean array of valid 1D data
@@ -265,8 +266,16 @@ class SpectrumSampler(object):
         self.sensitivity = {1: 1.0}
         self.inv_sensitivity = 1.0
 
-        for i in range(1, 4):
-            self.sensitivity[i + 1] = None
+        grating_ = self.meta["GRATING"].upper()
+        if grating_ in ["G140M", "G235M", "G395M", "G140H", "G235H", "G395H"]:
+            for m in [2, 3, 4]:
+                self.sensitivity[m] = None
+
+                self.spec_R_fwhm[m] = msautils.get_default_resolution_curve(
+                    grating=grating_,
+                    wave=self.spec['wave'] / m,
+                    **kwargs
+                ) * m
 
         if with_sensitivity:
             self.load_sensitivity_curve(**kwargs)
@@ -338,7 +347,7 @@ class SpectrumSampler(object):
         self.spec = read_spectrum(spec_input, **kwargs)
 
         self.spec_wobs = self.spec["wave"].astype(np.float32)
-        self.spec_R_fwhm = self.spec["R"].astype(np.float32)
+        self.spec_R_fwhm[1] = self.spec["R"].astype(np.float32)
 
         if "wave_step" in self.spec.colnames:
             self.wave_step = self.spec["wave_step"].astype(np.float32)
@@ -459,7 +468,7 @@ class SpectrumSampler(object):
 
             res_ = RESAMPLE_FUNC(
                 self.spec_wobs,
-                self.spec_R_fwhm * scale_disp * order,
+                self.spec_R_fwhm[order] * scale_disp,
                 templ_wobs * order,
                 templ_flux * igmz,
                 templ_unc=templ_unc,
@@ -553,8 +562,10 @@ class SpectrumSampler(object):
             spc.spec["wave_index"] = wi
             spc.spec_wobs = (spc.spec["wave"] * 1.0).astype(np.float32)
             
-            Rdisp = 1.0 / spc.spec["R"]**2 + (2.35 * velocity_sigma / 3e5)**2
-            spc.spec_R_fwhm = (1.0 / np.sqrt(Rdisp)).astype(np.float32)
+            for m in spc.spec_R_fwhm:
+                Rm = spc.spec_R_fwhm[m]
+                Rdisp = 1.0 / Rm**2 + (2.35 * velocity_sigma / 3e5)**2
+                spc.spec_R_fwhm[m] = (1.0 / np.sqrt(Rdisp)).astype(np.float32)
 
             spc.spec["flux"] = resamp[wi]
             spc.spec["err"] = resamp_unc[wi]
@@ -721,7 +732,7 @@ class SpectrumSampler(object):
         """
         res = RESAMPLE_FUNC(
             self.spec_wobs,
-            self.spec_R_fwhm * scale_disp,
+            self.spec_R_fwhm[1] * scale_disp,
             self.xline * line_um,
             self.yline,
             velocity_sigma=velocity_sigma,
@@ -783,7 +794,7 @@ class SpectrumSampler(object):
 
             res_i = SAMPLE_LINE_FUNC(
                 self.spec_wobs,
-                self.spec_R_fwhm * scale_disp * order,
+                self.spec_R_fwhm[order] * scale_disp,
                 line_um * order,
                 dx=self.wave_step,
                 line_flux=line_flux,
