@@ -13,6 +13,7 @@ def resample_template(
     spec_R_fwhm,
     templ_wobs,
     templ_flux,
+    templ_unc=None,
     velocity_sigma=100,
     nsig=5,
     fill_value=0.0,

@@ -151,7 +151,7 @@ def test_sampler_object():
     sampler_checks(new)
 
     # Initialized from HDUList
-    for with_numba in [True, False]:
+    for with_numba in [False, True]:
         with pyfits.open(SPECTRUM_FILE) as hdul:
             spec = spectrum.SpectrumSampler(hdul)
             sampler_checks(spec, with_numba=with_numba)
@@ -209,3 +209,115 @@ def sampler_checks(spec, with_numba=False):
     igm10 = spec.igm_absorption(10.0)
     n10 = igm10 < 1
     assert n10.sum() == 82
+
+
+def dummy_spectrum(grating="PRISM", filter="CLEAR"):
+    """
+    Generate a dummy spectrum object
+    """
+    import grizli.utils
+
+    wave = utils.get_standard_wavelength_grid(
+        grating,
+        sample=1.05,
+    )
+
+    tab = grizli.utils.GTable()
+    tab["wave"] = wave
+    tab["flux"] = wave * 0. + 1
+    tab["err"] = wave * 0. + 0.01
+    tab.meta["GRATING"] = grating
+    tab.meta["FILTER"] = filter
+
+    return spectrum.SpectrumSampler(tab)
+
+
+def test_all_gratings():
+    """
+    Test initializing spectra for all NIRSpec gratings
+    """
+
+    from eazy.utils import CLIGHT
+    import eazy.templates
+
+    has_orders = {
+        ('F070LP', 'G140M'): True,
+        ('F100LP', 'G140M'): True,
+        ('F170LP', 'G235M'): True,
+        ('F290LP', 'G395M'): False,
+        ('F070LP', 'G140H'): True,
+        ('F100LP', 'G140H'): False,
+        ('F170LP', 'G235H'): False,
+        ('F290LP', 'G395H'): False,
+        ('CLEAR', 'PRISM'): False
+    }
+
+    twave = np.arange(0.4, 6, 0.0001)
+    tflux = CLIGHT * 1.e10 / (twave * 1.e4)**2
+
+    templ = eazy.templates.Template(arrays=(twave * 1.e4, tflux))
+
+    max_with_orders = {
+        ('F070LP', 'G140M'): 1.764,
+        ('F100LP', 'G140M'): 1.250,
+        ('F170LP', 'G235M'): 1.409,
+        ('F070LP', 'G140H'): 1.828,
+    }
+
+    orders_line_wave = {
+        ('F070LP', 'G140M'): 0.8,
+        ('F100LP', 'G140M'): 1.0,
+        ('F170LP', 'G235M'): 1.7,
+        ('F070LP', 'G140H'): 0.9,
+    }
+
+    for optics in has_orders:
+        (filter, grating) = optics
+        spec = dummy_spectrum(grating=grating, filter=filter)
+        res = spec.resample_eazy_template(templ, orders=[1])
+        np.allclose(res, 1., atol=1.e-4)
+
+        assert((spec.sensitivity[2] is not None) == has_orders[optics])
+
+        if has_orders[optics]:
+            res2 = spec.resample_eazy_template(templ)
+
+            forder = []
+            lorder = []
+
+            for m in spec.sensitivity:
+                if spec.sensitivity[m] is not None:
+                    forder.append(spec.sensitivity[m] / spec.sensitivity[1])
+
+                    ###
+                    # Emision line: max intensity should be the ratio
+                    # of the order sensitivity to order=1 since the resolution
+                    # scales by m and the wavelength where the line appears
+                    # also scales by m.
+                    #
+                    # scale_disp=0.1 for unresolved line to reduce pixel
+                    # effects in the test
+                    sline = spec.fast_emission_line(
+                        orders_line_wave[optics], scale_disp=0.1,
+                        orders=[m]
+                    )
+                    sens_line = np.interp(
+                        orders_line_wave[optics] * m, spec["wave"], forder[-1],
+                    )
+                    lorder.append(sline / sens_line)
+
+            line_max = np.nanmax(lorder, axis=1)
+            # print(optics, line_max / line_max[0])
+
+            assert np.allclose(line_max[0], line_max[1:], rtol=0.05)
+
+            forder_tot = np.array(forder).sum(axis=0)
+            is_valid = np.isfinite(forder_tot)
+
+            assert is_valid.sum() > 100
+            assert np.allclose(res2[is_valid], forder_tot[is_valid], atol=1.e-3)
+
+            assert np.allclose(
+                max_with_orders[optics], np.nanmax(res2),
+                atol=1.e-2
+            )

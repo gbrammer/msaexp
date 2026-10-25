@@ -310,7 +310,9 @@ class MSAMetafile:
 
     query_product_level = ["2b"]
 
-    def __init__(self, filename):
+    shutter_image = None
+
+    def __init__(self, filename, merge_tables=True):
         """
         Helper for parsing MSAMETFL metadata files
 
@@ -423,6 +425,9 @@ class MSAMetafile:
             src = Table(im["SOURCE_INFO"].data)
             shut = Table(im["SHUTTER_INFO"].data)
 
+            if "SHUTTER_IMAGE" in im:
+                self.shutter_image = im["SHUTTER_IMAGE"].data * 1
+
         # Merge src and shutter tables
         shut_ix, src_ix = [], []
 
@@ -432,6 +437,8 @@ class MSAMetafile:
             elif sid in src["source_id"]:
                 shut_ix.append(i)
                 src_ix.append(np.where(src["source_id"] == sid)[0][0])
+            elif (not merge_tables):
+                shut_ix.append(i)
 
         for c in ["ra", "dec", "program"]:
             shut[c] = src[c][0] * 0
@@ -2893,3 +2900,60 @@ def get_shutter_wavelength_limits(col, row, quadrant, grating='prism', filter='c
                 tab[col][qsub & ~in_hull] = np.nan
 
     return tab
+
+
+def shutters_to_image(row, col, quadrant):
+    """
+    Shutter coordinates in the 730x342 SHUTTER_IMAGE array
+
+    Parameters
+    ----------
+    row, col, quadrant : int, array-like
+        MSA shutter properties
+
+    Returns
+    -------
+    cx, cy : int, array-like
+        Indices of the SHUTTER_IMAGE array
+
+    """
+    cx = np.floor(col) + 342 // 2 * np.isin(quadrant, [1, 2]) - 1
+    cy = np.floor(row) + 730 // 2 * np.isin(quadrant, [2, 3]) - 1
+
+    if hasattr(row, "__len__"):
+        return cx.astype(int), cy.astype(int)
+    else:
+        return int(cx), int(cy)
+
+
+def image_to_shutters(shutter_image):
+    """
+    Shutter list from a 730x342 SHUTTER_IMAGE array
+
+    Parameters
+    ----------
+    shutter_image : (740, 342) int array
+        MSA shutter image
+
+    Returns
+    -------
+    slitlet_id, row, col, quadrant : int, array-like
+        Shutter properties of open shutters
+
+    """
+    yp, xp = np.indices((730, 342))
+
+    slitlet_id = shutter_image[shutter_image != 0]
+    cx = xp[shutter_image != 0]
+    cy = yp[shutter_image != 0]
+
+    quadrant = cx * 0
+    quadrant[(cx > 342//2) & (cy < 730//2)] = 1
+    quadrant[(cx > 342//2) & (cy > 730//2)] = 2
+    quadrant[(cx < 342//2) & (cy > 730//2)] = 3
+    quadrant[(cx < 342//2) & (cy < 730//2)] = 4
+
+    col = cx - (342 // 2 * np.isin(quadrant, [1, 2]) - 1)
+    row = cy - (730 // 2 * np.isin(quadrant, [2, 3]) - 1)
+
+    return slitlet_id, row, col, quadrant

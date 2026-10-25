@@ -35,6 +35,42 @@ def test_wrapper():
     )
 
 
+def test_shutter_image():
+
+    uri = (
+        "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/"
+    )
+
+    meta = msa.MSAMetafile(uri + "jw02756001001_01_msa.fits")
+
+    s = meta.shutter_table
+
+    #######################
+    # msa.image_to_shutters
+    slitlet_id, row, col, quadrant = msa.image_to_shutters(meta.shutter_image)
+
+    skey = [
+        f"{r} {c} {q} {i}"
+        for r, c, q, i in zip(
+            s["shutter_row"], s["shutter_column"],
+            s["shutter_quadrant"], s["slitlet_id"]
+        )
+    ]
+
+    ikey = [
+        f"{r} {c} {q} {i}"
+        for r, c, q, i in zip(row, col, quadrant, slitlet_id)
+    ]
+
+    assert np.isin(skey, ikey).sum() == len(skey)
+
+    ########################
+    #  msa.shutters_to_image
+    cx, cy = msa.shutters_to_image(row, col, quadrant)
+
+    assert np.alltrue(meta.shutter_image[cy, cx] == slitlet_id)
+
+
 def test_summary():
 
     uri = (
