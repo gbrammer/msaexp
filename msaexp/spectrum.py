@@ -206,12 +206,6 @@ def resample_bagpipes_model(
 
 class SpectrumSampler(object):
 
-    spec = {}
-    spec_wobs = None
-    spec_R_fwhm = {}
-    valid = None
-    wave_step = None
-
     def __init__(
         self,
         spec_input,
@@ -254,6 +248,12 @@ class SpectrumSampler(object):
             Boolean array of valid 1D data
 
         """
+        self.spec = {}
+        self.spec_wobs = None
+        self.spec_R_fwhm = {}
+        self.valid = None
+        self.wave_step = None
+
         self.initialize_spec(spec_input, **kwargs)
 
         self.NSPEC = len(self.spec)
