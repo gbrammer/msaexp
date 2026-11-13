@@ -9,6 +9,12 @@ import logging
 
 import numpy as np
 
+import scipy.ndimage as nd
+
+import astropy.wcs as pywcs
+import astropy.io.fits as pyfits
+import astropy.units as u
+
 import grizli.jwst_utils
 from grizli import utils
 from grizli import prep
@@ -22,15 +28,15 @@ from ..slit_combine import pseudo_drizzle
 from .. import utils as msautils
 from .. import resample_numba
 
-import astropy.wcs as pywcs
-import astropy.io.fits as pyfits
-import astropy.units as u
-
 CROSS_PSCALE = 0.11057
 
 CRDS_CONTEXT = "jwst_1464.pmap"
 
 LOGGER = logging.getLogger(__name__)
+
+LRS_SLIT_MODEL = None
+
+LRS_REFERENCE_SPECTRUM = None
 
 def load_lrs_badpix():
     """
@@ -41,6 +47,65 @@ def load_lrs_badpix():
     )
     lrs_bpix = utils.read_catalog(badpix_file)
     return lrs_bpix
+
+
+def load_lrs_slit_model():
+    """
+    Load ``msaexp/data/lrs_slit_model.fits`` into the global LRS_SLIT_MODEL
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    LRS_SLIT_MODEL : `~astropy.io.fits.HDUList`
+        Slit model HDUList
+
+    """
+    global LRS_SLIT_MODEL
+
+    if LRS_SLIT_MODEL is None:
+        LRS_SLIT_MODEL = pyfits.open(
+            os.path.join(
+                msautils.module_data_path(), "lrs", "lrs_slit_model.fits"
+            )
+        )
+
+    return LRS_SLIT_MODEL
+
+
+def load_lrs_reference_spectrum(file="jw04533001-mds.miri-deep-survey-alma-10_lrs.spec.fits"):
+    """
+    Load ``jw04533001-mds.miri-deep-survey-alma-10_lrs.spec.fits`` reference
+    spectrum into the global LRS_SLIT_MODEL
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    LRS_SLIT_MODEL : `~astropy.io.fits.HDUList`
+        Slit model HDUList
+
+    """
+    import msaexp.spectrum
+    
+    global LRS_REFERENCE_SPECTRUM
+
+    if LRS_REFERENCE_SPECTRUM is None:
+        LRS_REFERENCE_SPECTRUM = msaexp.spectrum.SpectrumSampler(
+            os.path.join(
+                msautils.module_data_path(),
+                "lrs",
+                file
+            )            
+        )
+
+
+    return LRS_REFERENCE_SPECTRUM
+
 
 def full_lrs_pipeline(
     prog=5141,
@@ -70,6 +135,7 @@ def full_lrs_pipeline(
     Full MIRI LRS pipeline
     """
     from grizli import jwst_utils
+
     if quiet_logs:
         jwst_utils.set_quiet_logging(50)
 
@@ -78,7 +144,7 @@ def full_lrs_pipeline(
     global CRDS_CONTEXT
 
     os.environ["CRDS_CONTEXT"] = CRDS_CONTEXT
-    
+
     grizli.jwst_utils.set_crds_context()
 
     update_prefix = prefix is None
@@ -108,7 +174,9 @@ def full_lrs_pipeline(
 
         public = res["publicReleaseDate_mjd"] < utils.nowtime().mjd
 
-        keep = np.array([v.startswith(f"{prog:05d}{obs:03d}") for v in res["visit_id"]])
+        keep = np.array(
+            [v.startswith(f"{prog:05d}{obs:03d}") for v in res["visit_id"]]
+        )
         res = res[keep]
 
         is_tacq = res["exp_type"] == "MIR_TACQ"
@@ -271,11 +339,14 @@ def pixtab_from_dms(dms, sys_err=0.02, **kwargs):
 
     if isinstance(dms[0], dict):
         ptabs = dms
+        files = []
     else:
         ptabs = []
+        files = []
         for dm in dms:
             if "_x02101" not in dm.meta.filename:
                 ptabs.append(lrs_pixel_table(dm))
+                files.append(dm.meta.filename)
 
     data = {
         "exposure": [],
@@ -325,7 +396,7 @@ def pixtab_from_dms(dms, sys_err=0.02, **kwargs):
         grad = np.gradient(data["err"][test][so]) / data["err"][test][so]
 
         bad = grad > 0.04
-        
+
         if bad.sum() > 100:
             continue
 
@@ -348,49 +419,80 @@ def pixtab_from_dms(dms, sys_err=0.02, **kwargs):
     data["meta"] = ptabs[0]["meta"]
     data["meta"]["sys_err"] = sys_err
     data["meta"]["x_offset"] = [ptab["x_offset"] for ptab in ptabs]
+    data["file"] = files
 
     return data
+
+
+def get_data_slice(data, slice, **kwargs):
+    """
+    Get slice of arrays in data dictionary
+
+    Parameters
+    ----------
+    data : dict
+        Data dictionary from `msaexp.cloud.lrs.pixtab_from_dms`
+
+    slice : slice, array-like
+        Subset of data array.  Can be anything that broadcasts to
+        ``data["data"][slice]``, i.e., a `slice` object or boolean or index
+        arrays.
+
+    Returns
+    -------
+    dslice : dict
+        Data dictionary with sliced arrays
+    """
+    dslice = {}
+    for k in [
+        "yp",
+        "xp",
+        "exposure",
+        "dx",
+        "wave",
+        "data",
+        "err",
+        "var_rnoise",
+        "wpix",
+        "wpix_norm",
+        "group",
+        "xdet",
+        "ydet",
+        "profile",
+        "psf_trace",
+    ]:
+        if k in data:
+            dslice[k] = data[k][slice] * 1
+
+    for k in ["ybin", "wbin", "wbin_edge"]:
+        if k in data:
+            dslice[k] = data[k].copy()
+
+    for k in ["meta", "file"]:
+        if k in data:
+            dslice[k] = data[k].copy()
+
+    if "group" in data:
+        groups = np.unique(data["group"][slice])
+        if len(groups) == 1:
+            dslice["meta"]["filename"] = data["meta"]["group_names"][groups[0]]
+
+    return dslice
 
 
 def optimal_extraction(
     data,
     err_data="err",
     weight_type="rnoise",
+    data_mask=None,
     prof_threshold=0.01,
     low_threshold=-5,
+    recenter=False,
     **kwargs,
 ):
     """
     Optimal extraction with ``data["profile"]``
     """
-
-    # if False:
-    #     # Test variance
-    #     xx = np.arange(-10, 10.1, 0.1)
-    #     p = 1. / np.sqrt(2*np.pi) * np.exp(-xx**2/2)
-    #     Nr = 1000
-    #     sh = (Nr, len(xx))
-    #     var_rn = np.random.rand(*sh) * 0.5 + 1
-    #     var_p = np.random.rand(*sh) * 2 + 10
-    #     norms = np.zeros(Nr)
-    #
-    #     norms = np.random.rand(Nr) * 50 + 10
-    #     var_p = norms[:,None] * p[None,:]
-    #
-    #     signal = norms[:,None] * p[None,:]
-    #
-    #     rvs = signal + np.random.normal(size=sh) * np.sqrt(var_rn + var_p)
-    #     var = (var_rn + var_p)
-    #     wht = 1.0 / var
-    #
-    #     psum = (rvs * p * wht).sum(axis=1) / (p**2 * wht).sum(axis=1)
-    #     pvar = 1.0 / (p**2 * wht).sum(axis=1)
-    #     print(utils.nmad((psum - norms) / np.sqrt(pvar)))
-    #
-    #     wht = 1.0 / var_rn
-    #     psum2 = (rvs * p * wht).sum(axis=1) / (p**2 * wht).sum(axis=1)
-    #     pvar2 = (var * (p * wht)**2).sum(axis=1) / (p**2 * wht).sum(axis=1)**2
-    #     print(utils.nmad((psum2 - norms) / np.sqrt(pvar2)))
 
     if "wbin" not in data:
         set_bin_arrays(data, **kwargs)
@@ -402,19 +504,82 @@ def optimal_extraction(
     else:
         data_wht = 1.0 / data["err"] ** 2
 
-    if False:
+    data["meta"]["weight_type"] = weight_type
+    data["meta"]["err_data"] = err_data
+
+    valid = np.isfinite(
+        data["wave"]
+        + data["dx"]
+        + data["data"]
+        + data[err_data]
+        + data_wht
+        + data["profile"]
+    )
+
+    valid &= data["data"] > low_threshold * data["err"]
+
+    if data_mask is not None:
+        valid &= data_mask
+
+    if recenter:
+        dx_mu = data["dx"] - data["psf_trace"]
+    else:
+        dx_mu = data["dx"] + 0.0
+
+    # 2D drizzle
+    num, vnum, den, ntot = pseudo_drizzle(
+        data["wave"][valid],
+        dx_mu[valid],
+        data["data"][valid],
+        data[err_data][valid] ** 2,
+        data_wht[valid],
+        data["wbin_edge"],
+        data["ybin"],
+    )
+
+    pnum, pvnum, pden, pntot = pseudo_drizzle(
+        data["wave"][valid],
+        dx_mu[valid],
+        data["profile"][valid],
+        data[err_data][valid] ** 2,
+        data_wht[valid],
+        data["wbin_edge"],
+        data["ybin"],
+    )
+
+    # "den" is summed weight
+    opt_num = np.nansum(num / den * pnum / den * den, axis=0)
+    opt_den = np.nansum((pnum / den) ** 2 * den, axis=0)
+
+    var = vnum / den**2
+    var_num = np.nansum(var * (pnum / den * den) ** 2, axis=0)
+
+    # "optimal" 1D spectrum
+    spec = opt_num / opt_den
+    spec_var = var_num / opt_den**2
+
+    resid = (num / den - pnum / den * spec) / np.sqrt(var)
+    mask2d = np.isfinite(resid + var) & (den > 0) & (var > 0)
+
+    # 1D binned directly from pixel table
+    if True:
         from scipy.stats import binned_statistic
 
-        data_wht = 1.0 / data["var_rnoise"]
+        mask = valid & True
+        # mask &= data["profile"] > prof_threshold * np.nanmax(data["profile"])
 
-        mask = np.isfinite(data["data"] + data["profile"] + data_wht)
-
-        mask &= data["profile"] > prof_threshold * np.nanmax(data["profile"])
-        mask &= data["data"] > -5 * data["err"]
+        # print("xxx", valid.sum(), mask.sum(), np.nanmax(data["profile"]))
 
         snum = binned_statistic(
             data["wave"][mask],
             (data["data"] * data["profile"] * data_wht)[mask],
+            statistic="sum",
+            bins=data["wbin_edge"],
+        )
+
+        sunum = binned_statistic(
+            data["wave"][mask],
+            (np.ones_like(data["data"]) * data["profile"] * data_wht)[mask],
             statistic="sum",
             bins=data["wbin_edge"],
         )
@@ -433,48 +598,9 @@ def optimal_extraction(
             bins=data["wbin_edge"],
         )
 
-        sspec = snum.statistic / sden.statistic
-        svar = svnum.statistic / sden.statistic**2
-
-    data["meta"]["weight_type"] = weight_type
-    data["meta"]["err_data"] = err_data
-
-    valid = np.isfinite(
-        data["wave"] + data["dx"] + data["data"] + data[err_data] + data_wht
-    )
-
-    num, vnum, den, ntot = pseudo_drizzle(
-        data["wave"][valid],
-        data["dx"][valid],
-        data["data"][valid],
-        data[err_data][valid] ** 2,
-        data_wht[valid],
-        data["wbin_edge"],
-        data["ybin"],
-    )
-
-    pnum, pvnum, pden, pntot = pseudo_drizzle(
-        data["wave"][valid],
-        data["dx"][valid],
-        data["profile"][valid],
-        data[err_data][valid] ** 2,
-        data_wht[valid],
-        data["wbin_edge"],
-        data["ybin"],
-    )
-
-    # "den" is summed weight
-    opt_num = np.nansum(num / den * pnum / den * den, axis=0)
-    opt_den = np.nansum((pnum / den) ** 2 * den, axis=0)
-
-    var = vnum / den**2
-    var_num = np.nansum(var * (pnum / den * den) ** 2, axis=0)
-
-    spec = opt_num / opt_den
-    spec_var = var_num / opt_den**2
-
-    resid = (num / den - pnum / den * spec) / np.sqrt(var)
-    mask2d = np.isfinite(resid + var) & (den > 0) & (var > 0)
+        opt_bin = snum.statistic / sden.statistic
+        unit_bin = sunum.statistic / sden.statistic
+        var_bin = svnum.statistic / sden.statistic**2
 
     # p2d = pnum / pden
     # mask2d &= p2d > prof_threshold * np.nanmax(p2d)
@@ -488,11 +614,19 @@ def optimal_extraction(
     data["opt_num"] = opt_num
     data["opt_den"] = opt_den
     data["var_num"] = var_num
+    data["opt_bin"] = opt_bin
+    data["unit_bin"] = unit_bin
+    data["var_bin"] = var_bin
+
     data["spec"] = spec
     data["spec_var"] = spec_var
 
+    data["meta"]["recenter"] = recenter
 
-def set_bin_arrays(data, ybin=np.arange(-2.5, 2.5, 0.045), wbin=None, **kwargs):
+
+def set_bin_arrays(
+    data, ybin=np.arange(-2.5, 2.5, 0.045), wbin=None, **kwargs
+):
     """ """
     data["ybin"] = ybin
 
@@ -630,7 +764,10 @@ def set_bin_arrays(data, ybin=np.arange(-2.5, 2.5, 0.045), wbin=None, **kwargs):
 #
 #     return final
 
-CALSPEC_FILE = os.path.join(msautils.module_data_path(), "lrs", "calspec_correction_jw06620-obs13.fits")
+CALSPEC_FILE = os.path.join(
+    msautils.module_data_path(), "lrs", "calspec_correction_jw06620-obs13.fits"
+)
+
 
 def process_2d_products(
     data,
@@ -640,6 +777,8 @@ def process_2d_products(
     show_2d_corr=True,
     show_sn_threshold=5,
     vmax=None,
+    make_figure=True,
+    xlim=None,
     **kwargs,
 ):
     """
@@ -648,6 +787,7 @@ def process_2d_products(
     Parameters
     ----------
     data : dict
+        Pixel table data from `msaexp.cloud.lrs.pixtab_from_dms`
 
     calspec_file : str
 
@@ -681,7 +821,9 @@ def process_2d_products(
     wbin = data["wbin"]
 
     calsp = utils.read_catalog(calspec_file)
-    corr = np.interp(data["wbin"], calsp["wave"], calsp["corr"], left=0, right=0)
+    corr = np.interp(
+        data["wbin"], calsp["wave"], calsp["corr"], left=0, right=0
+    )
 
     if show_2d_corr:
         corr2d = np.interp(
@@ -698,7 +840,7 @@ def process_2d_products(
     median_sn = np.nanmedian(data["spec"] / np.sqrt(data["spec_var"]))
     if median_sn < show_sn_threshold:
         corr2d = 1.0 / np.sqrt(den)
-        corr2d = np.sqrt(data["spec_var"]) # / corr
+        corr2d = np.sqrt(data["spec_var"])  # / corr
 
         if vmax is None:
             vmax = 2 * np.nanpercentile(num / den / corr2d, 95)
@@ -709,70 +851,82 @@ def process_2d_products(
     elif vmax is None:
         vmax = 5 * np.nanpercentile(num / den / corr2d, 90)
 
-    fig, axes = plt.subplots(3, 1, figsize=(8, 7), sharex=True, sharey=True)
+    if make_figure:
+        fig, axes = plt.subplots(
+            3, 1, figsize=(8, 7), sharex=True, sharey=True
+        )
 
-    kws = dict(aspect="auto", cmap="bone", vmin=-0.5 * vmax, vmax=vmax)
+        kws = dict(aspect="auto", cmap="bone", vmin=-0.5 * vmax, vmax=vmax)
 
-    axes[0].imshow(num / den / corr2d, **kws)
-    axes[1].imshow((pnum) / pden * spec / corr2d, **kws)
-    axes[2].imshow((num / den - pnum / den * spec) / corr2d, **kws)
+        axes[0].imshow(num / den / corr2d, **kws)
+        axes[1].imshow((pnum) / pden * spec / corr2d, **kws)
+        axes[2].imshow((num / den - pnum / den * spec) / corr2d, **kws)
 
-    for ax in axes:
-        ax.grid()
+        for ax in axes:
+            ax.grid()
 
-    yt = np.arange(np.ceil(ybin[0]), np.floor(ybin[-1]), 1)
+        yt = np.arange(np.ceil(ybin[0]), np.floor(ybin[-1]), 1)
 
-    offsets = np.round(np.array(data["meta"]["x_offset"]) * 10) / 10
-    offsets -= offsets[0]
-    offsets = np.unique(np.append(offsets, -offsets))
+        offsets = np.round(np.array(data["meta"]["x_offset"]) * 10) / 10
+        offsets -= offsets[0]
+        offsets = np.unique(np.append(offsets, -offsets))
 
-    ax.set_yticks(np.interp(offsets, ybin, np.arange(len(ybin))))
-    ax.set_yticklabels([f"{v:.1f}" for v in offsets])
+        ax.set_yticks(np.interp(offsets, ybin, np.arange(len(ybin))))
+        ax.set_yticklabels([f"{v:.1f}" for v in offsets])
 
-    axes[0].set_ylabel("data, " + r"$\Delta$ [arcsec]")
-    axes[1].set_ylabel(r"2D model")
-    axes[2].set_ylabel(r"residual")
+        axes[0].set_ylabel("data, " + r"$\Delta$ [arcsec]")
+        axes[1].set_ylabel(r"2D model")
+        axes[2].set_ylabel(r"residual")
 
-    axes[1].text(
-        0.05,
-        0.95,
-        "_".join(data["meta"]["filename"].split("_")[:2])
-        + "  "
-        + data["meta"]["target"]["proposer_name"],
-        color="w",
-        transform=axes[1].transAxes,
-        ha="left",
-        va="top",
-    )
+        axes[1].text(
+            0.05,
+            0.95,
+            "_".join(data["meta"]["filename"].split("_")[:2])
+            + "  "
+            + data["meta"]["target"]["proposer_name"],
+            color="k",
+            transform=axes[1].transAxes,
+            bbox={"fc": "w", "ec": "None", "alpha": 0.8},
+            ha="left",
+            va="top",
+        )
 
-    zplot = z
+        zplot = z
 
-    xt = np.arange(5, 14.1) / (1 + zplot)
+        xt = np.arange(5, 14.1) / (1 + zplot)
 
-    if zplot > 6:
-        xt = np.arange(0.6, 1.31, 0.1)
+        if zplot > 6:
+            xt = np.arange(0.6, 1.31, 0.1)
 
-    if zplot > 11:
-        xt = np.arange(0.4, 0.8, 0.1)
+        if zplot > 11:
+            xt = np.arange(0.4, 0.8, 0.1)
 
-    ax.set_xticks(np.interp(xt, wbin / (1 + zplot), np.arange(len(wbin))))
+        ax.set_xticks(np.interp(xt, wbin / (1 + zplot), np.arange(len(wbin))))
 
-    if zplot == 0:
-        ax.set_xticklabels(xt.astype(int))
-        ax.set_xlabel(r"$\lambda_\mathrm{obs}$")
+        if zplot == 0:
+            ax.set_xticklabels(xt.astype(int))
+            ax.set_xlabel(r"$\lambda_\mathrm{obs}$")
+        else:
+            ax.set_xticklabels([f"{v:.2f}" for v in xt])
+            ax.set_xlabel(r"$\lambda_\mathrm{rest}$" + f"  z={zplot:.4f}")
+
+        ax.set_xlim(0, len(wbin))
+
+        if xlim is not None:
+            xlim = np.interp(xlim, wbin, np.arange(len(wbin)))
+            ax.set_xlim(*xlim)
+
+        fig.tight_layout(pad=1)
     else:
-        ax.set_xticklabels([f"{v:.2f}" for v in xt])
-        ax.set_xlabel(r"$\lambda_\mathrm{rest}$" + f"  z={zplot:.4f}")
-
-    ax.set_xlim(0, len(wbin))
-
-    fig.tight_layout(pad=1)
+        fig = None
 
     tab = utils.GTable()
     tab["wave"] = data["wbin"] * u.micron
     tab["flux"] = data["spec"] / corr * u.microJansky
     # tab["err"] = 1 / np.sqrt(data["opt_den"]) / corr * u.microJansky
     tab["err"] = np.sqrt(data["spec_var"]) / corr * u.microJansky
+    tab["flux_bin"] = data["opt_bin"] / corr * u.microJansky
+    tab["err_bin"] = np.sqrt(data["var_bin"]) / corr * u.microJansky
     tab["calsp"] = corr / u.microJansky
 
     tab.meta["grating"] = "LRS"
@@ -781,11 +935,17 @@ def process_2d_products(
     tab.meta["srcname"] = prefix
 
     tab.meta["z"] = z
-    tab.meta["ytrace"] = np.interp(0, data["ybin"], np.arange(len(data["ybin"])))
+    tab.meta["ytrace"] = np.interp(
+        0, data["ybin"], np.arange(len(data["ybin"]))
+    )
 
     ypscale = np.diff(data["ybin"])[0]
 
-    tab.meta["profcen"] = data["meta"]["theta"][-2] / ypscale
+    if data["meta"]["recenter"]:
+        tab.meta["profcen"] = 0.0
+    else:
+        tab.meta["profcen"] = data["meta"]["theta"][-2] / ypscale
+
     tab.meta["profsig"] = data["meta"]["theta"][-1] / ypscale
     tab.meta["pscale"] = ypscale
 
@@ -809,7 +969,9 @@ def process_2d_products(
             hdul[ext].header[k] = tab.meta[k]
 
     if prefix is not None:
-        fig.savefig(f"{prefix}_lrs.2d.png")
+        if fig is not None:
+            fig.savefig(f"{prefix}_lrs.2d.png")
+
         hdul.writeto(f"{prefix}_lrs.spec.fits", overwrite=True)
 
     return hdul, fig
@@ -834,7 +996,9 @@ def pfit_table(data, sn_threshold=20, **kwargs):
         (den * spec**2)[:, sub], axis=1
     )
 
-    ptab["pfit"] = np.nansum((pnum)[:, sub], axis=1) / np.nansum((pden)[:, sub], axis=1)
+    ptab["pfit"] = np.nansum((pnum)[:, sub], axis=1) / np.nansum(
+        (pden)[:, sub], axis=1
+    )
 
     yp, xp = np.indices(num.shape)
     ptab.meta["profstrt"] = xp[:, sub].min()
@@ -851,7 +1015,9 @@ def process_tacq_file(file, prefix="lrs_tacq"):
     grizli.jwst_utils.initialize_jwst_image(file)
     dm = grizli.jwst_utils.img_with_wcs(file)
 
-    outh, outw = utils.make_maximal_wcs(files=[file], pixel_scale=0.11, get_hdu=False)
+    outh, outw = utils.make_maximal_wcs(
+        files=[file], pixel_scale=0.11, get_hdu=False
+    )
 
     res = visit_processor.res_query_from_local(files=[file])
 
@@ -900,7 +1066,9 @@ def lrs_regions(res, output="lrs.reg"):
             slit_ap.set_attitude_matrix(att)
             illum_ap.set_attitude_matrix(att)
 
-            sr = utils.SRegion(np.array(slit_ap.corners("sky", rederive=False)))
+            sr = utils.SRegion(
+                np.array(slit_ap.corners("sky", rederive=False))
+            )
 
             label = "{visit_id} {targprop}".format(**row)
             sr.label = label
@@ -912,7 +1080,9 @@ def lrs_regions(res, output="lrs.reg"):
             for reg in sr.region:
                 fp.write(reg + "\n")
 
-            sr = utils.SRegion(np.array(illum_ap.corners("sky", rederive=False)))
+            sr = utils.SRegion(
+                np.array(illum_ap.corners("sky", rederive=False))
+            )
 
             sr.label = label
             sr.ds9_properties = "color=magenta"
@@ -926,7 +1096,14 @@ def lrs_regions(res, output="lrs.reg"):
     res["illum_footprint"] = illum_polygons
 
 
-def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold=0.3, flatten_bkg_trend=True, **kwargs):
+def nod_sky_subtraction(
+    dir="Level2",
+    file_query="jw0",
+    ext="cal",
+    bkg_threshold=0.3,
+    flatten_bkg_trend=True,
+    **kwargs,
+):
     """
     Compute differences of nodded exposures for sky subtraction
     """
@@ -977,7 +1154,7 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
             s2[targ][dith] = {"dm": [], "scl": []}
 
         if flatten_bkg_trend:
-            if (i == 0):
+            if i == 0:
                 bkg_ref = dm.data * np.nan**dq_mask
                 bkg_ratio_i = 1.0
             else:
@@ -1007,19 +1184,23 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
             s2_i = s2[targ][dith]
 
             s2_i["avg"] = np.nanmean(
-                np.array([
-                    dm.data / scl * np.nan**(dm.dq & 1)
-                    for (dm, scl) in zip(s2_i["dm"], s2_i["scl"])
-                ]),
-                axis=0
+                np.array(
+                    [
+                        dm.data / scl * np.nan ** (dm.dq & 1)
+                        for (dm, scl) in zip(s2_i["dm"], s2_i["scl"])
+                    ]
+                ),
+                axis=0,
             )
 
             s2_i["var"] = np.nanmean(
-                np.array([
-                    (dm.err / scl * np.nan**(dm.dq & 1))**2
-                    for (dm, scl) in zip(s2_i["dm"], s2_i["scl"])
-                ]),
-                axis=0
+                np.array(
+                    [
+                        (dm.err / scl * np.nan ** (dm.dq & 1)) ** 2
+                        for (dm, scl) in zip(s2_i["dm"], s2_i["scl"])
+                    ]
+                ),
+                axis=0,
             )
 
         for d1 in s2[targ]:
@@ -1045,7 +1226,7 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
 
             for dm, scl in zip(s2_i["dm"], s2_i["scl"]):
                 dm.data = (dm.data / scl - other_avg) * scl
-                dm.err = np.sqrt((dm.err / scl)**2 + other_var) * scl
+                dm.err = np.sqrt((dm.err / scl) ** 2 + other_var) * scl
 
                 dm.meta.filename = dm.meta.filename.replace("_bkg", "")
 
@@ -1053,7 +1234,9 @@ def nod_sky_subtraction(dir="Level2", file_query="jw0", ext="cal", bkg_threshold
                     dir, dm.meta.filename.replace(ext, ext + "_bkg")
                 )
 
-                offset_summary = ",".join([f"{off:>5.1f}" for off in x_offsets])
+                offset_summary = ",".join(
+                    [f"{off:>5.1f}" for off in x_offsets]
+                )
 
                 msg = f"{out_file}:  src= {d1}  bkg= {offset_summary}"
                 utils.log_comment(utils.LOGFILE, msg, verbose=True)
@@ -1115,7 +1298,9 @@ def lrs_pixel_table(dm, **kwargs):
     return pixtab
 
 
-def plot_lrs_pixel_table(ptab, figsize=(6, 6), cmap="magma", wave_power=3, vmax=500):
+def plot_lrs_pixel_table(
+    ptab, figsize=(6, 6), cmap="magma", wave_power=3, vmax=500
+):
     """ """
     import matplotlib.pyplot as plt
 
@@ -1133,7 +1318,8 @@ def plot_lrs_pixel_table(ptab, figsize=(6, 6), cmap="magma", wave_power=3, vmax=
     )
 
     axes[0].imshow(
-        np.exp(-np.rot90(ptab["dx"] - ptab["x_offset"], -1) ** 2 / 2 / 0.3**2), **kws
+        np.exp(-np.rot90(ptab["dx"] - ptab["x_offset"], -1) ** 2 / 2 / 0.3**2),
+        **kws,
     )
     axes[1].imshow(
         np.rot90(ptab["data"] / (ptab["wave"] / 15) ** wave_power, -1),
@@ -1207,7 +1393,9 @@ def evaluate_model_psf(
     """ """
     if psf_data is None:
         data_path = msautils.module_data_path()
-        psf_tab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_jw06620-obs13.fits"))
+        psf_tab = utils.read_catalog(
+            os.path.join(data_path, "lrs", "lrs_psf_data_jw06620-obs13.fits")
+        )
 
         psf_mu = np.interp(data["wave"], psf_tab["wave"], psf_tab["x0"])
         psf_width = np.interp(data["wave"], psf_tab["wave"], psf_tab["sigma"])
@@ -1222,6 +1410,7 @@ def evaluate_model_psf(
     result = {
         "theta": theta,
         "psf_mu": psf_mu,
+        "psf_trace": mu * CROSS_PSCALE,
         "psf_width": psf_width,
         "trace_offset": trace_offset,
         "src_width": src_width,
@@ -1243,7 +1432,9 @@ def evaluate_model_psf(
     # Wavelength-dependent PSF components
     if extended_psf_data is None:
         data_path = msautils.module_data_path()
-        ctab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_extended_shift.fits"))
+        ctab = utils.read_catalog(
+            os.path.join(data_path, "lrs", "lrs_psf_data_extended_shift.fits")
+        )
 
         sigma_scales = ctab["psf_scale"][0]
         if "psf_w" in ctab.colnames:
@@ -1261,7 +1452,9 @@ def evaluate_model_psf(
             ]
         )
     else:
-        (sigma_scales, sigma_widths, psf_shifts, sigma_coeffs) = extended_psf_data
+        (sigma_scales, sigma_widths, psf_shifts, sigma_coeffs) = (
+            extended_psf_data
+        )
 
     result["sigma_scales"] = sigma_scales
     result["sigma_coeffs"] = sigma_coeffs
@@ -1272,7 +1465,8 @@ def evaluate_model_psf(
 
     for i, scl in enumerate(sigma_scales):
         sig = np.sqrt(
-            (psf_width * scl + sigma_widths[i]) ** 2 + (src_width / CROSS_PSCALE) ** 2
+            (psf_width * scl + sigma_widths[i]) ** 2
+            + (src_width / CROSS_PSCALE) ** 2
         )
 
         result["profile"] += (
@@ -1285,12 +1479,130 @@ def evaluate_model_psf(
     if do_optimal_extraction:
         data["profile"] = result["profile"]
         data["trace_offset"] = result["trace_offset"]
+        data["psf_trace"] = result["psf_trace"]
         data["meta"]["src_width"] = src_width
         data["meta"]["theta"] = theta
 
         optimal_extraction(data, **kwargs)
 
     return result
+
+
+def fit_shift_and_size(
+    data,
+    initial_shift=[0.0, 0.0],
+    initial_size=0.0,
+    fit_shift=True,
+    fit_size=True,
+    theta_scale=10.0,
+    tol=1.0e-4,
+    method="powell",
+    verbose=True,
+    **kwargs,
+):
+    """
+    Fit for trace shift and source size
+
+    Parameters
+    ----------
+    data : dict
+        Pixel table data from `msaexp.cloud.lrs.pixtab_from_dms`
+
+    initial_shift, initial_size : list, float
+        Shift coefficients and source size parameters, see
+        `msaexp.cloud.lrs.evaluate_model_psf`.
+
+    fit_shift : bool
+        Fit for the shift
+
+    fit_size : bool
+        Fit for the size
+
+    theta_scale : float
+        Scale factors for the fit parameters before passing to
+        `scipy.optimize.minimize`
+
+    method : str
+        Optimizer method
+
+    tol : float
+        Optimizer tolerance
+
+    verbose: bool
+        Print status messages
+
+    """
+    from scipy.optimize import minimize
+
+    psf_data = evaluate_model_psf(data, [0.0, 0.0], do_optimal_extraction=True)
+
+    psf_dict = (psf_data["psf_mu"], psf_data["psf_width"])
+
+    ext_psf_dict = [
+        psf_data[k]
+        for k in ["sigma_scales", "sigma_widths", "psf_shifts", "sigma_coeffs"]
+    ]
+
+    def optimize_with_shift(xtheta, theta_ref, fit_type):
+
+        if fit_type == 0:
+            theta_ = np.append(xtheta, theta_ref[-1:]) / theta_scale
+        else:
+            theta_ = np.append(theta_ref[:-1], xtheta[0]) / theta_scale
+
+        # Evaluate: theta = [{shift poly coeffs}, size]
+
+        psf_data = evaluate_model_psf(
+            data,
+            theta_,
+            do_optimal_extraction=True,
+            psf_data=psf_dict,
+            extended_psf_data=ext_psf_dict,
+        )
+
+        if verbose:
+            tstr = [f"{t:6.3f}" for t in theta_]
+            tstr[0] = "(" + tstr[0]
+            tstr[-1] = f")  s={tstr[-1]}"
+            print(f"  {' '.join(tstr)}  {data['chi2']:10.3f}")
+
+        return data["chi2"]
+
+    initial_theta = np.append(initial_shift, [initial_size]) * theta_scale
+
+    if fit_shift:
+        if verbose:
+            print("\nFit shift:")
+
+        t0 = np.array(initial_shift) * theta_scale
+        args = (initial_theta, 0)
+
+        sres = minimize(
+            optimize_with_shift, x0=t0, method=method, tol=tol, args=args
+        )
+
+        fit_theta = np.append(sres.x, initial_theta[-1:]) / theta_scale
+
+    else:
+        fit_theta = initial_theta / theta_scale
+
+    if fit_size:
+        if verbose:
+            print("\nFit sigma:")
+
+        args = (fit_theta * theta_scale, 1)
+        t0 = fit_theta[-1:] * theta_scale
+
+        pres = minimize(
+            optimize_with_shift, x0=t0, method=method, tol=tol, args=args
+        )
+
+        fit_theta = np.append(fit_theta[:-1], pres.x / theta_scale)
+
+    # Set data["profile"] with final fit parameters
+    psf_data = evaluate_model_psf(data, fit_theta, do_optimal_extraction=True)
+
+    return fit_theta
 
 
 def profile_pathloss(
@@ -1308,7 +1620,9 @@ def profile_pathloss(
 
     if psf_data is None:
         data_path = msautils.module_data_path()
-        psf_tab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_jw06620-obs13.fits"))
+        psf_tab = utils.read_catalog(
+            os.path.join(data_path, "lrs", "lrs_psf_data_jw06620-obs13.fits")
+        )
 
         psf_mu = np.interp(data["wave"], psf_tab["wave"], psf_tab["x0"])
         psf_width = np.interp(data["wave"], psf_tab["wave"], psf_tab["sigma"])
@@ -1336,7 +1650,9 @@ def profile_pathloss(
     # Wavelength-dependent PSF components
     if extended_psf_data is None:
         data_path = msautils.module_data_path()
-        ctab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_extended_shift.fits"))
+        ctab = utils.read_catalog(
+            os.path.join(data_path, "lrs", "lrs_psf_data_extended_shift.fits")
+        )
 
         sigma_scales = ctab["psf_scale"][0]
         if "psf_w" in ctab.colnames:
@@ -1354,7 +1670,9 @@ def profile_pathloss(
             ]
         )
     else:
-        (sigma_scales, sigma_widths, psf_shifts, sigma_coeffs) = extended_psf_data
+        (sigma_scales, sigma_widths, psf_shifts, sigma_coeffs) = (
+            extended_psf_data
+        )
 
     result["sigma_scales"] = sigma_scales
     result["sigma_coeffs"] = sigma_coeffs
@@ -1368,22 +1686,28 @@ def profile_pathloss(
 
     for i, scl in enumerate(sigma_scales):
         sig = np.sqrt(
-            (psf_width * scl + sigma_widths[i]) ** 2 + (src_width / CROSS_PSCALE) ** 2
+            (psf_width * scl + sigma_widths[i]) ** 2
+            + (src_width / CROSS_PSCALE) ** 2
         )
 
         gau_psf = norm(
             loc=psf_shifts[i] * CROSS_PSCALE,
-            scale=np.sqrt((psf_width * scl + sigma_widths[i]) ** 2) * CROSS_PSCALE,
+            scale=np.sqrt((psf_width * scl + sigma_widths[i]) ** 2)
+            * CROSS_PSCALE,
         )
 
-        psf_sum += (gau_psf.cdf(slit_width / 2.) - gau_psf.cdf(-slit_width / 2.)) * sigma_coeffs[i,:]
+        psf_sum += (
+            gau_psf.cdf(slit_width / 2.0) - gau_psf.cdf(-slit_width / 2.0)
+        ) * sigma_coeffs[i, :]
 
         gau_src = norm(
             loc=psf_shifts[i] * CROSS_PSCALE,
             scale=sig * CROSS_PSCALE,
         )
 
-        src_sum += (gau_src.cdf(slit_width / 2.) - gau_src.cdf(-slit_width / 2.)) * sigma_coeffs[i,:]
+        src_sum += (
+            gau_src.cdf(slit_width / 2.0) - gau_src.cdf(-slit_width / 2.0)
+        ) * sigma_coeffs[i, :]
 
     result["pathloss"] = src_sum / psf_sum
 
@@ -1634,7 +1958,11 @@ def decompose_psf(data):
         prog=6620,
         obs=1,
         resample_kwargs={"sn_threshold": 5},
-        prof_kwargs={"optimize": True, "weight_type": "rnoise", "err_data": "err"},
+        prof_kwargs={
+            "optimize": True,
+            "weight_type": "rnoise",
+            "err_data": "err",
+        },
         do_query=True,
         skip_preprocessing=True,
         nod_ext="bkg",
@@ -1646,7 +1974,9 @@ def decompose_psf(data):
     data = res["data"]
 
     data_path = msautils.module_data_path()
-    psf_tab = utils.read_catalog(os.path.join(data_path, "lrs", "lrs_psf_data_jw06620-obs13.fits"))
+    psf_tab = utils.read_catalog(
+        os.path.join(data_path, "lrs", "lrs_psf_data_jw06620-obs13.fits")
+    )
 
     trace_offset = data["trace_offset"]
 
@@ -1676,7 +2006,10 @@ def decompose_psf(data):
     wsub = (data["wave"] > 8) & (data["wave"] < 12)
 
     plt.scatter(
-        (data["dx"])[wsub], (data["data"] / y)[wsub], alpha=0.1, c=data["wave"][wsub]
+        (data["dx"])[wsub],
+        (data["data"] / y)[wsub],
+        alpha=0.1,
+        c=data["wave"][wsub],
     )
 
     plt.scatter((data["dx"])[wsub], prof[wsub], alpha=0.1, c="r")
@@ -1755,7 +2088,9 @@ def decompose_psf(data):
         if wsub.sum() == 0:
             continue
 
-        c = np.linalg.lstsq((profs * y / data["err"])[:, wsub].T, yx[wsub], rcond=None)
+        c = np.linalg.lstsq(
+            (profs * y / data["err"])[:, wsub].T, yx[wsub], rcond=None
+        )
 
         coeffs.append(c[0])
         wcoeffs.append(np.median(data["wave"][wsub]))
@@ -1776,7 +2111,9 @@ def decompose_psf(data):
         ctab.write("lrs_psf_data_extended.fits", overwrite=True)
 
     nc = coeffs.shape[1]
-    cw = np.array([np.interp(data["wave"], wcoeffs, coeffs[:, i]) for i in range(nc)])
+    cw = np.array(
+        [np.interp(data["wave"], wcoeffs, coeffs[:, i]) for i in range(nc)]
+    )
 
     full_model = (profs * cw).sum(axis=0)
 
@@ -1813,7 +2150,11 @@ def decompose_psf(data):
         prog=1538,
         obs=21,
         resample_kwargs={"sn_threshold": 5},
-        prof_kwargs={"optimize": True, "weight_type": "rnoise", "err_data": "err"},
+        prof_kwargs={
+            "optimize": True,
+            "weight_type": "rnoise",
+            "err_data": "err",
+        },
         do_query=True,
         skip_preprocessing=True,
         nod_ext="bkg",
@@ -1846,7 +2187,11 @@ def decompose_psf(data):
         prog=1033,
         obs=2,
         resample_kwargs={"sn_threshold": 5},
-        prof_kwargs={"optimize": True, "weight_type": "rnoise", "err_data": "err"},
+        prof_kwargs={
+            "optimize": True,
+            "weight_type": "rnoise",
+            "err_data": "err",
+        },
         do_query=True,
         skip_preprocessing=True,
         nod_ext="bkg",
@@ -1879,71 +2224,1084 @@ def decompose_psf(data):
     wsub &= np.abs(data["dx"]) < 1
 
     wsub &= np.isfinite(yx)
-    c = np.linalg.lstsq((profs * y / data["err"])[:, wsub].T, yx[wsub], rcond=None)
+    c = np.linalg.lstsq(
+        (profs * y / data["err"])[:, wsub].T, yx[wsub], rcond=None
+    )
 
     m = profs[:, wsub].T.dot(c[0])
 
     plt.scatter(
-        (data["dx"])[wsub], (data["data"] / y)[wsub], alpha=0.1, c=data["wave"][wsub]
+        (data["dx"])[wsub],
+        (data["data"] / y)[wsub],
+        alpha=0.1,
+        c=data["wave"][wsub],
     )
 
     plt.scatter((data["dx"])[wsub], m, alpha=0.1, color="r")
-    plt.scatter((data["dx"])[wsub], full_model[wsub], alpha=0.1, color="magenta")
+    plt.scatter(
+        (data["dx"])[wsub], full_model[wsub], alpha=0.1, color="magenta"
+    )
 
 
 ####### Tools for slitless extractions
+def load_rate_files(files, write_bkg_files=True):
+    """
+    Load rate files, take diffs to remove background
+
+    Parameters
+    ----------
+    files : list
+        List of ``rate.fits`` or ``rate_bkg.fits`` files. Generally these
+        should just be files from a single visit, as differences are taken
+        between files at different ``x_offset`` positions to remove the
+        background and images from even slightly different epochs generally
+        don't subtract perfectly.
+
+    write_bkg_files : bool
+        Save ``rate_bkg.fits`` files of the difference products for fast
+        reproduction later.
+
+    Returns
+    -------
+    result : dict
+        Loaded image data with keys:
+          - ``files`` = list of the original files
+          - ``dms`` = list of ``jwst.datamodels.ImageModel`` objects
+          - ``sky_arrays`` = ndarray of the sky data
+          - ``sky_var`` = ndarray of the sky variance
+          - ``wcs_list`` = list of ``astropy.wcs.WCS`` objects for each exposure
+
+
+    """
+    from jwst.assign_wcs import AssignWcsStep
+    from grizli import jwst_utils
+
+    dms = [jwst.datamodels.open(file) for file in files]
+    dm_data = np.array([dm.data for dm in dms])
+    N = len(dms)
+    sky_arrays = []
+    sky_var = []
+
+    for i in range(N):
+        sky = []
+        skyv = []
+        xi = np.round(dms[i].meta.dither.x_offset * 10)
+        for j in range(N):
+            if i == j:
+                continue
+
+            xj = np.round(dms[j].meta.dither.x_offset * 10)
+            if xi != xj:
+                sky.append(dms[j].data)
+                skyv.append(dms[j].err ** 2)
+
+        utils.log_comment(
+            utils.LOGFILE,
+            f"i={i}  offset=({dms[i].meta.dither.x_offset:6.2f}, {dms[i].meta.dither.y_offset:6.2f}) (xoff={xi/10:5.1f})  nsky={len(sky)}",
+            verbose=True,
+        )
+
+        skyn = np.isfinite(sky).sum(axis=0)
+        sky_arrays.append(np.nansum(sky, axis=0) / skyn)
+        sky_var.append(np.nansum(skyv, axis=0) / skyn**2)
+
+    sky_arrays = np.array(sky_arrays)
+    sky_var = np.array(sky_var)
+
+    if "bkg" in files[0]:
+        sky_arrays *= 0.0
+        sky_var *= 0.0
+        # print("background already removed")
+
+    wcs_list = []
+    for i, dm in enumerate(dms):
+        dm.meta.exposure.type = "mir_image".upper()
+
+        dmc = dm.copy()
+        dmc.data -= sky_arrays[i]
+        dmc.err = np.sqrt(dmc.err**2 + sky_var[i])
+
+        bkg_file = files[i].replace("_rate", "_rate_bkg")
+
+        dmc.to_fits(bkg_file, overwrite=True)
+
+        dmw = jwst_utils.img_with_wcs(bkg_file, overwrite=True, verbose=False)
+
+        with pyfits.open(bkg_file) as im:
+            wcs_list.append(pywcs.WCS(im[1].header, relax=True))
+
+        if not write_bkg_files:
+            os.remove(bkg_file)
+
+    for w in wcs_list:
+        w.pscale = utils.get_wcs_pscale(w)
+
+    result = {
+        "files": files,
+        "dms": dms,
+        "sky_arrays": sky_arrays,
+        "sky_var": sky_var,
+        "wcs_list": wcs_list,
+    }
+
+    return result
+
+
+MIRI_APERTURE_PADDING = {
+    "MIRIM_SLIT": (1.1, 1.2),
+    "MIRIM_ILLUM": (1., 1.01),
+    "MIRIM_CORON1140": (1.0, 1.04),
+    "MIRIM_CORON1550": (1.0, 1.04),
+    "MIRIM_CORON1065": (1.0, 1.04),
+    "MIRIM_CORONLYOT": (1.0, 1.04),
+}
+
+
+def miri_illum_window(wcs=None, window_pad=MIRI_APERTURE_PADDING, **kwargs):
+    """
+    Regions of illuminated portions of the MIRI detector
+
+    Parameters
+    ----------
+    wcs : None, `astropy.wcs.WCS`
+        Optional exposure WCS.  If provided, output ``regions`` will be in
+        sky coordinates
+
+    window_pad : dict
+        Dilate subregion factors (defaults in
+        `msaexp.cloud.lrs.MIRI_APERTURE_PADDING`).
+
+    Returns
+    -------
+    regions : list
+        List of `sregion.SRegion` objects for the ``[MIRIM_ILLUM,
+        MIRIM_CORON1140, MIRIM_CORON1550, MIRIM_CORON1065, MIRIM_CORONLYOT``
+        apertures
+
+    """
+    if 0:
+        # Generate baseline regions
+        import pysiaf
+        import matplotlib.pyplot as plt
+
+        mir = pysiaf.Siaf('MIRI')
+        aper = mir["MIRIM_ILLUM"]
+
+        names = ["MIRIM_SLIT", "MIRIM_ILLUM", "MIRIM_CORON1140", "MIRIM_CORON1550", "MIRIM_CORON1065", "MIRIM_CORONLYOT"]
+
+        ref_aper = mir["MIRIM_FULL"]
+        for aper in names:
+            ap = mir[aper]
+            tel = ap.corners("tel", rederive=False)
+
+            try:
+                det = ap.corners('det', rederive=False)
+            except:
+                det = ref_aper.tel_to_det(*tel)
+                
+            if 1:
+                pl = plt.plot(*det, label=aper, alpha=0.3)
+        
+                sr = utils.SRegion(np.array(det), label=aper, wrap=False, pad=1)
+                c = pl[0].get_color()
+                sr.add_patch_to_axis(plt.gca(), fc='None', ec=c, alpha=0.1, label=aper)
+                print(sr.region[0])
+                
+            else:
+                pl = plt.plot(*tel, label=aper, alpha=0.5)
+
+    regions = []
+
+    polystr = """
+polygon(304.767591,298.377327,304.764346,303.026663,347.490111,303.032316,347.482088,298.376952) #  text={MIRIM_SLIT}
+polygon(359.497281,0.531945,1027.492269,0.563006,1027.505943,1024.498642,359.502113,1024.488881) #  text={MIRIM_ILLUM}
+polygon(11.482517,247.487555,227.504741,247.511862,227.511046,463.514223,11.502512,463.492944) #  text={MIRIM_CORON1140}
+polygon(11.495304,468.484722,227.503744,468.506583,227.505201,684.508954,11.506745,684.499635) #  text={MIRIM_CORON1550}
+polygon(11.496695,24.587054,227.509750,24.544253,227.510050,240.505483,11.487780,240.481234) #  text={MIRIM_CORON1065}
+polygon(5.498274,748.489323,277.496186,748.497263,277.499857,1020.486809,5.487143,1020.495679) #  text={MIRIM_CORONLYOT}
+        """
+
+    for poly in polystr.strip().split("\n"):
+
+        lspl = poly.split()
+        label = lspl[-1][6:-1]
+
+        if label in window_pad:
+            pad_i = window_pad[label]
+        else:
+            pad_i = 1.
+
+        sr = utils.SRegion(lspl[0], wrap=False, label=label, pad=pad_i)
+
+        if wcs is not None:
+            ra, dec = wcs.all_pix2world(*sr.xy[0].T, 0)
+            sr = utils.SRegion(np.array([ra, dec]), wrap=False, label=label)
+
+        regions.append(sr)
+
+    return regions
+
+
+def rate_group_regions(
+    rate_groups,
+    root="group",
+    separate_region_files=False,
+    make_figure=True,
+    figsize=(6, 6),
+    **kwargs,
+):
+    """
+    Make region file(s) for the illuminated portions of the loaded exposures
+
+    Parameters
+    ----------
+    rate_groups : dict
+        Output from `~msaexp.cloud.lrs.load_rate_files`
+
+    root : str
+        String prefix for output products, i.e., ``{root}_miri_lrs.reg``.
+
+    separate_region_files : bool
+        Make separate region files for each group
+
+    make_figure : bool
+        Make a summary figure
+
+    figsize : (float, float)
+        Figure size
+
+    kwargs : dict
+        Keyword arguments passed through to `msaexp.cloud.lrs.miri_illum_window`
+
+    Returns
+    -------
+    regions : list
+        List of polynomial regions
+
+    fig : figure or None
+        Output figure object.  Also saved to ``{root}_miri_lrs.png``.
+
+    """
+
+    import matplotlib.pyplot as plt
+
+    regions = []
+
+    group_pa = {}
+
+    for group in rate_groups:
+
+        shap = None
+        slit = None
+
+        for i, wcs in enumerate(rate_groups[group]["wcs_list"]):
+            group_pa[group] = np.arctan2(*wcs.wcs.cd[0, :])
+
+            wcs_regions = miri_illum_window(wcs=wcs, **kwargs)
+
+            for j, sr in enumerate(wcs_regions):
+
+                if j > 0:
+                    if shap is None:
+                        shap = sr.shapely[0]
+                    else:
+                        shap = shap.union(sr.shapely[0])
+                else:
+                    if slit is None:
+                        slit = sr.shapely[0]
+                    else:
+                        slit = slit.union(sr.shapely[0])
+
+        sr = utils.SRegion(shap)
+        sr.label = group
+
+        srs = utils.SRegion(slit)
+        srs.label = group
+
+        regions.extend(srs.region)
+        regions.extend(sr.region)
+
+        if separate_region_files:
+            with open(f"{group}_miri_lrs.reg", "w") as fp:
+                fp.write("icrs\n")
+                for reg in sr.region:
+                    fp.write(reg + "\n")
+                for reg in srs.region:
+                    fp.write(reg + "\n")
+
+    with open(f"{root}_miri_lrs.reg", "w") as fp:
+        fp.write("icrs\n")
+        for reg in regions:
+            fp.write(reg + "\n")
+
+    if make_figure:
+
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+        label_colors = {}
+
+        for reg in regions:
+            sr = utils.SRegion(reg.split("#")[0])
+
+            is_slit = sr.sky_area("arcsec2")[0].value < 10
+
+            # polygon(...) # text={label}
+            group = reg.split()[-1][6:-1]
+
+            if group in label_colors:
+                color = label_colors[group]
+            else:
+                color = None
+
+            if is_slit:
+
+                pl = ax.plot(*sr.xy[0].T, alpha=0.0, color=color)
+                color = pl[0].get_color()
+
+                sr.add_patch_to_axis(
+                    ax,
+                    fc=color,
+                    # fc='None',
+                    ec=color,
+                    alpha=0.5,
+                    zorder=1000,
+                    label=(group if group not in label_colors else None),
+                    # hatch='||||||',
+                )
+                xy = sr.centroid[0]
+
+                if group not in label_colors:
+                    label_colors[group] = color
+
+                    if 0:
+                        ax.text(
+                            xy[0],
+                            xy[1] + 2.0 / 3600,
+                            group,
+                            color=color,
+                            fontsize=7,
+                            ha="center",
+                            va="bottom",
+                            zorder=1001,
+                            rotation=(group_pa[group] / np.pi * 180 + 90),
+                            rotation_mode="anchor",
+                        )
+            else:
+                ax.plot(*sr.xy[0].T, alpha=0.2, color=color)
+
+        ax.set_xlim(*ax.get_xlim()[::-1])
+        ax.grid()
+        ax.legend(loc="lower right", fontsize=8)
+
+        yl = ax.get_ylim()
+        ax.set_aspect(1.0 / np.cos(yl[0] / 180 * np.pi))
+        ax.set_title(root)
+        ax.set_xlabel("RA")
+        ax.set_ylabel("Dec.")
+
+        fig.tight_layout(pad=1)
+
+        fig.savefig(f"{root}_miri_lrs.png")
+
+    else:
+        fig = None
+
+    return regions, fig
+
+
+def rate_group_mosaic(
+    rate_groups,
+    root="jw09615",
+    output_path="./",
+    make_separate=True,
+    make_combined=True,
+    pixel_scale=CROSS_PSCALE,
+    kernel="square",
+    pixfrac=0.5,
+    verbose=True,
+):
+    """
+    Make drizzled mosaics of group exposures
+
+    Parameters
+    ----------
+    rate_groups : dict
+        Output from `~msaexp.cloud.lrs.load_rate_files`
+
+    root : str
+        String prefix for output products, i.e., ``{root}_miri_lrs.reg``.
+
+    output_path : str
+        Location for output files.  If None, just return arrays.
+
+    make_separate : bool
+        Make drizzled combinations separated for each group with their own
+        pixel grid.
+
+    make_combined : bool
+        Make combination of exposures in all groups
+
+    pixel_scale, kernel, pixfrac : float, str, float
+        Drizzle parameters
+
+    Returns
+    -------
+    products : dict
+        Dictionary with keys of the drizzled groups and values of the
+        output from `grizli.utils.drizzle_array_groups`.
+    
+    """
+    sci_list = []
+    wcs_list = []
+    wht_list = []
+
+    products = {}
+
+    for i, group in enumerate(rate_groups):
+
+        wcs_list_i = rate_groups[group]["wcs_list"]
+        sci_list_i = []
+        wht_list_i = []
+
+        utils.log_comment(
+            utils.LOGFILE,
+            f"\nGroup mosaic {i+1}/{len(rate_groups)} {group}  N={len(wcs_list_i)} files\n",
+            verbose=verbose,
+        )
+
+        for dm, sky, skyv in zip(
+            rate_groups[group]["dms"],
+            rate_groups[group]["sky_arrays"],
+            rate_groups[group]["sky_var"],
+        ):
+            s = dm.data - sky
+
+            wht = 1.0 / (dm.err**2 + skyv) * np.isfinite(s)
+            msk = (wht == 0) | (~np.isfinite(wht + s))
+            s[msk] = 0
+            wht[msk] = 0
+
+            sci_list_i.append(s)
+            wht_list_i.append(wht * 1)
+
+        if make_separate:
+
+            outh, outw = utils.make_maximal_wcs(
+                wcs_list_i,
+                pixel_scale=pixel_scale,
+                pad=10,
+                get_hdu=False,
+                verbose=verbose > 1,
+            )
+
+            drz_ = utils.drizzle_array_groups(
+                sci_list_i,
+                wht_list_i,
+                wcs_list_i,
+                outputwcs=outw,
+                kernel=kernel,
+                pixfrac=pixfrac,
+                verbose=verbose > 1,
+            )
+
+            if output_path is not None:
+                out = os.path.join(output_path, f"{group}_miri_lrs_sci.fits")
+
+                utils.log_comment(
+                    utils.LOGFILE,
+                    f"Write group mosaic {out}",
+                    verbose=verbose,
+                )
+
+                pyfits.writeto(
+                    out,
+                    data=drz_[0],
+                    header=outh,
+                    output_verify="fix",
+                    overwrite=True,
+                )
+
+                pyfits.writeto(
+                    out.replace("_sci.fits", "_wht.fits"),
+                    data=drz_[1],
+                    header=outh,
+                    output_verify="fix",
+                    overwrite=True,
+                )
+
+            products[group] = drz_
+
+        sci_list.extend(sci_list_i)
+        wht_list.extend(wht_list_i)
+        wcs_list.extend(wcs_list_i)
+
+    if make_combined:
+        utils.log_comment(
+            utils.LOGFILE,
+            f"\nCombined mosaic {root}  N={len(wcs_list)} files\n",
+            verbose=verbose,
+        )
+
+        outh, outw = utils.make_maximal_wcs(
+            wcs_list,
+            pixel_scale=pixel_scale,
+            pad=10,
+            get_hdu=False,
+            verbose=verbose > 1,
+        )
+
+        drz_ = utils.drizzle_array_groups(
+            sci_list,
+            wht_list,
+            wcs_list,
+            outputwcs=outw,
+            kernel=kernel,
+            pixfrac=pixfrac,
+            verbose=verbose > 1,
+        )
+
+        if output_path is not None:
+            out = os.path.join(output_path, f"{root}_miri_lrs_sci.fits")
+
+            utils.log_comment(
+                utils.LOGFILE,
+                f"Write combined mosaic {out}",
+                verbose=verbose,
+            )
+
+            pyfits.writeto(
+                out,
+                data=drz_[0],
+                header=outh,
+                output_verify="fix",
+                overwrite=True
+            )
+        
+            pyfits.writeto(
+                out.replace("_sci.fits", "_wht.fits"),
+                data=drz_[1],
+                header=outh,
+                output_verify="fix",
+                overwrite=True,
+            )
+
+        products[root] = drz_
+
+    return products
+
 
 def lrs_slitless_cutout_offset(xpix, ypix):
     """
     Trace offset as a function of detector pixel position
+
+    Parameters
+    ----------
+    xpix, ypix : float, float
+        Detector coordinates
+
+    Returns
+    -------
+    dx, dy : float, float
+        Pixel offsets for cutout origin relative to ``(xpix, ypix)``
+
     """
     from astropy.modeling.models import Polynomial2D
 
     h = pyfits.Header.fromtextfile(
-        os.path.join(msautils.module_data_path(), "lrs", "lrs_wfss_offset_coeffs.txt")
+        os.path.join(
+            msautils.module_data_path(), "lrs", "lrs_wfss_offset_coeffs.txt"
+        )
     )
 
     if xpix < 250:
-        prefix = 'DXL'
+        prefix = "DXL"
     else:
-        prefix = 'DXR'
+        prefix = "DXR"
 
-    dxpoly = Polynomial2D(degree=h[f'{prefix}deg'])
-    dxpoly.parameters = np.array([h[f'{prefix}{i}'] for i in range(h[f'{prefix}N'])])
+    dxpoly = Polynomial2D(degree=h[f"{prefix}deg"])
 
-    prefix = 'DYR'
-    dypoly = Polynomial2D(degree=h[f'{prefix}deg'])
-    dypoly.parameters = np.array([h[f'{prefix}{i}'] for i in range(h[f'{prefix}N'])])
+    dxpoly.parameters = np.array(
+        [h[f"{prefix}{i}"] for i in range(h[f"{prefix}N"])]
+    )
 
-    dx = dxpoly(xpix, ypix) - dxpoly(h['REFXPIX'], h['REFYPIX'])
-    dy = dypoly(xpix, ypix) - dypoly(h['REFXPIX'], h['REFYPIX'])
+    prefix = "DYR"
+    dypoly = Polynomial2D(degree=h[f"{prefix}deg"])
+    dypoly.parameters = np.array(
+        [h[f"{prefix}{i}"] for i in range(h[f"{prefix}N"])]
+    )
+
+    dx = dxpoly(xpix, ypix) - dxpoly(h["REFXPIX"], h["REFYPIX"])
+    dy = dypoly(xpix, ypix) - dypoly(h["REFXPIX"], h["REFYPIX"])
 
     return dx, dy
 
 
-def lrs_slitless_data_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad=512, slit_model=None):
+def get_lrs_slitless_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad=512, slit_model=None, check_window=True, **kwargs):
     """
+    Get pixel cutouts from data array for a sky position
+
+    Parameters
+    ----------
+    data : array-like
+        MIRI image array
+
+    wcs : `~astropy.wcs.WCS`
+        Image WCS
+
+    ra, dec : float
+        Sky coordinates
+
+    xoffset : None, float
+        Manual x offset
+
+    pad : int
+        Array padding for sources near the edges
+
+    slit_model : HDUList
+        See `msaexp.cloud.lrs.load_lrs_slit_model`
+
+    check_window : bool
+        Check that requested ``(ra, dec)`` is within the detector window from
+        ``msaexp.cloud.lrs.miri_illum_window``
+
+    Returns
+    -------
+    cutout : dict
+        Cutout data
+
     """
 
     if slit_model is None:
-        slit_model = pyfits.open(
-            os.path.join(msautils.module_data_path(), "lrs", "lrs_slit_model.fits")
-        )
+        slit_model = load_lrs_slit_model()
 
     h = slit_model[0].header
-
+    
     if ra is not None:
         wcs_pix = np.squeeze(wcs.all_world2pix([ra], [dec], 0))
+
+        window_region = ''
+
+        if check_window:
+            window_regions = miri_illum_window(wcs=wcs, **kwargs)
+            in_window = False
+            for reg in window_regions:
+                in_window_i = reg.path[0].contains_point((ra, dec))
+                if in_window_i:
+                    in_window = True
+                    window_region = reg.label
+                    break
+
+            if not in_window:
+                return None
 
         rdx = np.array(wcs.all_pix2world([wcs_pix[0], wcs_pix[0] + 1], [wcs_pix[1], wcs_pix[1]], 0))
         local_pscale = np.sqrt(((np.diff(rdx, axis=1).T * np.array([np.cos(dec/180*np.pi), 1.]))**2).sum()) * 3600
 
         corner_dx, corner_dy = lrs_slitless_cutout_offset(*wcs_pix)
         if verbose:
-            print(f'corner offset: {corner_dx:6.2f} {corner_dy:6.2f}')
-
+            print(f'   corner offset:  {corner_dx:6.2f} {corner_dy:6.2f}')
+        
         x_slice_offset = wcs_pix[0] - h['REFXPIX'] + corner_dx # + 1
         y_slice_offset = wcs_pix[1] - h['REFYPIX'] + corner_dy # + 1
+        
+    else:
+        local_pscale = CROSS_PSCALE
+        if xoffset is None:
+            x_slice_offset = 0.0
+            y_slice_offset = 0.0
+        else:
+            x_slice_offset = xoffset / CROSS_PSCALE
+            y_slice_offset = 0.0
+            
+        
+    x_slice_offset_int = int(np.floor(x_slice_offset))
+    y_slice_offset_int = int(np.floor(y_slice_offset))
+
+    if verbose:
+        print(f'    pixel offset:  {x_slice_offset:6.2f} {y_slice_offset:6.2f}')
+        
+    slx = slice(h['SLX0'] + x_slice_offset_int + pad, h['SLX1'] + x_slice_offset_int + pad)
+    sly = slice(h['SLY0'] + y_slice_offset_int + pad, h['SLY1'] + y_slice_offset_int + pad)
+    dx = slit_model['DX'].data + (x_slice_offset - x_slice_offset_int) * local_pscale
+    
+    dcut = np.pad(data, pad, constant_values=0)[sly, slx]
+    yp, xp = np.indices(dcut.shape)
+    
+    cutout = {
+        'dx': dx,
+        'data': dcut,
+        'wave': slit_model['wave'].data,
+        'slices': (slx, sly),
+        'pad': pad,
+        'yp': yp,
+        'xp': xp,
+        'ydet': yp + sly.start - pad,
+        'xdet': xp + slx.start - pad,
+        'ra': ra,
+        'dec': dec,
+        'local_pscale': local_pscale,
+        'window_region': window_region,
+    }
+
+    return cutout
+
+
+# ref_spec = msaexp.spectrum.SpectrumSampler("jw04533001-mds.miri-deep-survey-alma-10_lrs.spec.fits")
+
+def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False, vmax=1, gridsize=(128, 24), subtract_pedestal=False, sy=1.5, ref_spec=None, check_window=True, verbose=True, **kwargs):
+    """
+    Get full cutout pixel table
+    """
+    import matplotlib.pyplot as plt
+
+    N = 0
+    for group in rate_groups:
+        N += len(rate_groups[group]["dms"])
+        
+    ptabs = []
+
+    exp_i = -1
+
+    all_files = []
+    all_windows = []
+
+    exp_group_idx = {}
+
+    if slit_model is None:
+        slit_model = load_lrs_slit_model()
+    
+    for ig, group in enumerate(rate_groups):
+        grp = rate_groups[group]
+
+        for i, dm in enumerate(grp["dms"]):
+            exp_i += 1
+
+            exp_group_idx[exp_i] = ig
+
+            data = dm.data - grp["sky_arrays"][i]
+
+            all_files.append(dm.meta.filename)
+            
+            wcs = grp["wcs_list"][i]
+
+            print(f"{exp_i:>2} {all_files[-1]}")
+
+            cut_kwargs = dict(
+                slit_model=slit_model,
+                xoffset=dm.meta.dither.x_offset,
+                verbose=verbose,
+                check_window=check_window,
+                **kwargs,
+            )
+
+            try:
+                # data
+                ptab = get_lrs_slitless_cutout(data, wcs, ra, dec, **cut_kwargs)
+            except:
+                all_windows.append('N/A')
+                continue
+
+            if ptab is None:
+                all_windows.append('N/A')
+                continue
+
+            try:
+                if ptab["data"].max() == 0:
+                    print("skip")
+                    all_windows.append('N/A')
+                    continue
+            except:
+                print("skip")
+                all_windows.append('N/A')
+                continue
+                
+            ptab["x_offset"] = 0.0
+            ptab["meta"] = dict(dm.meta.instance)
+            ptab["to_ujy"] = 1.0
+
+            cut_kwargs["verbose"] = False
+
+            _dq = get_lrs_slitless_cutout(dm.dq, wcs, ra, dec, **cut_kwargs)
+            
+            ptab["dq"] = _dq["data"]
+
+            _var = get_lrs_slitless_cutout(
+                dm.err**2 + grp["sky_var"][i],
+                wcs, ra, dec,
+                **cut_kwargs,
+            )
+
+            ptab["err"] = np.sqrt(_var["data"])
+
+            _var_rn = get_lrs_slitless_cutout(
+                dm.var_rnoise,
+                wcs, ra, dec,
+                **cut_kwargs
+            )
+
+            ptab["var_rnoise"] = _var_rn["data"]
+
+            low = ptab["data"] / ptab["err"] < -3
+
+            low = nd.binary_dilation(
+                nd.binary_erosion(low, iterations=1),
+                structure=np.ones((64, 8), dtype=bool),
+            )
+
+            ptab["data"][low] = np.nan
+            ptab["data"][ptab["data"] == 0] = np.nan
+            
+            ptab["exposure"] = np.full(ptab["data"].shape, exp_i)
+
+            if subtract_pedestal:
+                pedestal_subarea = np.abs(ptab["dx"]) > 0.8
+                pedestal_subarea &= (ptab["wave"] > 6.5) & (ptab["wave"] < 11)
+                pedestal_subarea &= (ptab['data'] != 0)
+                
+                if pedestal_subarea.sum() > 0:
+                    pedestal_value = np.nanmedian(
+                        ptab["data"][pedestal_subarea]
+                    )
+                else:
+                    pedestal_value = 0.
+            else:
+                pedestal_value = 0.
+                
+            ptab["data"] -= pedestal_value
+            ptab["meta"]["pedestal"] = pedestal_value
+
+            ptab["file"] = dm.meta.filename
+            
+            ok = np.isfinite(ptab['data'] + ptab['err'])
+            ok &= (ptab['dq'] & 1) == 0
+            ok &= (ptab['data'] > -10 * ptab['err'])
+
+            okw = ptab["wave"] < 12
+
+            if (ok & okw).sum() == 0:
+                print("  Nvalid = 0, skip")
+                all_windows.append('N/A')
+                continue
+                
+            all_windows.append(ptab["window_region"])
+            
+            ptabs.append(ptab)
+
+    ### Merge pixel tables
+    if len(ptabs) == 0:
+        return None, None
+        
+    data = {
+        'yp': [],
+        'xp': [],
+        'ydet': [],
+        'xdet': [],
+        'exposure': [],
+        'dx': [],
+        'wave': [],
+        'data': [],
+        'err': [],
+        'var_rnoise': [],
+    }
+    
+    for i in range(len(ptabs)): #[1,3]:
+        ptab = ptabs[i]
+        ok = np.isfinite(ptab['data'] + ptab['err']) & ((ptab['dq'] & 1) == 0)
+        # trim = (ptab['xdet'] > 280) & (ptab["xdet"] < 358)
+        # ok &= ~trim
+        ok &= ~(ptab['data'] == 0)
+        
+        if 1:
+            ok &= (ptab['data'] > -10*ptab['err'])
+    
+        if 0:
+            bkg = ptab['bkg']
+        else:
+            bkg = 0
+        
+        data['yp'].append(ptab['yp'][ok])
+        data['xp'].append(ptab['xp'][ok])
+        data['ydet'].append(ptab['ydet'][ok])
+        data['xdet'].append(ptab['xdet'][ok])
+        data['exposure'].append(ptab['exposure'][ok])
+        data['dx'].append(ptab['dx'][ok] - ptab['x_offset'])
+        data['wave'].append(ptab['wave'][ok])
+        data['data'].append((ptab['data'] - bkg)[ok])
+        data['err'].append(ptab['err'][ok])
+        data['var_rnoise'].append(ptab['var_rnoise'][ok])
+
+    for k in data:
+        if k not in ['file']:
+            data[k] = np.hstack(data[k])
+
+    if make_figure:
+        une = utils.Unique(data["exposure"], verbose=False)
+        N = une.N
+                
+        fig, axes = plt.subplots(N + 1, 1, figsize=(10, (sy * (N+1))), sharex=True, sharey=True)
+
+        kws = dict(vmin=-vmax, vmax=vmax, alpha=0.8, cmap="magma", gridsize=gridsize, reduce_C_function=np.nanmedian)
+
+        for ax_i, exp_i in enumerate(une.values):
+            sub = une[exp_i]                 
+            axes[ax_i].hexbin(data["wave"][sub], data["dx"][sub], C=data["data"][sub], **kws)
+
+            axes[ax_i].text(
+                0.98, 0.08,
+                f"group={exp_group_idx[exp_i]} exp={exp_i}  {all_files[exp_i]}",
+                fontsize=8,
+                ha="right", va="bottom", transform=axes[ax_i].transAxes,
+                bbox={"fc": "w", "ec": "None", "alpha": 0.9}
+            )
+
+            if all_windows[exp_i] == "MIRIM_SLIT":
+                axes[ax_i].text(
+                    0.02, 0.08,
+                    f"LRS Slit",
+                    fontsize=8,
+                    ha="left", va="bottom", transform=axes[ax_i].transAxes,
+                    bbox={"fc": "w", "ec": "None", "alpha": 0.9}
+                )
+
+        axes[N].hexbin(data["wave"], data["dx"], C=data["data"], **kws)
+        
+        axes[N].text(
+            0.98, 0.08,
+            f"Stack  {ra:.6f} {dec:.6f}",
+            fontsize=8,
+            ha="right", va="bottom", transform=axes[N].transAxes,
+            bbox={"fc": "w", "ec": "None", "alpha": 0.9}
+        )
+        
+        for ax in axes:
+            ax.grid()
+            ax.set_ylim(-2.2, 2.2)
+
+        fig.tight_layout(pad=0.5)
+
+    else:
+        fig = None
+
+    data["meta"] = ptabs[0]["meta"]
+    
+    data["meta"]["files"] = all_files
+    data["meta"]["windows"] = all_windows
+
+    # data["meta"]["sys_err"] = sys_err
+    data["meta"]["x_offset"] = [ptab["x_offset"] for ptab in ptabs]
+
+    data['data'][data['wave'] < 4.92] = np.nan
+
+    pos_key = f"{ra:.6f}_{dec:.6f}"
+    data["meta"]["target"]["pos_key"] = pos_key
+    data["meta"]["target"]["proposer_name"] = pos_key
+
+    if ref_spec is None:
+        ref_spec = load_lrs_reference_spectrum()
+
+    set_bin_arrays(data, wbin=ref_spec["wave"])
+    
+    return fig, data
+
+
+def slitless_data_groups(data, exposure_groups, **kwargs):
+    """
+    Set ``group`` key in ``data`` based on exposure groups in ``config``
+
+    Parameters
+    ----------
+    data : dict
+        Pixel table data
+
+    exposure_groups : dict
+        Groups of exposure files
+
+    Returns
+    -------
+    group_names : list
+        List of group names from ``exposure_groups`` keys
+
+    ung : `unik.Unique`
+        Unique helper for ``data["group"]``
+
+    """
+    data["group"] = (data["wave"] * 0).astype(int)
+
+    group_names = []
+
+    une = utils.Unique(data["exposure"], verbose=False)
+
+    for ig, group in enumerate(exposure_groups):
+        for ifile, file in enumerate(exposure_groups[group]):
+            if file in data["meta"]["files"]:
+                j = data["meta"]["files"].index(file)
+                data["group"][une[j]] = ig
+
+                if group not in group_names:
+                    group_names.append(group)
+
+    print("\n     Groups\n     ======")
+    ung = utils.Unique(np.array(group_names)[data["group"]], **kwargs)
+
+    data["in_slit"] = np.isin(
+        np.array(data["meta"]["windows"])[data["exposure"]],
+        ["MIRIM_SLIT"]
+    )
+
+    in_slit = data["in_slit"].sum()
+    if (in_slit > 0) & (in_slit != len(data["in_slit"])):
+        msg = '\nWarning: Cutout appears to include both slit and slitless sources!\n' 
+        utils.log_comment(
+            utils.LOGFILE,
+            msg,
+            verbose=True,
+        )
+
+    data["meta"]["group_names"] = group_names
+
+    return group_names, ung
+
+
+###########################
+##### old below here
+def deprecated_lrs_slitless_data_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad=512, slit_model=None):
+    """ """
+
+    if slit_model is None:
+        # slit_model = pyfits.open(
+        #     os.path.join(msautils.module_data_path(), "lrs", "lrs_slit_model.fits")
+        # )
+        slit_model = load_lrs_slit_model()
+
+    h = slit_model[0].header
+
+    if ra is not None:
+        wcs_pix = np.squeeze(wcs.all_world2pix([ra], [dec], 0))
+
+        rdx = np.array(
+            wcs.all_pix2world(
+                [wcs_pix[0], wcs_pix[0] + 1], [wcs_pix[1], wcs_pix[1]], 0
+            )
+        )
+        local_pscale = (
+            np.sqrt(
+                (
+                    (
+                        np.diff(rdx, axis=1).T
+                        * np.array([np.cos(dec / 180 * np.pi), 1.0])
+                    )
+                    ** 2
+                ).sum()
+            )
+            * 3600
+        )
+
+        corner_dx, corner_dy = lrs_slitless_cutout_offset(*wcs_pix)
+        if verbose:
+            print(f"   corner offset: {corner_dx:6.2f} {corner_dy:6.2f}")
+
+        x_slice_offset = wcs_pix[0] - h["REFXPIX"] + corner_dx  # + 1
+        y_slice_offset = wcs_pix[1] - h["REFYPIX"] + corner_dy  # + 1
     else:
         local_pscale = CROSS_PSCALE
         if xoffset is None:
@@ -1957,27 +3315,38 @@ def lrs_slitless_data_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pa
     y_slice_offset_int = int(np.floor(y_slice_offset))
 
     if verbose:
-        print(f'pixel offset: {x_slice_offset:6.2f} {y_slice_offset:6.2f}')
+        print(f"    pixel offset: {x_slice_offset:6.2f} {y_slice_offset:6.2f}")
 
-    slx = slice(h['SLX0'] + x_slice_offset_int + pad, h['SLX1'] + x_slice_offset_int + pad)
-    sly = slice(h['SLY0'] + y_slice_offset_int + pad, h['SLY1'] + y_slice_offset_int + pad)
-    dx = slit_model['DX'].data + (x_slice_offset - x_slice_offset_int) * local_pscale
+    slx = slice(
+        h["SLX0"] + x_slice_offset_int + pad,
+        h["SLX1"] + x_slice_offset_int + pad,
+    )
+    sly = slice(
+        h["SLY0"] + y_slice_offset_int + pad,
+        h["SLY1"] + y_slice_offset_int + pad,
+    )
+    dx = (
+        slit_model["DX"].data
+        + (x_slice_offset - x_slice_offset_int) * local_pscale
+    )
 
     dcut = np.pad(data, pad, constant_values=0)[sly, slx]
     yp, xp = np.indices(dcut.shape)
 
     cutout = {
-        'dx': dx,
-        'data': dcut,
-        'wave': slit_model['wave'].data,
-        'slices': (slx, sly),
-        'yp': yp,
-        'xp': xp,
-        'ra': ra,
-        'dec': dec,
-        'local_pscale': local_pscale
+        "dx": dx,
+        "data": dcut,
+        "wave": slit_model["wave"].data,
+        "slices": (slx, sly),
+        "yp": yp,
+        "xp": xp,
+        "ra": ra,
+        "dec": dec,
+        "local_pscale": local_pscale,
     }
 
     return cutout
-    
+
+
 # x_slice_offset, y_slice_offset
+
