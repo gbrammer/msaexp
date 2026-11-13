@@ -2446,8 +2446,9 @@ def rate_group_regions(
     rate_groups,
     root="group",
     separate_region_files=False,
+    write_file=True,
     make_figure=True,
-    figsize=(6, 6),
+    figsize=(8, 8),
     **kwargs,
 ):
     """
@@ -2475,8 +2476,8 @@ def rate_group_regions(
 
     Returns
     -------
-    regions : list
-        List of polynomial regions
+    sregions : list
+        List of `sregion.SRegion` objects
 
     fig : figure or None
         Output figure object.  Also saved to ``{root}_miri_lrs.png``.
@@ -2485,7 +2486,7 @@ def rate_group_regions(
 
     import matplotlib.pyplot as plt
 
-    regions = []
+    sregions = []
 
     group_pa = {}
 
@@ -2518,8 +2519,8 @@ def rate_group_regions(
         srs = utils.SRegion(slit)
         srs.label = group
 
-        regions.extend(srs.region)
-        regions.extend(sr.region)
+        sregions.append(sr)
+        sregions.append(srs)
 
         if separate_region_files:
             with open(f"{group}_miri_lrs.reg", "w") as fp:
@@ -2529,10 +2530,12 @@ def rate_group_regions(
                 for reg in srs.region:
                     fp.write(reg + "\n")
 
-    with open(f"{root}_miri_lrs.reg", "w") as fp:
-        fp.write("icrs\n")
-        for reg in regions:
-            fp.write(reg + "\n")
+    if write_file:
+        with open(f"{root}_miri_lrs.reg", "w") as fp:
+            fp.write("icrs\n")
+            for sr in sregions:
+                for reg in sr.region:
+                    fp.write(reg + "\n")
 
     if make_figure:
 
@@ -2540,19 +2543,18 @@ def rate_group_regions(
 
         label_colors = {}
 
-        for reg in regions:
-            sr = utils.SRegion(reg.split("#")[0])
+        for sr in sregions:
+            # sr = utils.SRegion(reg.split("#")[0])
 
             is_slit = sr.sky_area("arcsec2")[0].value < 10
 
-            # polygon(...) # text={label}
-            group = reg.split()[-1][6:-1]
+            group = sr.label
 
             if group in label_colors:
                 color = label_colors[group]
             else:
                 color = None
-
+            
             if is_slit:
 
                 pl = ax.plot(*sr.xy[0].T, alpha=0.0, color=color)
@@ -2587,8 +2589,18 @@ def rate_group_regions(
                             rotation_mode="anchor",
                         )
             else:
-                ax.plot(*sr.xy[0].T, alpha=0.2, color=color)
+                for xy in sr.xy:
 
+                    pl = ax.plot(
+                        *xy.T, alpha=0.5, color=color,
+                        label=(group if group not in label_colors else None)
+                    )
+
+                    color = pl[0].get_color()
+
+                    if group not in label_colors:
+                        label_colors[group] = color
+                    
         ax.set_xlim(*ax.get_xlim()[::-1])
         ax.grid()
         ax.legend(loc="lower right", fontsize=8)
@@ -2606,7 +2618,7 @@ def rate_group_regions(
     else:
         fig = None
 
-    return regions, fig
+    return sregions, fig
 
 
 def rate_group_mosaic(
@@ -3260,6 +3272,410 @@ def slitless_data_groups(data, exposure_groups, **kwargs):
     data["meta"]["group_names"] = group_names
 
     return group_names, ung
+
+
+def slitless_trace_by_group(data, initial_shift=[0., 0.2], initial_size=0.1, min_wave=6, max_wave=11.5, max_dx=1.5, verbose=2, reset_initial=True, fix_first_size=True, fix_first_shift=False, show_each_2d=False, **kwargs):
+    """
+    Fit trace for each exposure group separately
+    """
+    ung = utils.Unique(
+        np.array(data["meta"]["group_names"])[data["group"]],
+        verbose=False
+    )
+
+    group_theta = {}
+    for j, ig in enumerate(ung.values):
+
+        subset = ung[ig] & (data["wave"] > min_wave)
+        subset &= (data["wave"] < max_wave) & (np.abs(data["dx"]) < max_dx)
+        subset &= np.isfinite(data["data"])
+
+        if verbose > 0:
+            print(f"\nExposure group {ig}  ({j+1} / {ung.N})  npix={subset.sum()}")
+
+        if subset.sum() < 16:
+            print("  (skip)")
+            continue
+
+        data_i = get_data_slice(data, subset)
+
+        group_theta[ig] = fit_shift_and_size(
+            data_i,
+            initial_shift=initial_shift,
+            initial_size=initial_size,
+            verbose=(verbose & 2),
+            **kwargs
+        )
+
+        group_theta[ig][-1] = np.maximum(group_theta[ig][-1], 0.01)
+        
+        if (verbose & 1):
+            print(f"    result = {group_theta[ig]}")
+
+        if reset_initial:
+            initial_shift = group_theta[ig][:-1] * 1
+            initial_size = group_theta[ig][-1] * 1
+
+        if show_each_2d:
+            _ = process_2d_products(data_i, recenter=True)
+
+        if fix_first_size & (j == 0):
+            kwargs["fit_size"] = False
+            initial_size = group_theta[ig][-1] * 1
+
+        if fix_first_shift & (j == 0):
+            kwargs["fit_shift"] = False
+            initial_shift = group_theta[ig][:-1] * 1
+
+    set_full_profile(data, group_theta)
+    
+    return ung, group_theta
+
+
+def set_full_profile(data, group_theta):
+    """
+    Set profiles for all groups with different trace fits
+    """
+    # ung = utils.Unique(data["group"], verbose=False)
+    ung = utils.Unique(
+        np.array(data["meta"]["group_names"])[data["group"]], verbose=False
+    )
+
+    # Set full profile arrays
+    profile = data["wave"] * 0.
+    psf_trace = data["wave"] * 0.
+    
+    for ig in group_theta:
+        subset = ung[ig]
+        data_i = get_data_slice(data, subset)
+        _ = evaluate_model_psf(data_i, group_theta[ig], do_optimal_extraction=True)
+        
+        profile[subset] = data_i["profile"] * 1
+        psf_trace[subset] = data_i["psf_trace"] * 1
+
+    _ = evaluate_model_psf(data, group_theta[ig], do_optimal_extraction=True)
+    
+    data["profile"] = profile
+    data["psf_trace"] = psf_trace
+
+
+def cafe_pah_templates():
+    """
+    Generate fitting templates for PAH lines listed by CAFE
+    ([Diaz-Santos+2025](https://github.com/GOALS-survey/CAFE))
+    
+    """
+    cafe_pah_info = utils.read_catalog("""# WAVE0     GAMMA        PEAK              COMPLEX
+# https://github.com/GOALS-survey/CAFE/blob/master/CAFE/tables/pah_template.txt
+        3.289E+00   1.1E-02      0.300               0
+        3.403E+00   0.4E-02      0.060               0.1
+        3.49E+00   8.4E-02      0.01                 0.2
+        5.24E+00   1.1E-02      0.06159884           1.1
+        5.33E+00   0.8E-02      0.06159884           1.2
+        5.70E+00   3.5E-02      0.07050930           2
+        6.029E+00   9.45E-03      0.20                3
+        6.2123E+00   1.5E-02      0.77360526          3
+        6.2700E+00   4.1E-02      0.77360526          3
+        6.69E+00   7.0E-02      0.09797205           4
+        7.42E+00  1.26E-01      0.23897256           5
+        7.60E+00   4.4E-02      0.89279697           5
+        7.85E+00   5.3E-02      0.86156776           5
+        8.33E+00   5.0E-02      0.25013986           6
+        8.61E+00   3.9E-02      0.64566928           7
+        11.02E+00   5.0E-03      0.20000000           9 
+       11.242E+00   8.0E-03      1.29167980           9
+       11.3572E+00   1.9E-02      1.04019180           9
+       11.99E+00   4.5E-02      0.32429740           10
+       12.62E+00   4.2E-02      0.84859132           11
+       12.69E+00   1.3E-02      0.19136069           11
+       13.48E+00   4.0E-02      0.21897772           12
+#       14.04E+00   1.6E-02      0.01000000           13
+       14.19E+00   2.5E-02      0.17583134           14
+#       15.90E+00   2.0E-02      0.01376596           15
+#       16.45E+00   1.4E-02      0.42942265           16
+#       17.04E+00   6.5E-02      0.63617951           16
+#      17.375E+00   1.2E-02      0.29235229           16
+#       17.87E+00   1.6E-02      0.25877291           16
+#       18.92E+00   1.9E-02      0.31397021           17
+    """)
+
+    import eazy.templates
+
+    cafe_pah_info["FWHM"] = cafe_pah_info["GAMMA"] * cafe_pah_info["WAVE0"]
+
+    templ_wave = np.arange(1, 15, 0.003) * 1.e4
+
+    pah_templates = []
+
+    for row in cafe_pah_info:
+        utempl = utils.pah_line_template(
+            templ_wave,
+            center_um=row["WAVE0"],
+            fwhm=row["FWHM"]
+        )
+        
+        templ = eazy.templates.Template(
+            arrays=(
+                utempl.wave,
+                utempl.flux / np.trapz(utempl.flux, utempl.wave) * 1.e9
+            ),
+            name="PAH-{WAVE0:.2f}".format(**row)
+        )
+
+        pah_templates.append(templ)
+
+    return pah_templates
+
+
+MID_IR_LINES = {
+    "PaA": 1.87563,
+    "PaB": 1.28217,
+    "BrA": 4.05228,
+    "BrB": 2.62588,
+    "SiVII": 6.492,
+    "ArII-6.99": 6.985,
+    "NeVI": 7.652, 
+    "ArIII-8.99": 8.991,
+    "SIV": 10.5105,
+}
+
+def get_mir_lines(spec, z=0, orders=[1], velocity_sigma=100, scale_disp=1, lines=MID_IR_LINES, **kwargs):
+    """
+    Return some common mid-IR lines
+    """
+    wave_range = (
+        spec["wave"][spec["valid"]].min(), spec["wave"][spec["valid"]].max()
+    )
+
+    line_models = []
+    line_names = []
+    
+    for i, ln in enumerate(lines):
+        lwi = lines[ln] * (1 + z)
+        if (lwi < wave_range[0]) | (lwi > wave_range[1]):
+            continue
+
+        line_i = spec.fast_emission_line(
+            lwi, orders=orders,
+            velocity_sigma=velocity_sigma,
+            scale_disp=scale_disp,
+            **kwargs
+        ) / spec["to_flam"] / 1.e4
+
+        line_models.append(line_i)
+        line_names.append(ln)
+
+    return np.array(line_models), line_names
+
+
+def fit_mir_templates(spec, z=0, pah_templates=None, line_models=None, continuum_models=None, fitter="nnls", velocity_sigma=100, scale_disp=1, plot_unit="flam", err_col="full_err", write=True, **kwargs):
+    """
+    Fit mid-IR templates to an LRS spectrum
+    """
+    from scipy.optimize import nnls
+
+    if z is None:
+        z = spec.meta["Z"]
+
+    if pah_templates is None:
+        pah_templates = cafe_pah_templates()
+
+    pah_names = [t.name for t in pah_templates]
+
+    if line_models is None:
+        line_models, line_names = get_mir_lines(
+            spec, z=z,
+            velocity_sigma=velocity_sigma,
+            scale_disp=scale_disp,
+        )
+
+    pah_models = np.array([
+        spec.resample_eazy_template(
+            templ, z=z, orders=[1],
+            velocity_sigma=velocity_sigma,
+            scale_disp=scale_disp,
+        ) * (1 + z)
+        for templ in pah_templates
+    ])
+
+    model_list = [pah_models, line_models]
+
+    if continuum_models is not None:
+        model_list.extend(continuum_models)
+
+    A = np.vstack(model_list)
+
+    Ax = A / spec[err_col]
+    yx = spec["flux"] / spec[err_col]
+
+    ok = np.isfinite(yx)
+
+    if fitter == "nnls":
+        lsq = nnls(Ax.T[ok,:], yx[ok])
+    else:
+        lsq = np.linalg.lstsq(Ax.T[ok,:], yx[ok], rcond=None)
+
+    model = A.T.dot(lsq[0])
+    chi = model / spec[err_col] - yx
+    chi2 = (chi**2)[ok].sum()
+
+    if plot_unit is not None:
+        fig = spec.drizzled_hdu_figure(unit=plot_unit, z=z)
+
+        ax = fig.axes[2]
+
+        to_unit = spec["to_flam"]**(plot_unit == "flam")
+        ax.plot(
+            np.arange(spec.NSPEC),
+            model * to_unit,
+            color="magenta", label="PAH model",
+            lw=3, alpha=0.3
+        )
+
+        _ = ax.plot(
+            np.arange(spec.NSPEC),
+            (A * to_unit).T * lsq[0],
+            alpha=0.3
+        )
+
+        if write:
+            fig.savefig(f"{spec.meta['SRCNAME']}_lrs.spec.{plot_unit}.png")
+
+    else:
+        fig = None
+
+    template_names = pah_names + line_names
+    line_fluxes = {
+        name: lsq[0][i]*1.e-20 for i, name in enumerate(template_names)
+    }
+
+    result = {
+        "lsq": lsq,
+        "model": model,
+        "chi2": chi2,
+        "template_models": A,
+        "template_names": template_names,
+        "line_fluxes": line_fluxes,
+        "fig": fig,
+    }
+
+    return result
+
+
+def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah_templates=None, velocity_sigma=100, scale_disp=1, fitter="nnls", zfig=None, make_plots=True, write=True, **kwargs):
+    """
+    Fit LRS redshift with PAH templates
+    """
+    from tqdm import tqdm
+    import matplotlib.pyplot as plt
+
+    if pah_templates is None:
+        pah_templates = cafe_pah_templates()
+
+    zstep = utils.log_zgrid(zlim, dz)
+    chi2 = zstep * 0.
+    chi2_min = np.inf
+    
+    for zi, z in tqdm(enumerate(zstep)):
+        result = fit_mir_templates(
+            spec,
+            z=z,
+            pah_templates=pah_templates,
+            continuum_models=continuum_models,
+            fitter=fitter,
+            velocity_sigma=velocity_sigma,
+            scale_disp=scale_disp,
+            plot_unit=None,
+        )
+    
+        chi2[zi] = result["chi2"]
+
+    zbest = zstep[np.argmin(chi2)]
+
+    result = fit_mir_templates(
+        spec,
+        z=zbest,
+        pah_templates=pah_templates,
+        continuum_models=continuum_models,
+        fitter=fitter,
+        velocity_sigma=velocity_sigma,
+        scale_disp=scale_disp,
+        plot_unit=("flam" if (make_plots > 1) else None),
+    )
+
+    result["zstep"] = zstep
+    result["chi2"] = chi2
+    result["zbest"] = zbest
+
+    spec.meta['Z'] = result["zbest"]
+    for k in result['line_fluxes']:
+        spec.meta[f'LINE-{k}'] = result["line_fluxes"][k]
+
+    if write:
+        with pyfits.open(
+            f"{spec.meta['SRCNAME']}_lrs.spec.fits",
+            mode="update"
+        ) as im:
+            for k in spec.meta:
+                if k.lower().endswith("unit"):
+                    im[1].header[k] = spec.meta[k].__repr__()
+                else:
+                    im[1].header[k] = spec.meta[k]
+
+            im.flush()
+
+    if make_plots:
+        if zfig is None:
+            zfig, ax = plt.subplots(1,1,figsize=(8,4))
+            new_fig = True
+        else:
+            ax = zfig.axes[0]
+            new_fig = False
+
+        chi_plot = (chi2 - chi2.min()) / (chi2.min() / spec["valid"].sum())
+        ax.plot(zstep, chi_plot, color="0.5", alpha=0.5)
+        ax.set_ylim(-0.05 * chi_plot.max(), chi_plot.max())
+        
+        ylim = ax.get_ylim()
+        
+        ax.vlines(zbest, *ylim, color="magenta", linestyle="--", alpha=0.5)
+        
+        ax.text(
+            zbest, np.interp(0.98, (0, 1), ylim), f"z = {zbest:.4f}",
+            ha="center", va="top",
+            bbox={"fc": "w", "ec": "None", "alpha": 0.8}
+        )
+
+        ax.text(
+            0.02, 0.02,
+            r"$\Delta z~/~(1 + z)$ = " + f"{dz:.0e}",
+            ha="left", va="bottom",
+            transform=ax.transAxes,
+            bbox={"fc": "w", "ec": "None", "alpha": 0.8}
+        )
+
+        ax.text(
+            0.98, 0.02,
+            spec.meta["SRCNAME"],
+            ha="right", va="bottom",
+            transform=ax.transAxes,
+            bbox={"fc": "w", "ec": "None", "alpha": 0.8}
+        )
+        
+        ax.grid()
+        ax.set_xlabel("z")
+        ax.set_ylabel(r"$\Delta \chi^2$")
+        ax.set_xlim(*zlim)
+
+        if new_fig:
+            zfig.tight_layout(pad=1)
+
+        result["zfig"] = zfig
+        
+        if write:
+            zfig.savefig(f"{spec.meta['SRCNAME']}_lrs.spec.zfit.png")
+        
+    return result
 
 
 ###########################
