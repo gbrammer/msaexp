@@ -126,7 +126,7 @@ def get_random_msa_preprocess_file(file=None, **kwargs):
         return rows
 
 
-def run_one_msa_preprocess(file=None, sync=True, **kwargs):
+def run_one_msa_preprocess(file=None, sync=True, clean=True, **kwargs):
     """
     Run a file with status = 0
     """
@@ -140,11 +140,28 @@ def run_one_msa_preprocess(file=None, sync=True, **kwargs):
     row = get_random_msa_preprocess_file(file=file)
 
     if row is None:
-        print('Nothing to do.')
-        with open(os.path.join(HOME, 'nirspec_prep_finished.txt'),'w') as fp:
-            fp.write(time.ctime() + '\n')
+        if file is not None:
+            msg = f'{file} not found in db.preprocess_nirspec table.  Force sync=False, root="local".'
+            utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            row_ = {
+                "rate_file": file,
+                "root": "local",
+                "rename_f070": False,
+            }
+            # "row" is actually a one-row table
+            row = utils.GTable(rows=[row_, row_])[:1]
 
-        return None
+            sync = False
+
+        else:
+            print('Nothing to do.')
+            with open(
+                os.path.join(HOME, 'nirspec_prep_finished.txt'),
+                'w'
+            ) as fp:
+                fp.write(time.ctime() + '\n')
+
+            return None
 
     for k in kwargs:
         row[k] = kwargs[k]
@@ -182,7 +199,7 @@ def run_one_msa_preprocess(file=None, sync=True, **kwargs):
     #################
     try:
         status = preprocess_nirspec_msa_file(
-            sync=sync, **row[0]
+            sync=sync, clean=clean, **row[0]
         )
     except:
         status = 5
