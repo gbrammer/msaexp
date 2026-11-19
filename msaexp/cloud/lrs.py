@@ -38,6 +38,7 @@ LRS_SLIT_MODEL = None
 
 LRS_REFERENCE_SPECTRUM = None
 
+
 def load_lrs_badpix():
     """
     Load ``msaexp/data/lrs/miri_lrs_badpix.txt table``
@@ -75,7 +76,9 @@ def load_lrs_slit_model():
     return LRS_SLIT_MODEL
 
 
-def load_lrs_reference_spectrum(file="jw04533001-mds.miri-deep-survey-alma-10_lrs.spec.fits"):
+def load_lrs_reference_spectrum(
+    file="jw04533001-mds.miri-deep-survey-alma-10_lrs.spec.fits",
+):
     """
     Load ``jw04533001-mds.miri-deep-survey-alma-10_lrs.spec.fits`` reference
     spectrum into the global LRS_SLIT_MODEL
@@ -91,18 +94,13 @@ def load_lrs_reference_spectrum(file="jw04533001-mds.miri-deep-survey-alma-10_lr
 
     """
     import msaexp.spectrum
-    
+
     global LRS_REFERENCE_SPECTRUM
 
     if LRS_REFERENCE_SPECTRUM is None:
         LRS_REFERENCE_SPECTRUM = msaexp.spectrum.SpectrumSampler(
-            os.path.join(
-                msautils.module_data_path(),
-                "lrs",
-                file
-            )            
+            os.path.join(msautils.module_data_path(), "lrs", file)
         )
-
 
     return LRS_REFERENCE_SPECTRUM
 
@@ -2244,7 +2242,7 @@ def decompose_psf(data):
 
 
 ####### Tools for slitless extractions
-def load_rate_files(files, write_bkg_files=True):
+def load_rate_files(files, write_bkg_files=True, median_slice=slice(450, 960)):
     """
     Load rate files, take diffs to remove background
 
@@ -2309,28 +2307,42 @@ def load_rate_files(files, write_bkg_files=True):
     sky_var = np.array(sky_var)
 
     if "bkg" in files[0]:
-        sky_arrays *= 0.0
-        sky_var *= 0.0
-        # print("background already removed")
+        sky_arrays = np.zeros_like(sky_arrays)
+        sky_var = np.zeros_like(sky_var)
+        print("background already removed")
 
     wcs_list = []
     for i, dm in enumerate(dms):
         dm.meta.exposure.type = "mir_image".upper()
 
         dmc = dm.copy()
-        dmc.data -= sky_arrays[i]
+
         dmc.err = np.sqrt(dmc.err**2 + sky_var[i])
 
-        bkg_file = files[i].replace("_rate", "_rate_bkg")
+        if median_slice is not None:
+            diff_ = dmc.data - sky_arrays[i]
+            diff_sn = diff_ / dmc.err
+            msk = (np.abs(diff_sn) > 3) | (dm.dq & 1 > 0)
+            colavg = np.nanmedian(
+                (diff_ * np.nan**msk)[:, median_slice], axis=1
+            )
 
-        dmc.to_fits(bkg_file, overwrite=True)
+            sky_arrays[i] = (sky_arrays[i].T + colavg).T
+
+        dmc.data -= sky_arrays[i]
+
+        if "_bkg" in files[i]:
+            bkg_file = files[i]
+        else:
+            bkg_file = files[i].replace("_rate", "_rate_bkg")
+            dmc.to_fits(bkg_file, overwrite=True)
 
         dmw = jwst_utils.img_with_wcs(bkg_file, overwrite=True, verbose=False)
 
         with pyfits.open(bkg_file) as im:
             wcs_list.append(pywcs.WCS(im[1].header, relax=True))
 
-        if not write_bkg_files:
+        if (not write_bkg_files) & ("_bkg" not in files[i]):
             os.remove(bkg_file)
 
     for w in wcs_list:
@@ -2349,7 +2361,7 @@ def load_rate_files(files, write_bkg_files=True):
 
 MIRI_APERTURE_PADDING = {
     "MIRIM_SLIT": (1.1, 1.2),
-    "MIRIM_ILLUM": (1., 1.01),
+    "MIRIM_ILLUM": (1.0, 1.01),
     "MIRIM_CORON1140": (1.0, 1.04),
     "MIRIM_CORON1550": (1.0, 1.04),
     "MIRIM_CORON1065": (1.0, 1.04),
@@ -2384,10 +2396,17 @@ def miri_illum_window(wcs=None, window_pad=MIRI_APERTURE_PADDING, **kwargs):
         import pysiaf
         import matplotlib.pyplot as plt
 
-        mir = pysiaf.Siaf('MIRI')
+        mir = pysiaf.Siaf("MIRI")
         aper = mir["MIRIM_ILLUM"]
 
-        names = ["MIRIM_SLIT", "MIRIM_ILLUM", "MIRIM_CORON1140", "MIRIM_CORON1550", "MIRIM_CORON1065", "MIRIM_CORONLYOT"]
+        names = [
+            "MIRIM_SLIT",
+            "MIRIM_ILLUM",
+            "MIRIM_CORON1140",
+            "MIRIM_CORON1550",
+            "MIRIM_CORON1065",
+            "MIRIM_CORONLYOT",
+        ]
 
         ref_aper = mir["MIRIM_FULL"]
         for aper in names:
@@ -2395,18 +2414,22 @@ def miri_illum_window(wcs=None, window_pad=MIRI_APERTURE_PADDING, **kwargs):
             tel = ap.corners("tel", rederive=False)
 
             try:
-                det = ap.corners('det', rederive=False)
+                det = ap.corners("det", rederive=False)
             except:
                 det = ref_aper.tel_to_det(*tel)
-                
+
             if 1:
                 pl = plt.plot(*det, label=aper, alpha=0.3)
-        
-                sr = utils.SRegion(np.array(det), label=aper, wrap=False, pad=1)
+
+                sr = utils.SRegion(
+                    np.array(det), label=aper, wrap=False, pad=1
+                )
                 c = pl[0].get_color()
-                sr.add_patch_to_axis(plt.gca(), fc='None', ec=c, alpha=0.1, label=aper)
+                sr.add_patch_to_axis(
+                    plt.gca(), fc="None", ec=c, alpha=0.1, label=aper
+                )
                 print(sr.region[0])
-                
+
             else:
                 pl = plt.plot(*tel, label=aper, alpha=0.5)
 
@@ -2429,7 +2452,7 @@ polygon(5.498274,748.489323,277.496186,748.497263,277.499857,1020.486809,5.48714
         if label in window_pad:
             pad_i = window_pad[label]
         else:
-            pad_i = 1.
+            pad_i = 1.0
 
         sr = utils.SRegion(lspl[0], wrap=False, label=label, pad=pad_i)
 
@@ -2554,7 +2577,7 @@ def rate_group_regions(
                 color = label_colors[group]
             else:
                 color = None
-            
+
             if is_slit:
 
                 pl = ax.plot(*sr.xy[0].T, alpha=0.0, color=color)
@@ -2592,15 +2615,17 @@ def rate_group_regions(
                 for xy in sr.xy:
 
                     pl = ax.plot(
-                        *xy.T, alpha=0.5, color=color,
-                        label=(group if group not in label_colors else None)
+                        *xy.T,
+                        alpha=0.5,
+                        color=color,
+                        label=(group if group not in label_colors else None),
                     )
 
                     color = pl[0].get_color()
 
                     if group not in label_colors:
                         label_colors[group] = color
-                    
+
         ax.set_xlim(*ax.get_xlim()[::-1])
         ax.grid()
         ax.legend(loc="lower right", fontsize=8)
@@ -2661,7 +2686,7 @@ def rate_group_mosaic(
     products : dict
         Dictionary with keys of the drizzled groups and values of the
         output from `grizli.utils.drizzle_array_groups`.
-    
+
     """
     sci_list = []
     wcs_list = []
@@ -2786,9 +2811,9 @@ def rate_group_mosaic(
                 data=drz_[0],
                 header=outh,
                 output_verify="fix",
-                overwrite=True
+                overwrite=True,
             )
-        
+
             pyfits.writeto(
                 out.replace("_sci.fits", "_wht.fits"),
                 data=drz_[1],
@@ -2848,7 +2873,18 @@ def lrs_slitless_cutout_offset(xpix, ypix):
     return dx, dy
 
 
-def get_lrs_slitless_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad=512, slit_model=None, check_window=True, **kwargs):
+def get_lrs_slitless_cutout(
+    data,
+    wcs,
+    ra,
+    dec,
+    verbose=False,
+    xoffset=None,
+    pad=512,
+    slit_model=None,
+    check_window=True,
+    **kwargs,
+):
     """
     Get pixel cutouts from data array for a sky position
 
@@ -2887,11 +2923,11 @@ def get_lrs_slitless_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad
         slit_model = load_lrs_slit_model()
 
     h = slit_model[0].header
-    
+
     if ra is not None:
         wcs_pix = np.squeeze(wcs.all_world2pix([ra], [dec], 0))
 
-        window_region = ''
+        window_region = ""
 
         if check_window:
             window_regions = miri_illum_window(wcs=wcs, **kwargs)
@@ -2906,16 +2942,31 @@ def get_lrs_slitless_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad
             if not in_window:
                 return None
 
-        rdx = np.array(wcs.all_pix2world([wcs_pix[0], wcs_pix[0] + 1], [wcs_pix[1], wcs_pix[1]], 0))
-        local_pscale = np.sqrt(((np.diff(rdx, axis=1).T * np.array([np.cos(dec/180*np.pi), 1.]))**2).sum()) * 3600
+        rdx = np.array(
+            wcs.all_pix2world(
+                [wcs_pix[0], wcs_pix[0] + 1], [wcs_pix[1], wcs_pix[1]], 0
+            )
+        )
+        local_pscale = (
+            np.sqrt(
+                (
+                    (
+                        np.diff(rdx, axis=1).T
+                        * np.array([np.cos(dec / 180 * np.pi), 1.0])
+                    )
+                    ** 2
+                ).sum()
+            )
+            * 3600
+        )
 
         corner_dx, corner_dy = lrs_slitless_cutout_offset(*wcs_pix)
         if verbose:
-            print(f'   corner offset:  {corner_dx:6.2f} {corner_dy:6.2f}')
-        
-        x_slice_offset = wcs_pix[0] - h['REFXPIX'] + corner_dx # + 1
-        y_slice_offset = wcs_pix[1] - h['REFYPIX'] + corner_dy # + 1
-        
+            print(f"   corner offset:  {corner_dx:6.2f} {corner_dy:6.2f}")
+
+        x_slice_offset = wcs_pix[0] - h["REFXPIX"] + corner_dx  # + 1
+        y_slice_offset = wcs_pix[1] - h["REFYPIX"] + corner_dy  # + 1
+
     else:
         local_pscale = CROSS_PSCALE
         if xoffset is None:
@@ -2924,35 +2975,45 @@ def get_lrs_slitless_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad
         else:
             x_slice_offset = xoffset / CROSS_PSCALE
             y_slice_offset = 0.0
-            
-        
+
     x_slice_offset_int = int(np.floor(x_slice_offset))
     y_slice_offset_int = int(np.floor(y_slice_offset))
 
     if verbose:
-        print(f'    pixel offset:  {x_slice_offset:6.2f} {y_slice_offset:6.2f}')
-        
-    slx = slice(h['SLX0'] + x_slice_offset_int + pad, h['SLX1'] + x_slice_offset_int + pad)
-    sly = slice(h['SLY0'] + y_slice_offset_int + pad, h['SLY1'] + y_slice_offset_int + pad)
-    dx = slit_model['DX'].data + (x_slice_offset - x_slice_offset_int) * local_pscale
-    
+        print(
+            f"    pixel offset:  {x_slice_offset:6.2f} {y_slice_offset:6.2f}"
+        )
+
+    slx = slice(
+        h["SLX0"] + x_slice_offset_int + pad,
+        h["SLX1"] + x_slice_offset_int + pad,
+    )
+    sly = slice(
+        h["SLY0"] + y_slice_offset_int + pad,
+        h["SLY1"] + y_slice_offset_int + pad,
+    )
+    dx = (
+        slit_model["DX"].data
+        + (x_slice_offset - x_slice_offset_int) * local_pscale
+    )
+
     dcut = np.pad(data, pad, constant_values=0)[sly, slx]
     yp, xp = np.indices(dcut.shape)
-    
+
     cutout = {
-        'dx': dx,
-        'data': dcut,
-        'wave': slit_model['wave'].data,
-        'slices': (slx, sly),
-        'pad': pad,
-        'yp': yp,
-        'xp': xp,
-        'ydet': yp + sly.start - pad,
-        'xdet': xp + slx.start - pad,
-        'ra': ra,
-        'dec': dec,
-        'local_pscale': local_pscale,
-        'window_region': window_region,
+        "dx": dx,
+        "data": dcut,
+        "wave": slit_model["wave"].data,
+        "slices": (slx, sly),
+        "pad": pad,
+        "yp": yp,
+        "xp": xp,
+        "ydet": yp + sly.start - pad,
+        "xdet": xp + slx.start - pad,
+        "ra": ra,
+        "dec": dec,
+        "local_pscale": local_pscale,
+        "window_region": window_region,
     }
 
     return cutout
@@ -2960,7 +3021,24 @@ def get_lrs_slitless_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad
 
 # ref_spec = msaexp.spectrum.SpectrumSampler("jw04533001-mds.miri-deep-survey-alma-10_lrs.spec.fits")
 
-def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False, vmax=1, gridsize=(128, 24), subtract_pedestal=False, sy=1.5, ref_spec=None, check_window=True, verbose=True, **kwargs):
+
+def cutout_pixel_table(
+    ra,
+    dec,
+    rate_groups,
+    slit_model=None,
+    make_figure=False,
+    vmax=1,
+    gridsize=(128, 24),
+    low_threshold=-3,
+    subtract_pedestal=False,
+    sy=1.5,
+    ref_spec=None,
+    check_window=True,
+    verbose=True,
+    remove_masked=True,
+    **kwargs,
+):
     """
     Get full cutout pixel table
     """
@@ -2969,7 +3047,7 @@ def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False,
     N = 0
     for group in rate_groups:
         N += len(rate_groups[group]["dms"])
-        
+
     ptabs = []
 
     exp_i = -1
@@ -2981,7 +3059,7 @@ def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False,
 
     if slit_model is None:
         slit_model = load_lrs_slit_model()
-    
+
     for ig, group in enumerate(rate_groups):
         grp = rate_groups[group]
 
@@ -2993,7 +3071,7 @@ def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False,
             data = dm.data - grp["sky_arrays"][i]
 
             all_files.append(dm.meta.filename)
-            
+
             wcs = grp["wcs_list"][i]
 
             print(f"{exp_i:>2} {all_files[-1]}")
@@ -3008,25 +3086,27 @@ def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False,
 
             try:
                 # data
-                ptab = get_lrs_slitless_cutout(data, wcs, ra, dec, **cut_kwargs)
+                ptab = get_lrs_slitless_cutout(
+                    data, wcs, ra, dec, **cut_kwargs
+                )
             except:
-                all_windows.append('N/A')
+                all_windows.append("N/A")
                 continue
 
             if ptab is None:
-                all_windows.append('N/A')
+                all_windows.append("N/A")
                 continue
 
             try:
                 if ptab["data"].max() == 0:
                     print("skip")
-                    all_windows.append('N/A')
+                    all_windows.append("N/A")
                     continue
             except:
                 print("skip")
-                all_windows.append('N/A')
+                all_windows.append("N/A")
                 continue
-                
+
             ptab["x_offset"] = 0.0
             ptab["meta"] = dict(dm.meta.instance)
             ptab["to_ujy"] = 1.0
@@ -3034,157 +3114,182 @@ def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False,
             cut_kwargs["verbose"] = False
 
             _dq = get_lrs_slitless_cutout(dm.dq, wcs, ra, dec, **cut_kwargs)
-            
+
             ptab["dq"] = _dq["data"]
 
             _var = get_lrs_slitless_cutout(
                 dm.err**2 + grp["sky_var"][i],
-                wcs, ra, dec,
+                wcs,
+                ra,
+                dec,
                 **cut_kwargs,
             )
 
             ptab["err"] = np.sqrt(_var["data"])
 
             _var_rn = get_lrs_slitless_cutout(
-                dm.var_rnoise,
-                wcs, ra, dec,
-                **cut_kwargs
+                dm.var_rnoise, wcs, ra, dec, **cut_kwargs
             )
 
             ptab["var_rnoise"] = _var_rn["data"]
 
-            low = ptab["data"] / ptab["err"] < -3
-
-            low = nd.binary_dilation(
-                nd.binary_erosion(low, iterations=1),
-                structure=np.ones((64, 8), dtype=bool),
-            )
-
-            ptab["data"][low] = np.nan
             ptab["data"][ptab["data"] == 0] = np.nan
-            
+
             ptab["exposure"] = np.full(ptab["data"].shape, exp_i)
 
             if subtract_pedestal:
                 pedestal_subarea = np.abs(ptab["dx"]) > 0.8
                 pedestal_subarea &= (ptab["wave"] > 6.5) & (ptab["wave"] < 11)
-                pedestal_subarea &= (ptab['data'] != 0)
-                
+                pedestal_subarea &= ptab["data"] != 0
+
                 if pedestal_subarea.sum() > 0:
                     pedestal_value = np.nanmedian(
                         ptab["data"][pedestal_subarea]
                     )
                 else:
-                    pedestal_value = 0.
+                    pedestal_value = 0.0
             else:
-                pedestal_value = 0.
-                
+                pedestal_value = 0.0
+
             ptab["data"] -= pedestal_value
             ptab["meta"]["pedestal"] = pedestal_value
 
+            if low_threshold is not None:
+                low = ptab["data"] / ptab["err"] < low_threshold
+
+                low = nd.binary_dilation(
+                    nd.binary_erosion(low, iterations=1),
+                    structure=np.ones((64, 8), dtype=bool),
+                )
+
+                ptab["data"][low] = np.nan
+
             ptab["file"] = dm.meta.filename
-            
-            ok = np.isfinite(ptab['data'] + ptab['err'])
-            ok &= (ptab['dq'] & 1) == 0
-            ok &= (ptab['data'] > -10 * ptab['err'])
+
+            ok = np.isfinite(ptab["data"] + ptab["err"])
+            ok &= (ptab["dq"] & 1) == 0
+            # ok &= (ptab['data'] > -10 * ptab['err'])
 
             okw = ptab["wave"] < 12
 
             if (ok & okw).sum() == 0:
                 print("  Nvalid = 0, skip")
-                all_windows.append('N/A')
+                all_windows.append("N/A")
                 continue
-                
+
             all_windows.append(ptab["window_region"])
-            
+
             ptabs.append(ptab)
 
     ### Merge pixel tables
     if len(ptabs) == 0:
         return None, None
-        
+
     data = {
-        'yp': [],
-        'xp': [],
-        'ydet': [],
-        'xdet': [],
-        'exposure': [],
-        'dx': [],
-        'wave': [],
-        'data': [],
-        'err': [],
-        'var_rnoise': [],
+        "yp": [],
+        "xp": [],
+        "ydet": [],
+        "xdet": [],
+        "exposure": [],
+        "dx": [],
+        "wave": [],
+        "data": [],
+        "err": [],
+        "var_rnoise": [],
     }
-    
-    for i in range(len(ptabs)): #[1,3]:
+
+    for i in range(len(ptabs)):  # [1,3]:
         ptab = ptabs[i]
-        ok = np.isfinite(ptab['data'] + ptab['err']) & ((ptab['dq'] & 1) == 0)
+        ok = np.isfinite(ptab["data"] + ptab["err"]) & ((ptab["dq"] & 1) == 0)
         # trim = (ptab['xdet'] > 280) & (ptab["xdet"] < 358)
         # ok &= ~trim
-        ok &= ~(ptab['data'] == 0)
-        
-        if 1:
-            ok &= (ptab['data'] > -10*ptab['err'])
-    
+        ok &= ~(ptab["data"] == 0)
+
         if 0:
-            bkg = ptab['bkg']
+            ok &= ptab["data"] > -10 * ptab["err"]
+
+        if 0:
+            bkg = ptab["bkg"]
         else:
             bkg = 0
-        
-        data['yp'].append(ptab['yp'][ok])
-        data['xp'].append(ptab['xp'][ok])
-        data['ydet'].append(ptab['ydet'][ok])
-        data['xdet'].append(ptab['xdet'][ok])
-        data['exposure'].append(ptab['exposure'][ok])
-        data['dx'].append(ptab['dx'][ok] - ptab['x_offset'])
-        data['wave'].append(ptab['wave'][ok])
-        data['data'].append((ptab['data'] - bkg)[ok])
-        data['err'].append(ptab['err'][ok])
-        data['var_rnoise'].append(ptab['var_rnoise'][ok])
+
+        if not remove_masked:
+            ok = np.ones(len(ptab["data"]), dtype=bool)
+
+        data["yp"].append(ptab["yp"][ok])
+        data["xp"].append(ptab["xp"][ok])
+        data["ydet"].append(ptab["ydet"][ok])
+        data["xdet"].append(ptab["xdet"][ok])
+        data["exposure"].append(ptab["exposure"][ok])
+        data["dx"].append(ptab["dx"][ok] - ptab["x_offset"])
+        data["wave"].append(ptab["wave"][ok])
+        data["data"].append((ptab["data"] - bkg)[ok])
+        data["err"].append(ptab["err"][ok])
+        data["var_rnoise"].append(ptab["var_rnoise"][ok])
 
     for k in data:
-        if k not in ['file']:
+        if k not in ["file"]:
             data[k] = np.hstack(data[k])
 
     if make_figure:
         une = utils.Unique(data["exposure"], verbose=False)
         N = une.N
-                
-        fig, axes = plt.subplots(N + 1, 1, figsize=(10, (sy * (N+1))), sharex=True, sharey=True)
 
-        kws = dict(vmin=-vmax, vmax=vmax, alpha=0.8, cmap="magma", gridsize=gridsize, reduce_C_function=np.nanmedian)
+        fig, axes = plt.subplots(
+            N + 1, 1, figsize=(10, (sy * (N + 1))), sharex=True, sharey=True
+        )
+
+        kws = dict(
+            vmin=-vmax,
+            vmax=vmax,
+            alpha=0.8,
+            cmap="magma",
+            gridsize=gridsize,
+            reduce_C_function=np.nanmedian,
+        )
 
         for ax_i, exp_i in enumerate(une.values):
-            sub = une[exp_i]                 
-            axes[ax_i].hexbin(data["wave"][sub], data["dx"][sub], C=data["data"][sub], **kws)
+            sub = une[exp_i]
+            axes[ax_i].hexbin(
+                data["wave"][sub], data["dx"][sub], C=data["data"][sub], **kws
+            )
 
             axes[ax_i].text(
-                0.98, 0.08,
+                0.98,
+                0.08,
                 f"group={exp_group_idx[exp_i]} exp={exp_i}  {all_files[exp_i]}",
                 fontsize=8,
-                ha="right", va="bottom", transform=axes[ax_i].transAxes,
-                bbox={"fc": "w", "ec": "None", "alpha": 0.9}
+                ha="right",
+                va="bottom",
+                transform=axes[ax_i].transAxes,
+                bbox={"fc": "w", "ec": "None", "alpha": 0.9},
             )
 
             if all_windows[exp_i] == "MIRIM_SLIT":
                 axes[ax_i].text(
-                    0.02, 0.08,
+                    0.02,
+                    0.08,
                     f"LRS Slit",
                     fontsize=8,
-                    ha="left", va="bottom", transform=axes[ax_i].transAxes,
-                    bbox={"fc": "w", "ec": "None", "alpha": 0.9}
+                    ha="left",
+                    va="bottom",
+                    transform=axes[ax_i].transAxes,
+                    bbox={"fc": "w", "ec": "None", "alpha": 0.9},
                 )
 
         axes[N].hexbin(data["wave"], data["dx"], C=data["data"], **kws)
-        
+
         axes[N].text(
-            0.98, 0.08,
+            0.98,
+            0.08,
             f"Stack  {ra:.6f} {dec:.6f}",
             fontsize=8,
-            ha="right", va="bottom", transform=axes[N].transAxes,
-            bbox={"fc": "w", "ec": "None", "alpha": 0.9}
+            ha="right",
+            va="bottom",
+            transform=axes[N].transAxes,
+            bbox={"fc": "w", "ec": "None", "alpha": 0.9},
         )
-        
+
         for ax in axes:
             ax.grid()
             ax.set_ylim(-2.2, 2.2)
@@ -3195,14 +3300,14 @@ def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False,
         fig = None
 
     data["meta"] = ptabs[0]["meta"]
-    
+
     data["meta"]["files"] = all_files
     data["meta"]["windows"] = all_windows
 
     # data["meta"]["sys_err"] = sys_err
     data["meta"]["x_offset"] = [ptab["x_offset"] for ptab in ptabs]
 
-    data['data'][data['wave'] < 4.92] = np.nan
+    data["data"][data["wave"] < 4.92] = np.nan
 
     pos_key = f"{ra:.6f}_{dec:.6f}"
     data["meta"]["target"]["pos_key"] = pos_key
@@ -3212,7 +3317,7 @@ def cutout_pixel_table(ra, dec, rate_groups, slit_model=None, make_figure=False,
         ref_spec = load_lrs_reference_spectrum()
 
     set_bin_arrays(data, wbin=ref_spec["wave"])
-    
+
     return fig, data
 
 
@@ -3256,13 +3361,12 @@ def slitless_data_groups(data, exposure_groups, **kwargs):
     ung = utils.Unique(np.array(group_names)[data["group"]], **kwargs)
 
     data["in_slit"] = np.isin(
-        np.array(data["meta"]["windows"])[data["exposure"]],
-        ["MIRIM_SLIT"]
+        np.array(data["meta"]["windows"])[data["exposure"]], ["MIRIM_SLIT"]
     )
 
     in_slit = data["in_slit"].sum()
     if (in_slit > 0) & (in_slit != len(data["in_slit"])):
-        msg = '\nWarning: Cutout appears to include both slit and slitless sources!\n' 
+        msg = "\nWarning: Cutout appears to include both slit and slitless sources!\n"
         utils.log_comment(
             utils.LOGFILE,
             msg,
@@ -3274,13 +3378,25 @@ def slitless_data_groups(data, exposure_groups, **kwargs):
     return group_names, ung
 
 
-def slitless_trace_by_group(data, initial_shift=[0., 0.2], initial_size=0.1, min_wave=6, max_wave=11.5, max_dx=1.5, verbose=2, reset_initial=True, fix_first_size=True, fix_first_shift=False, show_each_2d=False, **kwargs):
+def slitless_trace_by_group(
+    data,
+    initial_shift=[0.0, 0.2],
+    initial_size=0.1,
+    min_wave=6,
+    max_wave=11.5,
+    max_dx=1.5,
+    verbose=2,
+    reset_initial=True,
+    fix_first_size=True,
+    fix_first_shift=False,
+    show_each_2d=False,
+    **kwargs,
+):
     """
     Fit trace for each exposure group separately
     """
     ung = utils.Unique(
-        np.array(data["meta"]["group_names"])[data["group"]],
-        verbose=False
+        np.array(data["meta"]["group_names"])[data["group"]], verbose=False
     )
 
     group_theta = {}
@@ -3291,7 +3407,9 @@ def slitless_trace_by_group(data, initial_shift=[0., 0.2], initial_size=0.1, min
         subset &= np.isfinite(data["data"])
 
         if verbose > 0:
-            print(f"\nExposure group {ig}  ({j+1} / {ung.N})  npix={subset.sum()}")
+            print(
+                f"\nExposure group {ig}  ({j+1} / {ung.N})  npix={subset.sum()}"
+            )
 
         if subset.sum() < 16:
             print("  (skip)")
@@ -3304,12 +3422,12 @@ def slitless_trace_by_group(data, initial_shift=[0., 0.2], initial_size=0.1, min
             initial_shift=initial_shift,
             initial_size=initial_size,
             verbose=(verbose & 2),
-            **kwargs
+            **kwargs,
         )
 
         group_theta[ig][-1] = np.maximum(group_theta[ig][-1], 0.01)
-        
-        if (verbose & 1):
+
+        if verbose & 1:
             print(f"    result = {group_theta[ig]}")
 
         if reset_initial:
@@ -3328,7 +3446,7 @@ def slitless_trace_by_group(data, initial_shift=[0., 0.2], initial_size=0.1, min
             initial_shift = group_theta[ig][:-1] * 1
 
     set_full_profile(data, group_theta)
-    
+
     return ung, group_theta
 
 
@@ -3342,84 +3460,140 @@ def set_full_profile(data, group_theta):
     )
 
     # Set full profile arrays
-    profile = data["wave"] * 0.
-    psf_trace = data["wave"] * 0.
-    
+    profile = data["wave"] * 0.0
+    psf_trace = data["wave"] * 0.0
+
     for ig in group_theta:
         subset = ung[ig]
         data_i = get_data_slice(data, subset)
-        _ = evaluate_model_psf(data_i, group_theta[ig], do_optimal_extraction=True)
-        
+        _ = evaluate_model_psf(
+            data_i, group_theta[ig], do_optimal_extraction=True
+        )
+
         profile[subset] = data_i["profile"] * 1
         psf_trace[subset] = data_i["psf_trace"] * 1
 
     _ = evaluate_model_psf(data, group_theta[ig], do_optimal_extraction=True)
-    
+
     data["profile"] = profile
     data["psf_trace"] = psf_trace
 
 
-def cafe_pah_templates():
+def cafe_pah_templates(
+    pah_wave_arange=(1, 15, 0.003),
+    pah_groups=True,
+    group_wavelengths=[0, 4, 7, 10, 15, 30],
+    **kwargs,
+):
     """
     Generate fitting templates for PAH lines listed by CAFE
     ([Diaz-Santos+2025](https://github.com/GOALS-survey/CAFE))
-    
+
+    Parameters
+    ----------
+    pah_groups : bool
+        Group lines with PEAK fluxes in the CAFE table
+
+    group_wavelengths : list
+        Wavelength bin edges of the groups for ``pah_groups``
+
+    Returns
+    -------
+    pah_templates : list
+        List of `eazy.templates.Template` objects
+
     """
-    cafe_pah_info = utils.read_catalog("""# WAVE0     GAMMA        PEAK              COMPLEX
+
+    # FIT_PEAK column added with own flux ratios
+    cafe_pah_info = utils.read_catalog(
+        """# WAVE0     GAMMA        PEAK              COMPLEX   FIT_PEAK
 # https://github.com/GOALS-survey/CAFE/blob/master/CAFE/tables/pah_template.txt
-        3.289E+00   1.1E-02      0.300               0
-        3.403E+00   0.4E-02      0.060               0.1
-        3.49E+00   8.4E-02      0.01                 0.2
-        5.24E+00   1.1E-02      0.06159884           1.1
-        5.33E+00   0.8E-02      0.06159884           1.2
-        5.70E+00   3.5E-02      0.07050930           2
-        6.029E+00   9.45E-03      0.20                3
-        6.2123E+00   1.5E-02      0.77360526          3
-        6.2700E+00   4.1E-02      0.77360526          3
-        6.69E+00   7.0E-02      0.09797205           4
-        7.42E+00  1.26E-01      0.23897256           5
-        7.60E+00   4.4E-02      0.89279697           5
-        7.85E+00   5.3E-02      0.86156776           5
-        8.33E+00   5.0E-02      0.25013986           6
-        8.61E+00   3.9E-02      0.64566928           7
-        11.02E+00   5.0E-03      0.20000000           9 
-       11.242E+00   8.0E-03      1.29167980           9
-       11.3572E+00   1.9E-02      1.04019180           9
-       11.99E+00   4.5E-02      0.32429740           10
-       12.62E+00   4.2E-02      0.84859132           11
-       12.69E+00   1.3E-02      0.19136069           11
-       13.48E+00   4.0E-02      0.21897772           12
-#       14.04E+00   1.6E-02      0.01000000           13
-       14.19E+00   2.5E-02      0.17583134           14
-#       15.90E+00   2.0E-02      0.01376596           15
-#       16.45E+00   1.4E-02      0.42942265           16
-#       17.04E+00   6.5E-02      0.63617951           16
-#      17.375E+00   1.2E-02      0.29235229           16
-#       17.87E+00   1.6E-02      0.25877291           16
-#       18.92E+00   1.9E-02      0.31397021           17
-    """)
+        3.289E+00   1.1E-02      0.300               0          0.300       
+        3.403E+00   0.4E-02      0.060               0.1        0.100       
+        3.49E+00   8.4E-02      0.01                 0.2        0.040        
+        5.24E+00   1.1E-02      0.06159884           1.1       0.162
+        5.33E+00   0.8E-02      0.06159884           1.2       0.093
+        5.70E+00   3.5E-02      0.07050930           2         0.20   
+        6.029E+00   9.45E-03      0.20                3          0.0       
+        6.2123E+00   1.5E-02      0.77360526          3          1.130
+        6.2700E+00   4.1E-02      0.77360526          3          0.398
+        6.69E+00   7.0E-02      0.09797205           4         0.118  
+        7.42E+00  1.26E-01      0.23897256           5         0.023897256   
+        7.60E+00   4.4E-02      0.89279697           5         0.89279697   
+        7.85E+00   5.3E-02      0.86156776           5         1.18
+        8.33E+00   5.0E-02      0.25013986           6         0.160
+        8.61E+00   3.9E-02      0.64566928           7         0.563  
+        11.02E+00   5.0E-03      0.20000000           9         0.20000000  
+       11.242E+00   8.0E-03      1.29167980           9         1.29167980  
+       11.3572E+00   1.9E-02      1.04019180           9         1.04019180 
+       11.99E+00   4.5E-02      0.32429740           10        0.32429740   
+       12.62E+00   4.2E-02      0.84859132           11        0.84859132   
+       12.69E+00   1.3E-02      0.19136069           11        0.19136069   
+       13.48E+00   4.0E-02      0.21897772           12        0.21897772   
+       14.04E+00   1.6E-02      0.01000000           13        0.01000000   
+       14.19E+00   2.5E-02      0.17583134           14        0.17583134   
+     #  15.90E+00   2.0E-02      0.01376596           15        0.01376596  
+     #  16.45E+00   1.4E-02      0.42942265           16        0.42942265  
+     #  17.04E+00   6.5E-02      0.63617951           16        0.63617951  
+     # 17.375E+00   1.2E-02      0.29235229           16        0.29235229  
+     #  17.87E+00   1.6E-02      0.25877291           16        0.25877291  
+     #  18.92E+00   1.9E-02      0.31397021           17        0.31397021  
+    """
+    )
 
     import eazy.templates
 
     cafe_pah_info["FWHM"] = cafe_pah_info["GAMMA"] * cafe_pah_info["WAVE0"]
 
-    templ_wave = np.arange(1, 15, 0.003) * 1.e4
+    cafe_pah_info = cafe_pah_info[cafe_pah_info["WAVE0"] < 15]
+
+    if pah_groups:
+        group_indices = np.interp(
+            cafe_pah_info["WAVE0"],
+            group_wavelengths,
+            np.arange(len(group_wavelengths)),
+        ).astype(int)
+    else:
+        group_indices = np.arange(len(cafe_pah_info), dtype=int)
+
+    templ_wave = np.arange(*pah_wave_arange) * 1.0e4
 
     pah_templates = []
 
-    for row in cafe_pah_info:
-        utempl = utils.pah_line_template(
-            templ_wave,
-            center_um=row["WAVE0"],
-            fwhm=row["FWHM"]
-        )
-        
+    uni = utils.Unique(group_indices, verbose=False)
+
+    for ix in uni.values:
+        utempl = None
+
+        for row in cafe_pah_info[uni[ix]]:
+            utempl_i = utils.pah_line_template(
+                templ_wave, center_um=row["WAVE0"], fwhm=row["FWHM"]
+            )
+            utempl_i.flux *= (
+                row["FIT_PEAK"] ** pah_groups / utempl_i.flux.max()
+            )
+
+            if utempl is None:
+                utempl = utempl_i
+            else:
+                utempl.flux += utempl_i.flux
+
+        if pah_groups:
+            waves = cafe_pah_info[uni[ix]]["WAVE0"]
+            name = f"PAH-{waves.min():.1f}-{waves.max():.1f}"
+        else:
+            name = "PAH-{WAVE0:.2f}".format(**row)
+
+        # To flam
+        utempl.flux *= (utempl.wave / 8) ** -2
+
         templ = eazy.templates.Template(
             arrays=(
                 utempl.wave,
-                utempl.flux / np.trapz(utempl.flux, utempl.wave) * 1.e9
+                # utempl.flux / np.trapz(utempl.flux, utempl.wave) * 1.e9
+                utempl.flux / utempl.flux.max() * 1.0e9,
             ),
-            name="PAH-{WAVE0:.2f}".format(**row)
+            name=name,
         )
 
         pah_templates.append(templ)
@@ -3430,37 +3604,54 @@ def cafe_pah_templates():
 MID_IR_LINES = {
     "PaA": 1.87563,
     "PaB": 1.28217,
+    "PaG": 1.09412,
+    "HeI": 1.08321,
     "BrA": 4.05228,
     "BrB": 2.62588,
     "SiVII": 6.492,
-    "ArII-6.99": 6.985,
-    "NeVI": 7.652, 
-    "ArIII-8.99": 8.991,
-    "SIV": 10.5105,
+    "ArII-6.99": 6.9834,
+    "NeVI": 7.6522,
+    "ArIII-8.99": 8.9914,
+    "SIV": 10.5076,
 }
 
-def get_mir_lines(spec, z=0, orders=[1], velocity_sigma=100, scale_disp=1, lines=MID_IR_LINES, **kwargs):
+
+def get_mir_lines(
+    spec,
+    z=0,
+    orders=[1],
+    velocity_sigma=100,
+    scale_disp=1,
+    lines=MID_IR_LINES,
+    **kwargs,
+):
     """
     Return some common mid-IR lines
     """
     wave_range = (
-        spec["wave"][spec["valid"]].min(), spec["wave"][spec["valid"]].max()
+        spec["wave"][spec["valid"]].min(),
+        spec["wave"][spec["valid"]].max(),
     )
 
     line_models = []
     line_names = []
-    
+
     for i, ln in enumerate(lines):
         lwi = lines[ln] * (1 + z)
         if (lwi < wave_range[0]) | (lwi > wave_range[1]):
             continue
 
-        line_i = spec.fast_emission_line(
-            lwi, orders=orders,
-            velocity_sigma=velocity_sigma,
-            scale_disp=scale_disp,
-            **kwargs
-        ) / spec["to_flam"] / 1.e4
+        line_i = (
+            spec.fast_emission_line(
+                lwi,
+                orders=orders,
+                velocity_sigma=velocity_sigma,
+                scale_disp=scale_disp,
+                **kwargs,
+            )
+            / spec["to_flam"]
+            / 1.0e4
+        )
 
         line_models.append(line_i)
         line_names.append(ln)
@@ -3468,7 +3659,20 @@ def get_mir_lines(spec, z=0, orders=[1], velocity_sigma=100, scale_disp=1, lines
     return np.array(line_models), line_names
 
 
-def fit_mir_templates(spec, z=0, pah_templates=None, line_models=None, continuum_models=None, fitter="nnls", velocity_sigma=100, scale_disp=1, plot_unit="flam", err_col="full_err", write=True, **kwargs):
+def fit_mir_templates(
+    spec,
+    z=0,
+    pah_templates=None,
+    line_models=None,
+    continuum_models=None,
+    fitter="nnls",
+    velocity_sigma=100,
+    scale_disp=1,
+    plot_unit="flam",
+    err_col="full_err",
+    write=True,
+    **kwargs,
+):
     """
     Fit mid-IR templates to an LRS spectrum
     """
@@ -3478,25 +3682,31 @@ def fit_mir_templates(spec, z=0, pah_templates=None, line_models=None, continuum
         z = spec.meta["Z"]
 
     if pah_templates is None:
-        pah_templates = cafe_pah_templates()
+        pah_templates = cafe_pah_templates(**kwargs)
 
     pah_names = [t.name for t in pah_templates]
 
     if line_models is None:
         line_models, line_names = get_mir_lines(
-            spec, z=z,
+            spec,
+            z=z,
             velocity_sigma=velocity_sigma,
             scale_disp=scale_disp,
         )
 
-    pah_models = np.array([
-        spec.resample_eazy_template(
-            templ, z=z, orders=[1],
-            velocity_sigma=velocity_sigma,
-            scale_disp=scale_disp,
-        ) * (1 + z)
-        for templ in pah_templates
-    ])
+    pah_models = np.array(
+        [
+            spec.resample_eazy_template(
+                templ,
+                z=z,
+                orders=[1],
+                velocity_sigma=velocity_sigma,
+                scale_disp=scale_disp,
+            )
+            * (1 + z)
+            for templ in pah_templates
+        ]
+    )
 
     model_list = [pah_models, line_models]
 
@@ -3511,9 +3721,9 @@ def fit_mir_templates(spec, z=0, pah_templates=None, line_models=None, continuum
     ok = np.isfinite(yx)
 
     if fitter == "nnls":
-        lsq = nnls(Ax.T[ok,:], yx[ok])
+        lsq = nnls(Ax.T[ok, :], yx[ok])
     else:
-        lsq = np.linalg.lstsq(Ax.T[ok,:], yx[ok], rcond=None)
+        lsq = np.linalg.lstsq(Ax.T[ok, :], yx[ok], rcond=None)
 
     model = A.T.dot(lsq[0])
     chi = model / spec[err_col] - yx
@@ -3524,19 +3734,17 @@ def fit_mir_templates(spec, z=0, pah_templates=None, line_models=None, continuum
 
         ax = fig.axes[2]
 
-        to_unit = spec["to_flam"]**(plot_unit == "flam")
+        to_unit = spec["to_flam"] ** (plot_unit == "flam")
         ax.plot(
             np.arange(spec.NSPEC),
             model * to_unit,
-            color="magenta", label="PAH model",
-            lw=3, alpha=0.3
+            color="magenta",
+            label="PAH model",
+            lw=3,
+            alpha=0.3,
         )
 
-        _ = ax.plot(
-            np.arange(spec.NSPEC),
-            (A * to_unit).T * lsq[0],
-            alpha=0.3
-        )
+        _ = ax.plot(np.arange(spec.NSPEC), (A * to_unit).T * lsq[0], alpha=0.3)
 
         if write:
             fig.savefig(f"{spec.meta['SRCNAME']}_lrs.spec.{plot_unit}.png")
@@ -3546,7 +3754,7 @@ def fit_mir_templates(spec, z=0, pah_templates=None, line_models=None, continuum
 
     template_names = pah_names + line_names
     line_fluxes = {
-        name: lsq[0][i]*1.e-20 for i, name in enumerate(template_names)
+        name: lsq[0][i] * 1.0e-20 for i, name in enumerate(template_names)
     }
 
     result = {
@@ -3562,7 +3770,20 @@ def fit_mir_templates(spec, z=0, pah_templates=None, line_models=None, continuum
     return result
 
 
-def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah_templates=None, velocity_sigma=100, scale_disp=1, fitter="nnls", zfig=None, make_plots=True, write=True, **kwargs):
+def fit_lrs_redshift(
+    spec,
+    zlim=(0.1, 0.6),
+    dz=0.002,
+    continuum_models=None,
+    pah_templates=None,
+    velocity_sigma=100,
+    scale_disp=1,
+    fitter="nnls",
+    zfig=None,
+    make_plots=True,
+    write=True,
+    **kwargs,
+):
     """
     Fit LRS redshift with PAH templates
     """
@@ -3570,12 +3791,12 @@ def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah
     import matplotlib.pyplot as plt
 
     if pah_templates is None:
-        pah_templates = cafe_pah_templates()
+        pah_templates = cafe_pah_templates(**kwargs)
 
     zstep = utils.log_zgrid(zlim, dz)
-    chi2 = zstep * 0.
+    chi2 = zstep * 0.0
     chi2_min = np.inf
-    
+
     for zi, z in tqdm(enumerate(zstep)):
         result = fit_mir_templates(
             spec,
@@ -3587,7 +3808,7 @@ def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah
             scale_disp=scale_disp,
             plot_unit=None,
         )
-    
+
         chi2[zi] = result["chi2"]
 
     zbest = zstep[np.argmin(chi2)]
@@ -3607,14 +3828,13 @@ def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah
     result["chi2"] = chi2
     result["zbest"] = zbest
 
-    spec.meta['Z'] = result["zbest"]
-    for k in result['line_fluxes']:
-        spec.meta[f'LINE-{k}'] = result["line_fluxes"][k]
+    spec.meta["Z"] = result["zbest"]
+    for k in result["line_fluxes"]:
+        spec.meta[f"LINE-{k}"] = result["line_fluxes"][k]
 
     if write:
         with pyfits.open(
-            f"{spec.meta['SRCNAME']}_lrs.spec.fits",
-            mode="update"
+            f"{spec.meta['SRCNAME']}_lrs.spec.fits", mode="update"
         ) as im:
             for k in spec.meta:
                 if k.lower().endswith("unit"):
@@ -3626,7 +3846,7 @@ def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah
 
     if make_plots:
         if zfig is None:
-            zfig, ax = plt.subplots(1,1,figsize=(8,4))
+            zfig, ax = plt.subplots(1, 1, figsize=(8, 4))
             new_fig = True
         else:
             ax = zfig.axes[0]
@@ -3635,33 +3855,40 @@ def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah
         chi_plot = (chi2 - chi2.min()) / (chi2.min() / spec["valid"].sum())
         ax.plot(zstep, chi_plot, color="0.5", alpha=0.5)
         ax.set_ylim(-0.05 * chi_plot.max(), chi_plot.max())
-        
+
         ylim = ax.get_ylim()
-        
+
         ax.vlines(zbest, *ylim, color="magenta", linestyle="--", alpha=0.5)
-        
+
         ax.text(
-            zbest, np.interp(0.98, (0, 1), ylim), f"z = {zbest:.4f}",
-            ha="center", va="top",
-            bbox={"fc": "w", "ec": "None", "alpha": 0.8}
+            zbest,
+            np.interp(0.98, (0, 1), ylim),
+            f"z = {zbest:.4f}",
+            ha="center",
+            va="top",
+            bbox={"fc": "w", "ec": "None", "alpha": 0.8},
         )
 
         ax.text(
-            0.02, 0.02,
+            0.02,
+            0.02,
             r"$\Delta z~/~(1 + z)$ = " + f"{dz:.0e}",
-            ha="left", va="bottom",
+            ha="left",
+            va="bottom",
             transform=ax.transAxes,
-            bbox={"fc": "w", "ec": "None", "alpha": 0.8}
+            bbox={"fc": "w", "ec": "None", "alpha": 0.8},
         )
 
         ax.text(
-            0.98, 0.02,
+            0.98,
+            0.02,
             spec.meta["SRCNAME"],
-            ha="right", va="bottom",
+            ha="right",
+            va="bottom",
             transform=ax.transAxes,
-            bbox={"fc": "w", "ec": "None", "alpha": 0.8}
+            bbox={"fc": "w", "ec": "None", "alpha": 0.8},
         )
-        
+
         ax.grid()
         ax.set_xlabel("z")
         ax.set_ylabel(r"$\Delta \chi^2$")
@@ -3671,16 +3898,18 @@ def fit_lrs_redshift(spec, zlim=(0.1, 0.6), dz=0.002, continuum_models=None, pah
             zfig.tight_layout(pad=1)
 
         result["zfig"] = zfig
-        
+
         if write:
             zfig.savefig(f"{spec.meta['SRCNAME']}_lrs.spec.zfit.png")
-        
+
     return result
 
 
 ###########################
 ##### old below here
-def deprecated_lrs_slitless_data_cutout(data, wcs, ra, dec, verbose=False, xoffset=None, pad=512, slit_model=None):
+def deprecated_lrs_slitless_data_cutout(
+    data, wcs, ra, dec, verbose=False, xoffset=None, pad=512, slit_model=None
+):
     """ """
 
     if slit_model is None:
@@ -3765,4 +3994,3 @@ def deprecated_lrs_slitless_data_cutout(data, wcs, ra, dec, verbose=False, xoffs
 
 
 # x_slice_offset, y_slice_offset
-
