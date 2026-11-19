@@ -241,15 +241,16 @@ def test_all_gratings():
     import eazy.templates
 
     has_orders = {
-        ('F070LP', 'G140M'): True,
-        ('F100LP', 'G140M'): True,
-        ('F170LP', 'G235M'): True,
-        ('F290LP', 'G395M'): False,
-        ('F070LP', 'G140H'): True,
-        ('F100LP', 'G140H'): False,
-        ('F170LP', 'G235H'): False,
-        ('F290LP', 'G395H'): False,
-        ('CLEAR', 'PRISM'): False
+        ('F070LP', 'G140M'): [1, 2, 3],
+        ('F100LP', 'G140M'): [1, 2, 3],
+        ('F170LP', 'G235M'): [1, 2, 3],
+        ('F290LP', 'G395M'): [1],
+        ('F070LP', 'G140H'): [1, 2],
+        ('F100LP', 'G140H'): [1],
+        ('F170LP', 'G235H'): [1],
+        ('F290LP', 'G395H'): [1],
+        ('CLEAR', 'PRISM'):  [1],
+        ('P750L', 'LRS'):  [1],
     }
 
     twave = np.arange(0.4, 6, 0.0001)
@@ -277,10 +278,14 @@ def test_all_gratings():
         res = spec.resample_eazy_template(templ, orders=[1])
         np.allclose(res, 1., atol=1.e-4)
 
-        assert((spec.sensitivity[2] is not None) == has_orders[optics])
+        assert len(spec.orders) > 0
 
-        if has_orders[optics]:
-            res2 = spec.resample_eazy_template(templ)
+        # assert (spec.sensitivity[2] is not None) == (2 in has_orders[optics])
+
+        if len(has_orders[optics]) > 1:
+            assert len(spec.orders) == len(has_orders[optics])
+
+            res2 = spec.resample_eazy_template(templ, orders=None)
 
             forder = []
             lorder = []

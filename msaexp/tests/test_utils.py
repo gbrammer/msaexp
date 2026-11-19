@@ -37,6 +37,9 @@ def test_resolution_curves():
 
         wgrid = utils.get_standard_wavelength_grid(gr)
 
+        if gr in ["lrs"]:
+            continue
+
         for grating in [gr.upper(), gr.lower()]:
             # calculate grid internally
             R = utils.get_default_resolution_curve(

@@ -399,6 +399,7 @@ GRATING_LIMITS = {
     "g395h": [2.8, 5.3, 0.000666],
     "grismr": [2.5, 5.1, 20.0 / 1.0e4],
     "grismc": [2.5, 5.1, 20.0 / 1.0e4],
+    "lrs": [3.5, 14.0, 0.013],
 }
 
 
@@ -434,6 +435,7 @@ def get_standard_wavelength_grid(
     target_waves : array
         Target wavelength grid
     """
+    from ..cloud import lrs
 
     if grating.lower() not in grating_limits:
         return None
@@ -451,6 +453,11 @@ def get_standard_wavelength_grid(
             target_waves.append(target_waves[-1] + dw / sample)
 
         target_waves = np.array(target_waves)
+
+    elif (grating.lower() == "lrs") & free_prism:
+        ref = lrs.load_lrs_reference_spectrum()
+        target_waves = ref["wave"].astype(float)
+
     else:
         if log_step:
             # Step is dlam/l0/sample where l0 is the center of the grid
@@ -2189,7 +2196,14 @@ def drizzled_hdu_figure(
                 1.094e4,
                 1.282e4,
                 1.875e4,
+                4.052e4, # BrA
                 1.083e4,
+                3.289e4, # PAH e.g., LRS
+                5.7e4,
+                6.212e4,
+                6.983e4, # ArII
+                7.85e4,
+                8.61e4,
             ],
             [
                 "purple",
@@ -2204,7 +2218,14 @@ def drizzled_hdu_figure(
                 cc["pink"],
                 cc["pink"],
                 cc["pink"],
+                cc["pink"],
                 cc["orange"],
+                "0.7",
+                "0.7",
+                "0.7",
+                "olive",
+                "0.7",
+                "0.7",
             ],
         ):
             wz = w * (1 + z) / 1.0e4
@@ -2212,18 +2233,24 @@ def drizzled_hdu_figure(
             # dw = 0.01*(sp['wave'].max()-sp['wave'].min())
 
             dw = 0.005 * len(sp["wave"])
-            wx = np.interp(wz, sp["wave"], np.arange(len(sp)))
-
-            axes[1].fill_between(
-                [wx - dw, wx + dw],
-                # [0, 0],
-                # [100, 100],
-                [-0.1*ymax, -0.1*ymax],
-                [ymax, ymax],
-                color=c,
-                alpha=0.07,
-                zorder=-100,
+            wx = np.interp(
+                wz,
+                sp["wave"],
+                np.arange(len(sp)),
+                left=np.nan, right=np.nan
             )
+
+            if np.isfinite(wx):
+                axes[1].fill_between(
+                    [wx - dw, wx + dw],
+                    # [0, 0],
+                    # [100, 100],
+                    [-0.1*ymax, -0.1*ymax],
+                    [ymax, ymax],
+                    color=c,
+                    alpha=0.07,
+                    zorder=-100,
+                )
 
         # Rest ticks on top
         wrest = np.arange(0.1, 1.91, 0.05)

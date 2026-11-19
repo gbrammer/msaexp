@@ -308,6 +308,19 @@ class SpectrumSampler(object):
         else:
             return ""
 
+    @property
+    def orders(self):
+        """
+        Spectral orders (keys of ``sensitivity`` attribute)
+        """
+        orders_ = []
+        for order in self.sensitivity:
+            if self.sensitivity[order] is not None:
+                orders_.append(order)
+
+        return orders_
+
+
     def initialize_emission_line(self, nsamp=64):
         """
         Initialize emission line
@@ -400,7 +413,7 @@ class SpectrumSampler(object):
         fnu=True,
         nsig=4,
         with_igm=False,
-        orders=[1, 2, 3, 4],
+        orders=None,
         verbose=False,
         **kwargs,
     ):
@@ -429,9 +442,10 @@ class SpectrumSampler(object):
         nsig : int
             Number of standard deviations to sample for the convolution
 
-        orders : list
-            List of spectral orders to include if the sensitivity curves have been
-            read along with the spectrum.
+        orders : list, None
+            List of spectral orders to include if the sensitivity curves have
+            been read along with the spectrum.  If not provided, defaults to
+            the `msaexp.spectrum.SpectrumSampler.orders` property.
 
         Returns
         -------
@@ -457,6 +471,9 @@ class SpectrumSampler(object):
             igmz = 1.0
 
         res = np.zeros_like(self.spec_wobs)
+
+        if orders is None:
+            orders = self.orders
 
         for order in orders:
             if order not in self.sensitivity:
@@ -494,12 +511,16 @@ class SpectrumSampler(object):
                 res_unc * self.spec["to_flam"]**(fnu is False)
             )
 
-    def smooth_velocity(self, velocity_sigma=500., unc="err", full_object=False, full_sliced=False, mask="valid", orders=[1], **kwargs):
+
+    def smooth_velocity(self, velocity_sigma=500., unc="err", full_object=False, full_sliced=False, mask="valid", orders=None, **kwargs):
         """
         Smooth spectrum in velocity space
         """
         import copy
         import eazy.templates
+
+        if orders is None:
+            orders = self.orders
 
         if isinstance(mask, str):
             if mask == "valid":
@@ -741,13 +762,14 @@ class SpectrumSampler(object):
 
         return res * line_flux / line_um
 
+
     def fast_emission_line(
         self,
         line_um,
         line_flux=1,
         scale_disp=1.0,
         velocity_sigma=100.0,
-        orders=[1, 2, 3, 4],
+        orders=None,
         lorentz=False,
         verbose=False,
         **kwargs,
@@ -771,8 +793,9 @@ class SpectrumSampler(object):
             Velocity sigma width in km/s
 
         orders : list
-            List of spectral orders to include if the sensitivity curves have been
-            read along with the spectrum.
+            List of spectral orders to include if the sensitivity curves have
+            been read along with the spectrum.  If ``None``, then
+            ``self.orders``.
 
         lorentz : bool
             Generate a Lorentzian function instead of a Gaussian
@@ -783,6 +806,9 @@ class SpectrumSampler(object):
             Gaussian emission line sampled at the spectrum wavelengths
         """
         res = np.zeros_like(self.spec_wobs)
+
+        if orders is None:
+            orders = self.orders
 
         for order in orders:
             if order not in self.sensitivity:
@@ -809,6 +835,7 @@ class SpectrumSampler(object):
 
         return res
 
+
     def bspline_array(
         self,
         nspline=13,
@@ -818,7 +845,7 @@ class SpectrumSampler(object):
         log=False,
         by_wavelength=False,
         get_matrix=True,
-        orders=[1, 2, 3, 4],
+        orders=None,
     ):
         """
         Initialize bspline templates for continuum fits
@@ -844,6 +871,9 @@ class SpectrumSampler(object):
             bspline data, depending on ``get_matrix``
 
         """
+        if orders is None:
+            orders = self.orders
+
         if by_wavelength:
             if step_size is not None:
                 nspline = np.log(
@@ -1152,7 +1182,7 @@ class SpectrumSampler(object):
         model_comp=None,
         nsig=5,
         scale_disp=1.3,
-        orders=[1, 2, 3, 4],
+        orders=None,
         **kwargs,
     ):
         """
@@ -1160,6 +1190,9 @@ class SpectrumSampler(object):
 
         See ``msaexp.spectrum.resample_bagpipes_model``.
         """
+
+        if orders is None:
+            orders = self.orders
 
         if "scale_disp" in model_comp:
             scale_disp = model_comp["scale_disp"]
