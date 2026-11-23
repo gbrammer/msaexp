@@ -1,6 +1,7 @@
 import os
 import copy
 import glob
+from packaging.version import Version
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,7 +11,7 @@ from .. import utils
 from .. import slit_combine
 from .. import spectrum
 
-if jwst.__version__ < "100.16":
+if Version(jwst.__version__) < Version("100.16"):
     TARGETS = ["1345_933"]
 else:
     TARGETS = ["4233_19489"]
@@ -101,7 +102,9 @@ def test_slit_group():
     """
     os.chdir(data_path())
 
-    files = glob.glob(f"*phot.*{TARGETS[0]}.fits")
+    KEY = TARGETS[0]
+
+    files = glob.glob(f"*phot.*{KEY}.fits")
     files.sort()
 
     default_kwargs = dict(
@@ -169,16 +172,29 @@ def test_slit_group():
     assert obj.N == len(files)
     assert len(obj.slits) == obj.N
 
-    assert obj.sh == (25, 341)
-
     assert obj.filter == "CLEAR"
     assert obj.grating == "PRISM"
     assert len(obj.exptime) == obj.N
-    assert obj.exptime.sum() == 3063.666
 
-    assert np.allclose(obj.slit_pixel_scale, 0.1044, rtol=1.0e-2)
-    assert np.allclose(obj.slit_shutter_scale, 0.2283, rtol=1.0e-2)
-    assert np.allclose(obj.source_ypixel_position, 0.5079880, rtol=1.0e-3)
+    if KEY == "1345_933":
+        assert obj.sh == (25, 341)
+        assert obj.exptime.sum() == 3063.666
+        assert np.allclose(obj.slit_pixel_scale, 0.1044, rtol=1.0e-2)
+        assert np.allclose(obj.slit_shutter_scale, 0.2283, rtol=1.0e-2)
+        assert np.allclose(obj.source_ypixel_position, 0.5079880, rtol=1.0e-3)
+        assert np.abs(obj.mask.sum() - (13967 - 82)) < 64
+        assert np.allclose(np.nanmin(obj.wave), 1.3448, rtol=1.0e-2)
+        assert np.allclose(np.nanmax(obj.wave), 5.3821, rtol=1.0e-2)
+
+    elif KEY == "4233_19489":
+        assert obj.sh == (24, 433)
+        assert obj.exptime.sum() == 2844.834
+        assert np.allclose(obj.slit_pixel_scale, 0.10529, rtol=1.0e-2)
+        assert np.allclose(obj.slit_shutter_scale, 0.2272, rtol=1.0e-2)
+        assert np.allclose(obj.source_ypixel_position, -0.16553, rtol=1.0e-3)
+        assert np.abs(obj.mask.sum() - (17094)) < 64
+        assert np.allclose(np.nanmin(obj.wave), 0.546234, rtol=1.0e-2)
+        assert np.allclose(np.nanmax(obj.wave), 5.3821, rtol=1.0e-2)
 
     assert obj.calc_reference_exposure == 2
 
@@ -198,8 +214,6 @@ def test_slit_group():
         "yslit",
     ]:
         assert getattr(obj, attr).shape == (obj.N, obj.sh[0] * obj.sh[1])
-
-    assert np.abs(obj.mask.sum() - (13967 - 82)) < 64
 
     meta = {
         "diffs": True,
@@ -236,9 +250,6 @@ def test_slit_group():
             assert obj.meta[k] == meta[k]
         else:
             assert np.allclose(obj.meta[k], meta[k], rtol=1.e-2)
-
-    assert np.allclose(np.nanmin(obj.wave), 1.3448, rtol=1.0e-2)
-    assert np.allclose(np.nanmax(obj.wave), 5.3821, rtol=1.0e-2)
 
     assert np.nanmin(obj.bar[obj.mask]) > default_kwargs["min_bar"]
 
@@ -319,7 +330,10 @@ def test_slit_group():
 
     # Read global sky
     obj.get_global_sky(sky_file="read")
-    assert obj.meta["sky_file"] == "jw01345062001_sky.csv"
+    if KEY == "1345_933":
+        assert obj.meta["sky_file"] == "jw01345062001_sky.csv"
+    elif KEY == "4233_19489":
+        assert obj.meta["sky_file"] == "jw04233005001_sky.csv"
 
     obj.apply_normalization_correction()
 
