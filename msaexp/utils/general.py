@@ -3175,14 +3175,18 @@ def get_slit_data(slit, wrap=True, dy=0, bar_dy="auto", **kwargs):
     sh = wave.shape
 
     shutter_scale = slit_shutter_scale(slit)
-    num_shutters = np.minimum(len(slit.shutter_state), 3)
 
     shutter_y = (slit_frame_y / shutter_scale + dy) / 5.0
 
     if slit.meta.exposure.type == "NRS_FIXEDSLIT":
+        num_shutters = 5
+
         bar = np.ones_like(wave).reshape(sh)
         bar_wrapped = False
     else:
+
+        num_shutters = np.minimum(len(slit.shutter_state), 3)
+
         if bar_dy in ["auto"]:
             msk = np.isfinite(wave + slit.data)
             bar_dy = get_bar_shutter_offset(
@@ -3218,7 +3222,7 @@ def get_slit_data(slit, wrap=True, dy=0, bar_dy="auto", **kwargs):
         "bar_dy": bar_dy,
         "shutter_scale": shutter_scale,
         "shutter_state": slit.shutter_state,
-        "num_shutters": len(slit.shutter_state),
+        "num_shutters": num_shutters,
         "bar_wrapped": bar_wrapped,
     }
 

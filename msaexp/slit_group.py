@@ -135,7 +135,11 @@ class MultiSlitGroup:
 
             if h["EXTNAME"] == "SCI":
                 self.source_name.append(h["SRCNAME"])
-                self.slit_id.append(h["SLITID"])
+                if "SLITID" in h:
+                    self.slit_id.append(h["SLITID"])
+                else:
+                    self.slit_id.append(h["SLTNAME"])
+
                 self.extver.append(h["EXTVER"])
 
     def get_slit(self, idx=1, source_name=None, slit_id=None):
@@ -317,7 +321,10 @@ class NirspecCalibrated:
                 )
 
                 print("write file")
-                photom.write(self.photom_file)
+                # photom.write(self.photom_file)
+                pipeline_extended.datamodel_save(
+                    photom, self.photom_file, overwrite=True
+                )
 
         self.fs_photom_file = file.replace("rate.fits", "fs_photom.fits")
 
@@ -361,7 +368,10 @@ class NirspecCalibrated:
                     _im[0].header.pop("FXD_SLIT")
                     _im.flush()
 
-            fs_photom.write(self.fs_photom_file)
+            # fs_photom.write(self.fs_photom_file)
+            pipeline_extended.datamodel_save(
+                fs_photom, self.fs_photom_file, overwrite=True
+            )
 
         self.photom = photom
         self.fs_photom = fs_photom
@@ -428,7 +438,10 @@ class NirspecCalibrated:
                 utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
                 slit_model = jwst.datamodels.SlitModel(_slit.instance)
-                slit_model.write(slit_file, overwrite=True)
+                # slit_model.write(slit_file, overwrite=True)
+                pipeline_extended.datamodel_save(
+                    slit_model, slit_file, overwrite=True
+                )
 
                 with pyfits.open(slit_file, mode="update") as im:
                     im[0].header["NOFLAT"] = (
@@ -568,7 +581,9 @@ class NirspecCalibrated:
                 fslit = slit  # photom.slits[i]
                 fslit_data = fslit.data * 1
                 if hasattr(fslit, "barshadow"):
-                    if fslit.barshadow.shape[0] == 0:
+                    if fslit.barshadow is None:
+                        fslit_bar = np.ones_like(fslit_data)
+                    elif fslit.barshadow.shape[0] == 0:
                         fslit_bar = np.ones_like(fslit_data)
                     else:
                         fslit_bar = fslit.barshadow * 1
@@ -580,7 +595,9 @@ class NirspecCalibrated:
                 else:
                     path_data = fslit.pathloss_point
 
-                if path_data.shape[0] == 0:
+                if path_data is None:
+                    fslit_path = np.ones_like(fslit_data)
+                elif path_data.shape[0] == 0:
                     fslit_path = np.ones_like(fslit_data)
                 else:
                     fslit_path = path_data * 1
@@ -850,7 +867,12 @@ class NirspecCalibrated:
         if ("rate.fits" in self.file) & (suffix is not None):
             ref_file = self.file.replace("rate.fits", f"{suffix}.fits")
             print(ref_file)
-            self.global_background_spectrum.write(ref_file, overwrite=True)
+            # self.global_background_spectrum.write(ref_file, overwrite=True)
+            pipeline_extended.datamodel_save(
+                self.global_background_spectrum,
+                ref_file,
+                overwrite=True
+            )
 
         return self.global_background_spectrum
 

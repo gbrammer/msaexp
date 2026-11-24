@@ -4,6 +4,7 @@ Extend CRDS reference files for fixed-slit observations
 
 import os
 import time
+from packaging.version import Version
 
 import numpy as np
 import astropy.io.fits as pyfits
@@ -24,7 +25,14 @@ from jwst.assign_wcs.assign_wcs import load_wcs
 from jwst.flatfield import flat_field
 import jwst.photom.photom
 
+JWST_VERSION3 = Version(jwst.__version__) >= Version("3.0")
+
 from grizli import utils
+try:
+    from grizli.jwst_utils import datamodel_from_hdulist
+except ImportError:
+    datamodel_from_hdulist = jwst.datamodels.open
+
 import msaexp.utils as msautils
 from .msa import slit_best_source_alias
 from . import pipeline
@@ -85,6 +93,18 @@ def step_reference_files(step, input_model):
 VERBOSITY = True
 
 
+def datamodel_save(model, filename, overwrite=True, **kwargs):
+    """
+    Wrapper around older `write` and newer `save` methods of jwst.datamodels
+    objects
+    """
+    if hasattr(model, "write"):
+        model.write(filename, overwrite=overwrite, **kwargs)
+    else:
+        # Not sure what overwrite method is of save!
+        model.save(filename, **kwargs)
+
+
 def extend_wavelengthrange(
     ref_file="jwst_nirspec_wavelengthrange_0008.asdf", ranges=EXTENDED_RANGES
 ):
@@ -125,7 +145,7 @@ def extend_wavelengthrange(
         i = waverange.waverange_selector.index(k)
         waverange.wavelengthrange[i] = [v * 1e-6 for v in ranges[k]]
 
-    new_waverange = ref_file.replace(".asdf", "_ext.asdf")
+    new_waverange_file = ref_file.replace(".asdf", "_ext.asdf")
 
     waverange.meta.author = "G. Brammer"
     waverange.meta.date = utils.nowtime().iso.replace(" ", "T")
@@ -133,7 +153,7 @@ def extend_wavelengthrange(
 
     so = np.argsort(waverange.waverange_selector)
 
-    msg = f"New wavelength range file {new_waverange}"
+    msg = f"New wavelength range file {new_waverange_file}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
     for i in so:
@@ -164,7 +184,12 @@ def extend_wavelengthrange(
         msg = f"{i:>2} {waverange.waverange_selector[i]:>16} {waverange.order[i]:>3}   {waverange.wavelengthrange[i][0]*1.e6:.2f}  -  {waverange.wavelengthrange[i][1]*1.e6:.2f}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    waverange.write(new_waverange)
+    # if hasattr(waverange, "write"):
+    #     waverange.write(new_waverange_file)
+    # else:
+    #     waverange.save(new_waverange_file)
+    datamodel_save(waverange, new_waverange_file, overwrite=True)
+
     waverange.close()
 
     return True
@@ -375,9 +400,10 @@ def extend_sflat(
             verbose=True,
         )
 
-    if len(sf.wavelength) > 0:
-        sf.wavelength[0] = (full_range[0],)
-        sf.wavelength[-1] = (full_range[-1],)
+    if sf.wavelength is not None:
+        if len(sf.wavelength) > 0:
+            sf.wavelength[0] = (full_range[0],)
+            sf.wavelength[-1] = (full_range[-1],)
 
     # Make flat table
     sft = astropy.table.Table(sf.flat_table)
@@ -389,10 +415,11 @@ def extend_sflat(
     nelem = len(sft[0]["wavelength"])
     if nelem > 50000:
         nelem = 1024
-        head_ = sf.extra_fits.FAST_VARIATION.header
-        for i in range(len(head_)):
-            head_[i][1] = f"({nelem})"  # wierd format
-            # print(head_[i])
+        if hasattr(sf.extra_fits, "FAST_VARIATION"):
+            head_ = sf.extra_fits.FAST_VARIATION.header
+            for i in range(len(head_)):
+                head_[i][1] = f"({nelem})"  # wierd format
+                # print(head_[i])
 
     wave = np.logspace(*(np.log10(full_range)), nelem)
 
@@ -703,25 +730,27 @@ def assign_wcs_with_extended(dm, file=None, ranges=EXTENDED_RANGES, **kwargs):
     ##############
     # AssignWCS with extended wavelength range
     wcs_reference_files = step_reference_files(wstep, dm)
-    new_waverange = os.path.basename(wcs_reference_files["wavelengthrange"])
-    new_waverange = new_waverange.replace(".asdf", "_ext.asdf")
+    new_waverange_file = os.path.basename(
+        wcs_reference_files["wavelengthrange"]
+    )
+    new_waverange_file = new_waverange_file.replace(".asdf", "_ext.asdf")
 
-    msg = f"msaexp.pipeline_extended.assign_wcs_with_extended {new_waverange}"
+    msg = f"msaexp.pipeline_extended.assign_wcs_with_extended {new_waverange_file}"
     utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
-    if not os.path.exists(new_waverange):
+    if not os.path.exists(new_waverange_file):
         extend_wavelengthrange(
             ref_file=os.path.basename(wcs_reference_files["wavelengthrange"]),
             ranges=ranges,
         )
 
     # Use new reference
-    wcs_reference_files["wavelengthrange"] = new_waverange
+    wcs_reference_files["wavelengthrange"] = new_waverange_file
     # slit_y_range = [wstep.slit_y_low, wstep.slit_y_high]
     try:
         # with_wcs = load_wcs(dm, wcs_reference_files, slit_y_range)
-        # with_wcs = wstep.call(dm, override_wavelengthrange=new_waverange)
-        wstep.override_wavelengthrange = new_waverange
+        # with_wcs = wstep.call(dm, override_wavelengthrange=new_waverange_file)
+        wstep.override_wavelengthrange = new_waverange_file
         with_wcs = wstep.run(dm)
 
     except NoDataOnDetectorError:
@@ -839,7 +868,7 @@ def run_pipeline(
     # Mask zeroth orders
     if mask_zeroth_kwargs is not None:
         with pyfits.open(file, mode="update") as hdul:
-            with jwst.datamodels.open(hdul) as input_model:
+            with datamodel_from_hdulist(hdul) as input_model:
                 dq, slits_, bounding_boxes = zeroth_order_mask(
                     input_model, **mask_zeroth_kwargs
                 )
@@ -870,13 +899,13 @@ def run_pipeline(
     with jwst.datamodels.open(file) as dm:
 
         wcs_reference_files = step_reference_files(wstep, dm)
-        new_waverange = os.path.basename(
+        new_waverange_file = os.path.basename(
             wcs_reference_files["wavelengthrange"]
         )
-        new_waverange = new_waverange.replace(".asdf", "_ext.asdf")
+        new_waverange_file = new_waverange_file.replace(".asdf", "_ext.asdf")
 
-        print(f"extend_wavelengthrange: {new_waverange}")
-        if not os.path.exists(new_waverange):
+        print(f"extend_wavelengthrange: {new_waverange_file}")
+        if not os.path.exists(new_waverange_file):
             extend_wavelengthrange(
                 ref_file=os.path.basename(
                     wcs_reference_files["wavelengthrange"]
@@ -885,11 +914,11 @@ def run_pipeline(
             )
 
         # Use new reference
-        wcs_reference_files["wavelengthrange"] = new_waverange
+        wcs_reference_files["wavelengthrange"] = new_waverange_file
         # slit_y_range = [wstep.slit_y_low, wstep.slit_y_high]
         try:
             # with_wcs = load_wcs(dm, wcs_reference_files, slit_y_range)
-            wstep.override_wavelengthrange = new_waverange
+            wstep.override_wavelengthrange = new_waverange_file
             with_wcs = wstep.run(dm)
         except NoDataOnDetectorError:
             msg = f"{file} No open slits found to work on"
@@ -1017,7 +1046,8 @@ def run_pipeline(
                     log_prefix=file,
                 )
 
-            ff.write(new_fflat_filename, overwrite=True)
+            # ff.write(new_fflat_filename, overwrite=True)
+            datamodel_save(ff, new_fflat_filename, overwrite=True)
 
         flat_reference_files["fflat"] = new_fflat_filename
 
@@ -1036,7 +1066,8 @@ def run_pipeline(
                 full_range=full_range,
                 log_prefix=file,
             )
-            sf.write(new_sflat_filename, overwrite=True)
+            # sf.write(new_sflat_filename, overwrite=True)
+            datamodel_save(sf, new_sflat_filename, overwrite=True)
 
         flat_reference_files["sflat"] = new_sflat_filename
 
@@ -1061,7 +1092,8 @@ def run_pipeline(
                 log_prefix=file,
             )
 
-            df.write(new_dflat_filename, overwrite=True)
+            # df.write(new_dflat_filename, overwrite=True)
+            datamodel_save(df, new_dflat_filename, overwrite=True)
 
         flat_reference_files["dflat"] = new_dflat_filename
 
@@ -1171,7 +1203,8 @@ def run_pipeline(
 
         if not os.path.exists(new_phot_filename):
             pref = extend_photom(phot_filename, ranges=ranges)
-            pref.write(new_phot_filename, overwrite=True)
+            # pref.write(new_phot_filename, overwrite=True)
+            datamodel_save(pref, new_phot_filename, overwrite=True)
 
         # Apply photom
         phot_step.override_photom = new_phot_filename
@@ -1207,7 +1240,8 @@ def run_pipeline(
         cal_file = file.replace("_rate.fits", "_cal.fits")
         msg = f"{file} write calibrated IFU exposure cal_file"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-        result.write(cal_file, overwrite=True)
+        # result.write(cal_file, overwrite=True)
+        datamodel_save(result, cal_file, overwrite=True)
 
     elif write_output:
         if all_slits:
@@ -1242,7 +1276,8 @@ def run_pipeline(
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
             slit_model = jwst.datamodels.SlitModel(_slit.instance)
-            slit_model.write(slit_file, overwrite=True)
+            # slit_model.write(slit_file, overwrite=True)
+            datamodel_save(slit_model, slit_file, overwrite=True)
 
             with pyfits.open(slit_file, mode="update") as im:
                 im[0].header["NOFLAT"] = (
