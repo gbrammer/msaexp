@@ -321,7 +321,7 @@ class NirspecCalibrated:
                 )
 
                 print("write file")
-                # photom.write(self.photom_file)
+
                 pipeline_extended.datamodel_save(
                     photom, self.photom_file, overwrite=True
                 )
@@ -368,7 +368,6 @@ class NirspecCalibrated:
                     _im[0].header.pop("FXD_SLIT")
                     _im.flush()
 
-            # fs_photom.write(self.fs_photom_file)
             pipeline_extended.datamodel_save(
                 fs_photom, self.fs_photom_file, overwrite=True
             )
@@ -438,7 +437,7 @@ class NirspecCalibrated:
                 utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
                 slit_model = jwst.datamodels.SlitModel(_slit.instance)
-                # slit_model.write(slit_file, overwrite=True)
+
                 pipeline_extended.datamodel_save(
                     slit_model, slit_file, overwrite=True
                 )
@@ -867,7 +866,7 @@ class NirspecCalibrated:
         if ("rate.fits" in self.file) & (suffix is not None):
             ref_file = self.file.replace("rate.fits", f"{suffix}.fits")
             print(ref_file)
-            # self.global_background_spectrum.write(ref_file, overwrite=True)
+
             pipeline_extended.datamodel_save(
                 self.global_background_spectrum,
                 ref_file,

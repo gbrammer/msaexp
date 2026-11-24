@@ -1092,7 +1092,6 @@ def run_pipeline(
                 log_prefix=file,
             )
 
-            # df.write(new_dflat_filename, overwrite=True)
             datamodel_save(df, new_dflat_filename, overwrite=True)
 
         flat_reference_files["dflat"] = new_dflat_filename
@@ -1203,7 +1202,6 @@ def run_pipeline(
 
         if not os.path.exists(new_phot_filename):
             pref = extend_photom(phot_filename, ranges=ranges)
-            # pref.write(new_phot_filename, overwrite=True)
             datamodel_save(pref, new_phot_filename, overwrite=True)
 
         # Apply photom
@@ -1232,15 +1230,13 @@ def run_pipeline(
 
         fig.savefig(f"{slit_prefix_}_final.png".lower())
 
-    # result.write(os.path.basename(file).replace('_rate.fits', '_photom.fits'))
-
     ########
     # Write calibrated slitlet files
     if write_output & (EXPOSURE_TYPE == "NRS_IFU"):
         cal_file = file.replace("_rate.fits", "_cal.fits")
         msg = f"{file} write calibrated IFU exposure cal_file"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
-        # result.write(cal_file, overwrite=True)
+
         datamodel_save(result, cal_file, overwrite=True)
 
     elif write_output:
@@ -1276,7 +1272,7 @@ def run_pipeline(
             utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSITY)
 
             slit_model = jwst.datamodels.SlitModel(_slit.instance)
-            # slit_model.write(slit_file, overwrite=True)
+
             datamodel_save(slit_model, slit_file, overwrite=True)
 
             with pyfits.open(slit_file, mode="update") as im:
