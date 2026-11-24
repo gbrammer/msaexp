@@ -68,7 +68,7 @@ def test_shutter_image():
     #  msa.shutters_to_image
     cx, cy = msa.shutters_to_image(row, col, quadrant)
 
-    assert np.alltrue(meta.shutter_image[cy, cx] == slitlet_id)
+    assert np.all(meta.shutter_image[cy, cx] == slitlet_id)
 
 
 def test_summary():

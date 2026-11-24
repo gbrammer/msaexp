@@ -23,6 +23,7 @@ import glob
 import yaml
 import warnings
 import time
+import traceback
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -196,12 +197,13 @@ def run_one_msa_preprocess(file=None, sync=True, clean=True, **kwargs):
 
     #################
     # Run it
-    #################
     try:
         status = preprocess_nirspec_msa_file(
             sync=sync, clean=clean, **row[0]
         )
     except:
+        utils.log_exception(utils.LOGFILE, traceback, verbose=True)
+
         status = 5
 
     if sync:
@@ -227,7 +229,12 @@ def preprocess_nirspec_msa_file(rate_file='jw01286005001_03101_00002_nrs2_rate.f
     """
     Run preprocessing calibrations for a single NIRSpec exposure
     """
+    from packaging.version import Version
+    import jwst
     from grizli import jwst_level1
+
+    if Version(jwst.__version__) >= Version("3.0"):
+        context = "jwst_1584.pmap"
 
     os.environ['CRDS_CONTEXT'] = os.environ['CRDS_CTX'] = context
     jwst_utils.set_crds_context()

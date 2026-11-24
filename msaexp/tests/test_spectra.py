@@ -3,6 +3,7 @@ Test spectrum extractions and fits
 """
 
 import os
+from packaging.version import Version
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,12 +17,14 @@ from .. import utils, spectrum
 
 eazy_templates = None
 
-if jwst.__version__ < "100.16":
+if Version(jwst.__version__) < Version("100.16"):
     # SPECTRUM_FILE = f'ceers-prism.1345_933.v0.spec.fits'
     SPECTRUM_FILE = "test-driz-center-bkg_933.spec.fits"
+    # SPECTRUM_FILE = "nirspec_prism-clear_1345_933.spec.fits"
     # SPECTRUM_FILE = 'test-driz-center_933.spec.fits'
 else:
-    SPECTRUM_FILE = "rubies-egs51-v4_prism-clear_4233_19489.spec.fits"
+    # SPECTRUM_FILE = "rubies-egs51-v4_prism-clear_4233_19489.spec.fits"
+    SPECTRUM_FILE = "nirspec_prism-clear_4233_19489.spec.fits"
 
 
 def data_path():
