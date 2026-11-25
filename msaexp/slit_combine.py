@@ -19,7 +19,7 @@ import jwst.datamodels
 import jwst
 
 from grizli import utils
-from . import utils as msautils
+from .utils import general as msautils
 
 utils.LOGFILE = "/tmp/msaexp_slit_combine.log.txt"
 VERBOSE_LOG = True
@@ -5498,7 +5498,7 @@ def extract_spectra(
         trace offsets in the prism where it will be best defined and propagate
         to other groups with the gratings
 
-    mask_cross_dispersion : None or [int, int]
+    mask_cross_dispersion : None, [int, int] or list of [int, int]
         Optional cross-dispersion masking, e.g., for stuck-closed shutters or
         multiple sources within a slitlet. The specified values are integer
         indices of the pixel range to mask. See ``cross_dispersion_mask_type``.
@@ -5866,25 +5866,31 @@ def extract_spectra(
         msg += f"  cross_dispersion_mask_type={cross_dispersion_mask_type}"
         utils.log_comment(utils.LOGFILE, msg, verbose=VERBOSE_LOG)
 
+        if hasattr(mask_cross_dispersion[0], "__len__"):
+            mask_cross_list = mask_cross_dispersion
+        else:
+            mask_cross_list = [mask_cross_dispersion]
+
         for k in xobj:
             obj = xobj[k]["obj"]
             for j in range(obj.N):
-                cross_mask = obj.yslit[j, :] > mask_cross_dispersion[0]
-                cross_mask &= obj.yslit[j, :] < mask_cross_dispersion[1]
+                for mask_cross_i in mask_cross_list:
+                    cross_mask = obj.yslit[j, :] > mask_cross_i[0]
+                    cross_mask &= obj.yslit[j, :] < mask_cross_i[1]
 
-                if cross_dispersion_mask_type == "bkg":
-                    # Just mask background when doing the differences
-                    obj.bkg_mask[j, cross_mask] = False
+                    if cross_dispersion_mask_type == "bkg":
+                        # Just mask background when doing the differences
+                        obj.bkg_mask[j, cross_mask] = False
 
-                elif cross_dispersion_mask_type == "fixed":
-                    # Relative to first trace
-                    cross_mask = obj.yshutter[j, :] > mask_cross_dispersion[0]
-                    cross_mask &= obj.yshutter[j, :] < mask_cross_dispersion[1]
-                    obj.sci[j, cross_mask] = np.nan
+                    elif cross_dispersion_mask_type == "fixed":
+                        # Relative to first trace
+                        cross_mask = obj.yshutter[j, :] > mask_cross_i[0]
+                        cross_mask &= obj.yshutter[j, :] < mask_cross_i[1]
+                        obj.sci[j, cross_mask] = np.nan
 
-                else:
-                    # Mask out all pixels, source and background
-                    obj.sci[j, cross_mask] = np.nan
+                    else:
+                        # Mask out all pixels, source and background
+                        obj.sci[j, cross_mask] = np.nan
 
             obj.mask &= np.isfinite(obj.sci)
             obj.bkg_mask &= np.isfinite(obj.sci)
